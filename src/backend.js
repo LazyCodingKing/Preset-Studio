@@ -17,18 +17,17 @@ async function changeTemplates(userId, mutate) {
 const reply = (userId, requestId, type, data = {}) => spindle.sendToFrontend({type, requestId, ...data}, userId);
 function prepareBlocksForExecution(rawBlocks) {
   const blocks = Array.isArray(rawBlocks) ? structuredClone(rawBlocks) : [];
-  const markerAliases = {
-    persona_description: 'persona',
-    dialogue_examples: 'mes_examples',
-    main: 'system_prompt',
-    jailbreak: 'post_history_instructions',
-  };
   const validMarkers = new Set([
-    'category', 'system_prompt', 'char_description', 'char_personality',
-    'scenario', 'persona', 'mes_examples', 'world_info_before',
-    'chat_history', 'world_info_after', 'post_history_instructions',
+    'category', 'chat_history', 'world_info_before', 'world_info_after',
+    'char_description', 'char_personality', 'persona_description', 'persona',
+    'scenario', 'dialogue_examples', 'mes_examples', 'main_prompt', 'system_prompt',
+    'enhance_definitions', 'jailbreak', 'post_history_instructions', 'nsfw_prompt',
   ]);
-  const structuralOnly = new Set(['chat_history', 'world_info_before', 'world_info_after']);
+  const structuralOnly = new Set([
+    'chat_history', 'world_info_before', 'world_info_after',
+    'char_description', 'char_personality', 'persona_description', 'persona',
+    'scenario', 'dialogue_examples', 'mes_examples',
+  ]);
 
   const readVars = new Set();
   const getvarRe = /\{\{\s*(?:getvar|getchatvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
@@ -59,12 +58,9 @@ function prepareBlocksForExecution(rawBlocks) {
       if (copy.categoryMode === 'radio') copy.categoryMode = 'checkbox';
       return copy;
     }
-    const mappedMarker = copy.marker && markerAliases[copy.marker] ? markerAliases[copy.marker] : copy.marker;
-    if (hasContent && (!mappedMarker || !structuralOnly.has(mappedMarker))) {
+    if (hasContent && (!copy.marker || !structuralOnly.has(copy.marker))) {
       copy.marker = null;
-    } else if (mappedMarker && validMarkers.has(mappedMarker)) {
-      copy.marker = mappedMarker;
-    } else {
+    } else if (copy.marker && !validMarkers.has(copy.marker)) {
       copy.marker = null;
     }
 
@@ -92,7 +88,7 @@ function prepareBlocksForExecution(rawBlocks) {
   });
 }
 
-const clean = p => ({name:p.name, provider:p.provider || 'loom', engine:p.engine || 'classic', parameters:p.parameters || {}, prompt_order:prepareBlocksForExecution(p.prompt_order || []), prompts:p.prompts || {}, metadata:p.metadata || {}});
+const clean = p => ({name:p.name, provider:p.provider || 'loom', engine:p.engine || 'classic', parameters:p.parameters || {}, prompt_order:p.prompt_order || [], prompts:p.prompts || {}, metadata:p.metadata || {}});
 // Replace balanced Lumiverse macros before translation, including nested macros.
 function protectMacros(text) {
   const tokens = []; let out = ''; let cursor = 0;
@@ -222,6 +218,15 @@ spindle.onFrontendMessage(async (msg, userId) => {
         break;
       }
       case 'draft': await spindle.userStorage.setJson('draft.json', msg.draft, {userId}); data = true; break;
+      case 'open-native-presets-tab': {
+        try {
+          const tabs = await spindle.ui.getDrawerTabs({userId});
+          const target = tabs.find(t => t.source === 'builtin' && (t.id === 'presets' || t.id === 'loom'));
+          await spindle.ui.openDrawerTab(target ? target.id : 'presets', {userId});
+        } catch (_) {}
+        data = true;
+        break;
+      }
       case 'save': {
         if (!spindle.permissions.has('presets')) throw new Error('Enable the "presets" permission to save presets.');
         const input = clean(msg.preset);

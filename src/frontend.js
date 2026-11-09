@@ -331,6 +331,8 @@ export function setup(ctx) {
   tab.root.appendChild(root);
 
   let mount = null;
+  let toolbarRoot = null;
+  let unsubPresetEditor = null;
   let full = false;
   let previousFocus = null;
   try {
@@ -386,23 +388,18 @@ export function setup(ctx) {
   const MARKERS = [
     { id: '', label: 'None (Custom Prompt)' },
     { id: 'category', label: 'Category Divider' },
-    { id: 'main', label: 'Main System Prompt (main)' },
-    { id: 'system_prompt', label: 'Character System Prompt (system_prompt)' },
-    { id: 'char_description', label: 'Character Description (char_description)' },
-    { id: 'char_personality', label: 'Character Personality (char_personality)' },
-    { id: 'scenario', label: 'Scenario (scenario)' },
-    { id: 'persona', label: 'User Persona (persona)' },
-    { id: 'persona_description', label: 'User Persona (persona_description)' },
-    { id: 'mes_examples', label: 'Example Dialogue (mes_examples)' },
-    { id: 'dialogue_examples', label: 'Example Dialogue (dialogue_examples)' },
-    { id: 'world_info_before', label: 'World Info Before (world_info_before)' },
     { id: 'chat_history', label: 'Chat History (chat_history)' },
+    { id: 'world_info_before', label: 'World Info Before (world_info_before)' },
     { id: 'world_info_after', label: 'World Info After (world_info_after)' },
-    { id: 'post_history_instructions', label: 'Post-History Instructions' },
-    { id: 'nsfw_prompt', label: 'Auxiliary / NSFW Prompt (nsfw_prompt)' },
-    { id: 'jailbreak', label: 'Jailbreak / Post-History (jailbreak)' },
+    { id: 'char_description', label: 'Char Description (char_description)' },
+    { id: 'char_personality', label: 'Char Personality (char_personality)' },
+    { id: 'persona_description', label: 'User Persona (persona_description)' },
+    { id: 'scenario', label: 'Scenario (scenario)' },
+    { id: 'dialogue_examples', label: 'Example Messages (dialogue_examples)' },
+    { id: 'main_prompt', label: 'Main Prompt (main_prompt)' },
     { id: 'enhance_definitions', label: 'Enhance Definitions (enhance_definitions)' },
-    { id: 'authors_note', label: "Author's Note (authors_note)" },
+    { id: 'jailbreak', label: 'Post-History Instructions (jailbreak)' },
+    { id: 'nsfw_prompt', label: 'NSFW / Auxiliary Prompt (nsfw_prompt)' },
   ];
 
   const state = {
@@ -505,6 +502,9 @@ export function setup(ctx) {
       mount.root.appendChild(root);
       mount.setVisible(true);
       root.classList.add('ps-full');
+      if (!ctx.ui?.presetEditor?.getState?.()?.open) {
+        request('open-native-presets-tab').catch(() => {});
+      }
     } else {
       tab.root.appendChild(root);
       mount?.setVisible(false);
@@ -719,21 +719,77 @@ export function setup(ctx) {
     }
   }
 
+  function cloneBlocksForHost(blocks) {
+    return (blocks || []).map((block) => ({
+      id: String(block.id || uid()),
+      name: String(block.name ?? ''),
+      content: String(block.content ?? ''),
+      role: ['system', 'user', 'assistant', 'user_append', 'assistant_append'].includes(block.role) ? block.role : 'system',
+      enabled: Boolean(block.enabled),
+      position: ['pre_history', 'post_history', 'in_history'].includes(block.position) ? block.position : 'pre_history',
+      depth: Math.max(0, Number(block.depth) || 0),
+      marker: block.marker ? String(block.marker) : null,
+      isLocked: Boolean(block.isLocked),
+      color: block.color ? String(block.color) : null,
+      injectionTrigger: Array.isArray(block.injectionTrigger) ? [...block.injectionTrigger] : [],
+      ...(Array.isArray(block.characterTagTrigger) ? { characterTagTrigger: [...block.characterTagTrigger] } : {}),
+      group: block.group ? String(block.group) : null,
+      categoryMode: block.categoryMode === 'radio' || block.categoryMode === 'checkbox' ? block.categoryMode : null,
+      ...(Array.isArray(block.variables)
+        ? {
+            variables: block.variables.map((v) =>
+              v.type === 'select' || v.type === 'multiselect'
+                ? { ...v, options: (v.options || []).map((o) => ({ ...o })) }
+                : { ...v },
+            ),
+          }
+        : {}),
+    }));
+  }
+
+  function readHostPresetEditorDraft() {
+    try {
+      const fullState = ctx.ui?.presetEditor?.getState?.();
+      if (!fullState?.open || !fullState?.preset || !fullState?.presetId) return null;
+      const scoped = ctx.ui?.presetEditor?.extension?.getState?.();
+      const blocks = scoped?.presetId === fullState.presetId && Array.isArray(scoped.blocks)
+        ? cloneBlocksForHost(scoped.blocks)
+        : cloneBlocksForHost(fullState.preset.blocks || []);
+      const promptVariables = scoped?.presetId === fullState.presetId && scoped.promptVariableValues
+        ? structuredClone(scoped.promptVariableValues)
+        : structuredClone(fullState.preset.metadata?.promptVariables || {});
+      return {
+        id: fullState.preset.id,
+        name: fullState.preset.name,
+        provider: 'loom',
+        engine: 'classic',
+        parameters: structuredClone(fullState.preset.parameters || {}),
+        prompts: structuredClone(fullState.preset.prompts || {}),
+        metadata: {
+          ...structuredClone(fullState.preset.metadata || {}),
+          promptVariables,
+        },
+        prompt_order: blocks,
+      };
+    } catch (_) {
+      return null;
+    }
+  }
+
   function normalizeDraftForAssembly(draftObj) {
     const clone = structuredClone(draftObj);
     const blocks = Array.isArray(clone.prompt_order) ? clone.prompt_order : [];
-    const markerAliases = {
-      persona_description: 'persona',
-      dialogue_examples: 'mes_examples',
-      main: 'system_prompt',
-      jailbreak: 'post_history_instructions',
-    };
     const validMarkers = new Set([
-      'category', 'system_prompt', 'char_description', 'char_personality',
-      'scenario', 'persona', 'mes_examples', 'world_info_before',
-      'chat_history', 'world_info_after', 'post_history_instructions',
+      'category', 'chat_history', 'world_info_before', 'world_info_after',
+      'char_description', 'char_personality', 'persona_description', 'persona',
+      'scenario', 'dialogue_examples', 'mes_examples', 'main_prompt', 'system_prompt',
+      'enhance_definitions', 'jailbreak', 'post_history_instructions', 'nsfw_prompt',
     ]);
-    const structuralOnly = new Set(['chat_history', 'world_info_before', 'world_info_after']);
+    const structuralOnly = new Set([
+      'chat_history', 'world_info_before', 'world_info_after',
+      'char_description', 'char_personality', 'persona_description', 'persona',
+      'scenario', 'dialogue_examples', 'mes_examples',
+    ]);
 
     const readVars = new Set();
     const getvarRe = /\{\{\s*(?:getvar|getchatvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
@@ -764,12 +820,9 @@ export function setup(ctx) {
         if (copy.categoryMode === 'radio') copy.categoryMode = 'checkbox';
         return copy;
       }
-      const mappedMarker = copy.marker && markerAliases[copy.marker] ? markerAliases[copy.marker] : copy.marker;
-      if (hasContent && (!mappedMarker || !structuralOnly.has(mappedMarker))) {
+      if (hasContent && (!copy.marker || !structuralOnly.has(copy.marker))) {
         copy.marker = null;
-      } else if (mappedMarker && validMarkers.has(mappedMarker)) {
-        copy.marker = mappedMarker;
-      } else {
+      } else if (copy.marker && !validMarkers.has(copy.marker)) {
         copy.marker = null;
       }
 
@@ -1349,6 +1402,89 @@ export function setup(ctx) {
     });
     root.scrollTop = savedRootScroll;
   }
+
+  async function syncSaveWithNativePresetEditor(draftToSave, isCopy) {
+    const pe = ctx.ui?.presetEditor;
+    if (!isCopy && draftToSave.id && pe?.getState && pe?.updatePreset) {
+      let peState = pe.getState();
+      if (!peState?.open) {
+        await request('open-native-presets-tab').catch(() => {});
+        for (let attempt = 0; attempt < 12; attempt++) {
+          await new Promise((r) => setTimeout(r, 35));
+          peState = pe.getState();
+          if (peState?.open && peState?.preset) break;
+        }
+      }
+      if (peState?.open && peState?.preset && peState.preset.id === draftToSave.id) {
+        const cleanBlocks = cloneBlocksForHost(draftToSave.prompt_order || []);
+        let applied = false;
+        pe.updatePreset((latest) => {
+          applied = true;
+          return {
+            ...latest,
+            name: draftToSave.name || latest.name,
+            blocks: cleanBlocks,
+            parameters: structuredClone(draftToSave.parameters || latest.parameters || {}),
+            prompts: structuredClone(draftToSave.prompts || latest.prompts || {}),
+            metadata: {
+              ...structuredClone(latest.metadata || {}),
+              ...structuredClone(draftToSave.metadata || {}),
+            },
+          };
+        });
+        if (applied) {
+          if (typeof pe.flush === 'function') await pe.flush();
+          const freshSaved = await request('get', { id: draftToSave.id });
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Applied "${draftToSave.name}" live to Lumiverse` });
+          return freshSaved || { ...draftToSave, prompt_order: cleanBlocks };
+        }
+      }
+    }
+    return await request('save', {
+      preset: { ...draftToSave, prompt_order: cloneBlocksForHost(draftToSave.prompt_order || []) },
+      copy: isCopy,
+    });
+  }
+
+  try {
+    if (ctx.ui?.mount) {
+      toolbarRoot = ctx.ui.mount('preset_editor_toolbar');
+      toolbarRoot.style.cssText = 'display:flex;align-items:center;width:100%;padding:6px 14px;border-bottom:1px solid var(--lumiverse-border, rgba(255,255,255,0.08))';
+      const launcher = document.createElement('button');
+      launcher.type = 'button';
+      launcher.style.cssText = 'display:flex;align-items:center;justify-content:center;width:100%;gap:7px;min-height:36px;padding:0 12px;border:1px solid var(--lumiverse-border);border-radius:8px;background:var(--lumiverse-fill-subtle, rgba(255,255,255,0.04));color:var(--lumiverse-text);font:inherit;font-size:12px;font-weight:700;cursor:pointer';
+      launcher.innerHTML = '<span>✳ Open in Preset Studio</span>';
+      launcher.addEventListener('click', () => {
+        const hostDraft = readHostPresetEditorDraft();
+        if (hostDraft && (!state.dirty || state.draft?.id !== hostDraft.id)) {
+          state.draft = hostDraft;
+          state.selected = 0;
+          state.dirty = false;
+          state.historyPast = [structuredClone(hostDraft)];
+          state.historyFuture = [];
+          scheduleTokenCount();
+        }
+        if (mount) setFull(true);
+        else {
+          tab.activate?.();
+          render();
+        }
+      });
+      toolbarRoot.replaceChildren(launcher);
+    }
+    if (ctx.ui?.presetEditor?.onChange) {
+      unsubPresetEditor = ctx.ui.presetEditor.onChange((peState) => {
+        if (!peState?.preset || state.dirty || state.busy) return;
+        if (!state.draft || state.draft.id === peState.preset.id) {
+          const hostDraft = readHostPresetEditorDraft();
+          if (hostDraft) {
+            state.draft = hostDraft;
+            render();
+          }
+        }
+      });
+    }
+  } catch (_) {}
 
   async function refresh() {
     const data = await request('load');
@@ -2021,14 +2157,14 @@ export function setup(ctx) {
         }
         persist();
       } else if (a === 'save' || a === 'save-copy') {
-        const saved = await request('save', { preset: d, copy: a === 'save-copy' });
+        const saved = await syncSaveWithNativePresetEditor(d, a === 'save-copy');
         state.draft = saved;
         state.dirty = false;
         clearTimeout(timer);
         await saveChain;
         await request('draft', { draft: saved });
         await refresh();
-        state.notice = saved.provider === 'loom' ? 'Saved to Lumiverse.' : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
+        state.notice = saved.provider === 'loom' ? 'Saved and applied live to Lumiverse (no page refresh needed).' : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
       } else if (a === 'profile') {
         if (!state.chatId) throw new Error('Choose a chat first.');
         const active = await request('active', { chatId: state.chatId });
@@ -2130,6 +2266,11 @@ export function setup(ctx) {
     if (state.activeRun) request('cancel', { runId: state.activeRun }).catch(() => {});
     unsub();
     unsubKb?.();
+    unsubPresetEditor?.();
+    if (toolbarRoot) {
+      toolbarRoot.replaceChildren();
+      toolbarRoot.removeAttribute('style');
+    }
     document.removeEventListener('keydown', onKey);
     mount?.destroy();
     tab.destroy();
