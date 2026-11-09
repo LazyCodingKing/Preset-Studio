@@ -275,6 +275,21 @@ export const STUDIO_BASE_CSS = `
 .ps-result { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 440px; overflow: auto; overscroll-behavior: contain; padding: 12px; background: var(--ps-bg); border: 1px solid var(--ps-border); border-radius: 8px; line-height: 1.6; }
 .ps-bar-stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--ps-bg); border: 1px solid var(--ps-border); margin: 8px 0; }
 .ps-bar-seg { height: 100%; transition: width 0.25s ease; }
+.ps-test-columns {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+  margin-bottom: 12px;
+}
+.ps-test-col-ctrl, .ps-test-col-output {
+  min-width: 0;
+  max-width: 100%;
+}
+@container (min-width: 860px) {
+  .ps-test-columns {
+    grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.25fr);
+  }
+}
 `;
 
 export const STUDIO_POLISH_CSS = `
