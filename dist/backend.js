@@ -109,14 +109,11 @@ spindle.onFrontendMessage(async (msg, userId) => {
     let data;
     switch (msg.action) {
       case "load": {
-        const hasPresets = spindle.permissions.has("presets");
-        const hasChats = spindle.permissions.has("chats");
-        const hasGen = spindle.permissions.has("generation");
         const [presets, chats, active, connections, draft, templates, preferences] = await Promise.all([
-          hasPresets ? spindle.presets.list({ limit: 200, userId }) : Promise.resolve({ data: [] }),
-          hasChats ? spindle.chats.list({ limit: 200, userId }) : Promise.resolve({ data: [] }),
-          hasChats ? spindle.chats.getActive(userId) : Promise.resolve(null),
-          hasGen ? spindle.connections.list(userId) : Promise.resolve([]),
+          spindle.presets.list({ limit: 200, userId }).catch(() => ({ data: [] })),
+          spindle.chats.list({ limit: 200, userId }).catch(() => ({ data: [] })),
+          spindle.chats.getActive(userId).catch(() => null),
+          spindle.connections.list(userId).catch(() => []),
           spindle.userStorage.getJson("draft.json", { fallback: null, userId }),
           spindle.userStorage.getJson("templates.json", { fallback: [], userId }),
           spindle.userStorage.getJson("preferences.json", { fallback: {}, userId })
@@ -338,4 +335,5 @@ spindle.onFrontendMessage(async (msg, userId) => {
     reply(userId, id, "error", { error: message });
   }
 });
+spindle.sendToFrontend({ type: "backend-ready", permissions: getPermissionSnapshot() });
 spindle.log.info("Preset Studio backend loaded");

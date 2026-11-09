@@ -169,6 +169,7 @@ export function setup(ctx: any) {
       mount.root.appendChild(root);
       mount.setVisible(true);
       root.classList.add('ps-full');
+      if (!state.presets.length) refresh().catch(() => {});
       if (!ctx.ui?.presetEditor?.getState?.()?.open) {
         request('open-native-presets-tab').catch(() => {});
       }
@@ -184,9 +185,14 @@ export function setup(ctx: any) {
 
   const unsub = ctx.onBackendMessage((msg: any) => {
     if (!msg) return;
+    if (msg.type === 'backend-ready') {
+      if (msg.permissions) state.permissions = { ...state.permissions, ...msg.permissions };
+      refresh().catch(() => {});
+      return;
+    }
     if (msg.type === 'permissions' && msg.permissions) {
       state.permissions = { ...state.permissions, ...msg.permissions };
-      render();
+      refresh().catch(() => {});
       return;
     }
     if (msg.type === 'command') {
@@ -1224,6 +1230,13 @@ export function setup(ctx: any) {
     }
   });
 
+  const unsubActivate = tab.onActivate?.(() => {
+    refresh().catch((err) => {
+      state.notice = err.message;
+      render();
+    });
+  });
+
   render();
   refresh().catch((err) => {
     state.notice = err.message;
@@ -1239,6 +1252,7 @@ export function setup(ctx: any) {
     clearTimeout(longPressTimer);
     if (state.activeRun) request('cancel', { runId: state.activeRun }).catch(() => {});
     unsub();
+    unsubActivate?.();
     unsubKb?.();
     cleanupLauncher();
     document.removeEventListener('keydown', onKey);
