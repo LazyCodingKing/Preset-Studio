@@ -6,7 +6,6 @@ import {
   freshDraft,
   computeDraftFingerprint,
   ensureUniqueBlockIds,
-  normalizeDraftForAssembly,
   sanitizeBlockForLoom,
   exportJsonFile,
 } from './studio-core.js';
@@ -865,11 +864,6 @@ export function setup(ctx: any) {
           state.view = 'blocks';
           state.mobileDetailOpen = true;
         }
-      } else if (a === 'fix-modular-blocks' && d) {
-        const fixed = normalizeDraftForAssembly(d);
-        d.prompt_order = fixed.prompt_order;
-        persist();
-        state.notice = 'Fixed modular {{setvar}} blocks, standalone {{trim}} tags, and marker overrides in draft.';
       } else if (a === 'clear-marker' && b) {
         b.marker = null;
         persist();
@@ -1215,7 +1209,7 @@ export function setup(ctx: any) {
         state.reasoning = '';
         state.lastUsage = null;
         state.assembled = null;
-        const snapshot = normalizeDraftForAssembly(d);
+        const snapshot = structuredClone(d);
         const requestId = uid();
         state.activeRun = requestId;
         render();
@@ -1264,7 +1258,7 @@ export function setup(ctx: any) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'collect-blocks', 'save-template', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-current-to-basket', 'insert-sov-hand', 'fix-modular-blocks', 'clear-marker'].includes(a)) {
+      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'collect-blocks', 'save-template', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-current-to-basket', 'insert-sov-hand', 'clear-marker'].includes(a)) {
         state.notice = '';
       }
       render();

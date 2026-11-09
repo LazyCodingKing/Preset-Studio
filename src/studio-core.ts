@@ -152,7 +152,28 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
     if (defs.length > 1) duplicates.push({ name, defs });
     if (!refsByName.has(name)) unused.push({ name, defs });
   }
-  return { defCountByBlock, refCountByBlock, missing, duplicates, unused };
+
+  // Generic local {{setvar}} / {{getvar}} topology across all blocks in the preset
+  const allReadLocalVars = new Set<string>();
+  const setVarsByBlock = new Map<string, string[]>();
+  const getvarRe = /\{\{\s*(?:getvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
+  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
+  const setvarRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)(?:::|\s*\}\})/gi;
+
+  for (const blk of blocks || []) {
+    const text = typeof blk?.content === 'string' ? blk.content : '';
+    if (!text) continue;
+    let m: RegExpExecArray | null;
+    while ((m = getvarRe.exec(text)) !== null) allReadLocalVars.add(m[1]);
+    while ((m = dotReadRe.exec(text)) !== null) allReadLocalVars.add(m[1]);
+    const written: string[] = [];
+    while ((m = setvarRe.exec(text)) !== null) {
+      if (!written.includes(m[1])) written.push(m[1]);
+    }
+    if (written.length) setVarsByBlock.set(blk.id, written);
+  }
+
+  return { defCountByBlock, refCountByBlock, missing, duplicates, unused, setVarsByBlock, allReadLocalVars };
 }
 
 export function cloneBlocksForHost(blocks: any[]): any[] {
@@ -181,81 +202,6 @@ export function cloneBlocksForHost(blocks: any[]): any[] {
         }
       : {}),
   }));
-}
-
-export function normalizeDraftForAssembly(draftObj: any): any {
-  const clone = structuredClone(draftObj);
-  const blocks = Array.isArray(clone.prompt_order) ? clone.prompt_order : [];
-  const validMarkers = new Set([
-    'category', 'chat_history', 'world_info_before', 'world_info_after',
-    'char_description', 'char_personality', 'persona_description', 'persona',
-    'scenario', 'dialogue_examples', 'mes_examples', 'main_prompt', 'system_prompt',
-    'enhance_definitions', 'jailbreak', 'post_history_instructions', 'nsfw_prompt',
-  ]);
-  const structuralOnly = new Set([
-    'chat_history', 'world_info_before', 'world_info_after',
-    'char_description', 'char_personality', 'persona_description', 'persona',
-    'scenario', 'dialogue_examples', 'mes_examples',
-  ]);
-
-  const readVars = new Set<string>();
-  const getvarRe = /\{\{\s*(?:getvar|getchatvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
-  for (const b of blocks) {
-    if (!b || !b.enabled || typeof b.content !== 'string') continue;
-    let m: RegExpExecArray | null;
-    while ((m = getvarRe.exec(b.content)) !== null) readVars.add(m[1]);
-    while ((m = dotReadRe.exec(b.content)) !== null) readVars.add(m[1]);
-  }
-
-  const skipHelperVars = new Set([
-    'mod_pov', 'mod_length', 'check_length', 'tempo_log',
-    'check_relations', 'check_conflict', 'check_antislop',
-    'sola_msg', 'sola_trackers_any',
-  ]);
-
-  clone.prompt_order = blocks.map((b: any) => {
-    if (!b || typeof b !== 'object') return b;
-    const copy = { ...b };
-    let content = typeof copy.content === 'string' ? copy.content : '';
-    if (content.includes('{{trim}}') && !content.includes('{{/trim}}')) {
-      content = content.replace(/\{\{trim\}\}/g, '');
-    }
-    const hasContent = content.trim().length > 0;
-    if (copy.marker === 'category' && !hasContent) {
-      copy.enabled = true;
-      if (copy.categoryMode === 'radio') copy.categoryMode = 'checkbox';
-      return copy;
-    }
-    if (hasContent && (!copy.marker || !structuralOnly.has(copy.marker))) {
-      copy.marker = null;
-    } else if (copy.marker && !validMarkers.has(copy.marker)) {
-      copy.marker = null;
-    }
-
-    if (copy.enabled && hasContent) {
-      const setVars: string[] = [];
-      const setInlineRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)::/gi;
-      const setScopedRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-      let sm: RegExpExecArray | null;
-      while ((sm = setInlineRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1])) setVars.push(sm[1]);
-      }
-      while ((sm = setScopedRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1])) setVars.push(sm[1]);
-      }
-      const unread = setVars.filter((v) => !readVars.has(v) && !skipHelperVars.has(v));
-      if (unread.length > 0) {
-        const alreadyEmitted = unread.every((v) => content.includes(`{{getvar::${v}}}`));
-        if (!alreadyEmitted) {
-          content = `${content.trimEnd()}\n\n${unread.map((v) => `{{getvar::${v}}}`).join('\n\n')}`;
-        }
-      }
-    }
-    copy.content = content;
-    return copy;
-  });
-  return clone;
 }
 
 export function sanitizeBlockForLoom(b: any): any {

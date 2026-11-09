@@ -526,7 +526,29 @@ function buildPresetVariableDiagnostics(blocks) {
     if (!refsByName.has(name))
       unused.push({ name, defs });
   }
-  return { defCountByBlock, refCountByBlock, missing, duplicates, unused };
+  const allReadLocalVars = new Set;
+  const setVarsByBlock = new Map;
+  const getvarRe = /\{\{\s*(?:getvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
+  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
+  const setvarRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)(?:::|\s*\}\})/gi;
+  for (const blk of blocks || []) {
+    const text = typeof blk?.content === "string" ? blk.content : "";
+    if (!text)
+      continue;
+    let m;
+    while ((m = getvarRe.exec(text)) !== null)
+      allReadLocalVars.add(m[1]);
+    while ((m = dotReadRe.exec(text)) !== null)
+      allReadLocalVars.add(m[1]);
+    const written = [];
+    while ((m = setvarRe.exec(text)) !== null) {
+      if (!written.includes(m[1]))
+        written.push(m[1]);
+    }
+    if (written.length)
+      setVarsByBlock.set(blk.id, written);
+  }
+  return { defCountByBlock, refCountByBlock, missing, duplicates, unused, setVarsByBlock, allReadLocalVars };
 }
 function cloneBlocksForHost(blocks) {
   return (blocks || []).map((block) => ({
@@ -548,113 +570,6 @@ function cloneBlocksForHost(blocks) {
       variables: block.variables.map((v) => v.type === "select" || v.type === "multiselect" ? { ...v, options: (v.options || []).map((o) => ({ ...o })) } : { ...v })
     } : {}
   }));
-}
-function normalizeDraftForAssembly(draftObj) {
-  const clone = structuredClone(draftObj);
-  const blocks = Array.isArray(clone.prompt_order) ? clone.prompt_order : [];
-  const validMarkers = new Set([
-    "category",
-    "chat_history",
-    "world_info_before",
-    "world_info_after",
-    "char_description",
-    "char_personality",
-    "persona_description",
-    "persona",
-    "scenario",
-    "dialogue_examples",
-    "mes_examples",
-    "main_prompt",
-    "system_prompt",
-    "enhance_definitions",
-    "jailbreak",
-    "post_history_instructions",
-    "nsfw_prompt"
-  ]);
-  const structuralOnly = new Set([
-    "chat_history",
-    "world_info_before",
-    "world_info_after",
-    "char_description",
-    "char_personality",
-    "persona_description",
-    "persona",
-    "scenario",
-    "dialogue_examples",
-    "mes_examples"
-  ]);
-  const readVars = new Set;
-  const getvarRe = /\{\{\s*(?:getvar|getchatvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
-  for (const b of blocks) {
-    if (!b || !b.enabled || typeof b.content !== "string")
-      continue;
-    let m;
-    while ((m = getvarRe.exec(b.content)) !== null)
-      readVars.add(m[1]);
-    while ((m = dotReadRe.exec(b.content)) !== null)
-      readVars.add(m[1]);
-  }
-  const skipHelperVars = new Set([
-    "mod_pov",
-    "mod_length",
-    "check_length",
-    "tempo_log",
-    "check_relations",
-    "check_conflict",
-    "check_antislop",
-    "sola_msg",
-    "sola_trackers_any"
-  ]);
-  clone.prompt_order = blocks.map((b) => {
-    if (!b || typeof b !== "object")
-      return b;
-    const copy = { ...b };
-    let content = typeof copy.content === "string" ? copy.content : "";
-    if (content.includes("{{trim}}") && !content.includes("{{/trim}}")) {
-      content = content.replace(/\{\{trim\}\}/g, "");
-    }
-    const hasContent = content.trim().length > 0;
-    if (copy.marker === "category" && !hasContent) {
-      copy.enabled = true;
-      if (copy.categoryMode === "radio")
-        copy.categoryMode = "checkbox";
-      return copy;
-    }
-    if (hasContent && (!copy.marker || !structuralOnly.has(copy.marker))) {
-      copy.marker = null;
-    } else if (copy.marker && !validMarkers.has(copy.marker)) {
-      copy.marker = null;
-    }
-    if (copy.enabled && hasContent) {
-      const setVars = [];
-      const setInlineRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)::/gi;
-      const setScopedRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-      let sm;
-      while ((sm = setInlineRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1]))
-          setVars.push(sm[1]);
-      }
-      while ((sm = setScopedRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1]))
-          setVars.push(sm[1]);
-      }
-      const unread = setVars.filter((v) => !readVars.has(v) && !skipHelperVars.has(v));
-      if (unread.length > 0) {
-        const alreadyEmitted = unread.every((v) => content.includes(`{{getvar::${v}}}`));
-        if (!alreadyEmitted) {
-          content = `${content.trimEnd()}
-
-${unread.map((v) => `{{getvar::${v}}}`).join(`
-
-`)}`;
-        }
-      }
-    }
-    copy.content = content;
-    return copy;
-  });
-  return clone;
 }
 function sanitizeBlockForLoom(b) {
   const cleanBlock = {
@@ -1109,9 +1024,7 @@ function renderArchitectTab(ctx, state) {
       }
     }
   }
-  const normalizedPreview = normalizeDraftForAssembly(d);
-  const needsModularFix = JSON.stringify(normalizedPreview.prompt_order) !== JSON.stringify(d.prompt_order);
-  return `${needsModularFix ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><div class="ps-between"><span>⚡ <strong>Modular <code>{{setvar}}</code> / Category Content Detected:</strong> Some blocks in this preset store prompt text inside <code>{{setvar::...}}</code> variables without an output <code>{{getvar::...}}</code> block (or have prompt text inside a Category header). Test Lab automatically emits them—click here to apply this fix directly to your draft blocks.</span><button class="ps-btn-sm ps-primary" data-action="fix-modular-blocks">\uD83D\uDD27 Fix Blocks in Draft</button></div></div>` : ""}<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[["all", "All"], ["enabled", "Active"], ["categories", "Categories"], ["markers", "Markers"]].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? "ps-primary" : ""}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join("")}<input style="width:160px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="open-find-replace" title="Find and replace text across all unlocked blocks">\uD83D\uDD0D Find & Replace</button><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm ps-primary" data-action="quick-insert-template">\uD83D\uDCE6 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="quick-template-from-selected">\uD83D\uDCE6 Save Checked (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">\uD83D\uDDD1 Delete Checked (${state.selectedDraft.length})</button>` : ""}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ""}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? "ps-has-detail" : ""} ${state.showMacroPane ? "ps-with-xray" : ""}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong>${categoryBlocks.length ? `<button class="ps-btn-sm" data-action="toggle-all-categories">${allCatsCollapsed ? "▾ Expand Categories" : "▸ Collapse Categories"}</button>` : '<span class="ps-muted">Drag ⠿ or ↑↓</span>'}</div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
+  return `<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[["all", "All"], ["enabled", "Active"], ["categories", "Categories"], ["markers", "Markers"]].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? "ps-primary" : ""}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join("")}<input style="width:160px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="open-find-replace" title="Find and replace text across all unlocked blocks">\uD83D\uDD0D Find & Replace</button><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm ps-primary" data-action="quick-insert-template">\uD83D\uDCE6 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="quick-template-from-selected">\uD83D\uDCE6 Save Checked (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">\uD83D\uDDD1 Delete Checked (${state.selectedDraft.length})</button>` : ""}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ""}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? "ps-has-detail" : ""} ${state.showMacroPane ? "ps-with-xray" : ""}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong>${categoryBlocks.length ? `<button class="ps-btn-sm" data-action="toggle-all-categories">${allCatsCollapsed ? "▾ Expand Categories" : "▸ Collapse Categories"}</button>` : '<span class="ps-muted">Drag ⠿ or ↑↓</span>'}</div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
     const tok = state.tokenCounts[block.id];
     const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
     const refCnt = varDiag.refCountByBlock.get(block.id) || 0;
@@ -1200,9 +1113,17 @@ function renderXRayBreakdown(state) {
     if (item.name)
       byBlockName.set(item.name, item);
   }
+  const varDiag = buildPresetVariableDiagnostics(d?.prompt_order || []);
   const auditRows = (d?.prompt_order || []).map((blk, idx) => {
-    if (blk.marker === "category")
-      return { idx, blk, status: "category", reason: "Category Header (visual divider only)" };
+    if (blk.marker === "category") {
+      const hasCatText = Boolean((blk.content || "").trim());
+      return {
+        idx,
+        blk,
+        status: hasCatText ? "skipped" : "category",
+        reason: hasCatText ? "Marked as Category Divider — Lumiverse ignores Prompt Content on category blocks" : "Category Header (visual divider only)"
+      };
+    }
     if (!blk.enabled)
       return { idx, blk, status: "off", reason: "Disabled (Off) in Prompt Architect" };
     if (Array.isArray(blk.injectionTrigger) && blk.injectionTrigger.length && !blk.injectionTrigger.includes(state.generationType)) {
@@ -1213,11 +1134,19 @@ function renderXRayBreakdown(state) {
       return { idx, blk, status: "sent", reason: `Sent (${matched.role}) · ~${Math.ceil((matched.content || "").length / 4)}t`, content: matched.content };
     if (!blk.marker && !(blk.content || "").trim())
       return { idx, blk, status: "empty", reason: 'Prompt Content is blank ("") in Prompt Architect' };
+    const writtenVars = varDiag.setVarsByBlock.get(blk.id);
+    if (writtenVars?.length) {
+      const usedVars = writtenVars.filter((v) => varDiag.allReadLocalVars.has(v));
+      if (usedVars.length > 0) {
+        return { idx, blk, status: "helper", reason: `Sets {{setvar}} variable(s) (${usedVars.join(", ")}) used by other blocks; outputs no direct text of its own` };
+      }
+      return { idx, blk, status: "skipped", reason: `Sets {{setvar}} (${writtenVars.join(", ")}), but no block in this preset calls {{getvar}} for them (missing output block)` };
+    }
     if (blk.marker)
       return { idx, blk, status: "empty", reason: `Marker "${blk.marker}" resolved to empty for the selected chat/character` };
     return { idx, blk, status: "empty", reason: 'Macros/conditionals in Prompt Content resolved to empty ("") for this chat' };
   });
-  return `<div class="ps-panel" id="ps-xray-section"><div class="ps-between"><div><h3>\uD83D\uDD2C Prompt X-Ray & Assembled Messages (${breakdown.length} blocks · ${messages.length} final messages)</h3><p class="ps-muted">Source: <strong>${a.source === "saved" ? "Saved Database Preset (unsaved draft edits excluded)" : "Live Prompt Architect Draft"}</strong> · ${enabledCount}/${nonCatBlocks.length} draft blocks enabled${disabledNames.length ? ` (Skipped Off blocks: ${esc(disabledNames.join(", "))})` : ""}</p></div><div class="ps-row">${a.tokenCount?.total_tokens ? `<span class="ps-pill ps-pill-accent">${a.tokenCount.total_tokens.toLocaleString()} total tokens</span>` : `<span class="ps-pill ps-pill-accent">~${totalEst.toLocaleString()} est. tokens</span>`}${a.worldInfoStats ? `<span class="ps-pill">Lore: ${a.worldInfoStats.activatedAfterBudget}/${a.worldInfoStats.totalCandidates}</span>` : ""}${a.memoryStats?.enabled ? `<span class="ps-pill">Memories: ${a.memoryStats.chunksRetrieved}</span>` : ""}<button class="ps-btn-sm" data-action="toggle-xray-expand">${state.xrayExpanded ? "▸ Collapse All" : "▾ Expand All"}</button></div></div><details class="ps-card" style="margin:10px 0" data-details-id="xray-audit-table" open><summary><strong>\uD83D\uDCCB Complete Prompt Architect Block Audit (${auditRows.length} blocks in Prompt Order)</strong></summary><p class="ps-muted" style="margin:6px 0">Shows every block from Tab 01 and why it was included or skipped during this test.</p><div class="ps-list">${auditRows.map((row) => `<div class="ps-block ${row.status === "off" ? "ps-is-off" : ""}"><span class="ps-pill ${row.status === "sent" ? "ps-pill-ok" : row.status === "empty" || row.status === "skipped" ? "ps-pill-warn" : ""}">${row.status === "sent" ? "✅ Sent" : row.status === "off" ? "⏸ Off" : row.status === "category" ? "\uD83D\uDCC1 Category" : "⚪ Empty/Skipped"}</span><strong style="min-width:110px">${esc(row.blk.name || "Untitled")}</strong><span class="ps-pill">${esc(row.blk.marker || row.blk.role)}</span><span class="ps-muted" style="flex:1">${esc(row.reason)}</span><button class="ps-btn-sm" data-action="jump-to-block" data-index="${row.idx}">Edit in Tab 01 →</button></div>`).join("")}</div></details><div class="ps-bar-stack" title="Token distribution"><div class="ps-bar-seg" style="width:${buckets.block / totalEst * 100}%;background:#a795e8"></div><div class="ps-bar-seg" style="width:${buckets.chat_history / totalEst * 100}%;background:#64b5f6"></div><div class="ps-bar-seg" style="width:${buckets.world_info / totalEst * 100}%;background:#81c784"></div><div class="ps-bar-seg" style="width:${buckets.memory / totalEst * 100}%;background:#ffb74d"></div></div><div class="ps-between" style="margin:8px 0"><div class="ps-chips">${[["all", "All"], ["block", "Preset Blocks"], ["chat_history", "Chat History"], ["world_info", "World Info"], ["system", "System"], ["user", "User"], ["assistant", "Assistant"]].map(([id, lbl]) => `<button class="ps-btn-sm ${state.breakdownFilter === id ? "ps-primary" : ""}" data-action="filter-breakdown" data-filter="${id}">${lbl}</button>`).join("")}</div><input style="width:200px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Search assembled prompt…" data-state="breakdownSearch" value="${esc(state.breakdownSearch)}"></div><div class="ps-list" data-scroll-id="xray-list">${filtered.map((item, idx) => `<details class="ps-card" data-details-id="xray-${idx}" ${state.xrayExpanded ? "open" : ""}><summary class="ps-between"><span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span> <span class="ps-pill">${esc(item.type)}</span></span><span class="ps-muted">~${Math.ceil((item.content || "").length / 4)}t</span></summary><pre class="ps-result" style="margin-top:8px">${esc(item.content || "(empty)")}</pre></details>`).join("") || '<p class="ps-muted">No breakdown items match filter.</p>'}</div><details class="ps-card" style="margin-top:10px" data-details-id="xray-final-messages" open><summary><strong>\uD83D\uDCE8 Final Messages Sent to AI Provider (${messages.length} messages)</strong></summary><div class="ps-list" style="margin-top:8px">${messages.map((m, mi) => `<div class="ps-card"><div class="ps-between"><strong>#${mi + 1} · ${esc(m.role)}</strong><span class="ps-muted">~${Math.ceil((typeof m.content === "string" ? m.content : JSON.stringify(m.content)).length / 4)}t</span></div><pre class="ps-result" style="margin-top:6px;max-height:220px">${esc(typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 2))}</pre></div>`).join("")}</div></details></div>`;
+  return `<div class="ps-panel" id="ps-xray-section"><div class="ps-between"><div><h3>\uD83D\uDD2C Prompt X-Ray & Assembled Messages (${breakdown.length} blocks · ${messages.length} final messages)</h3><p class="ps-muted">Source: <strong>${a.source === "saved" ? "Saved Database Preset (unsaved draft edits excluded)" : "Live Prompt Architect Draft"}</strong> · ${enabledCount}/${nonCatBlocks.length} draft blocks enabled${disabledNames.length ? ` (Skipped Off blocks: ${esc(disabledNames.join(", "))})` : ""}</p></div><div class="ps-row">${a.tokenCount?.total_tokens ? `<span class="ps-pill ps-pill-accent">${a.tokenCount.total_tokens.toLocaleString()} total tokens</span>` : `<span class="ps-pill ps-pill-accent">~${totalEst.toLocaleString()} est. tokens</span>`}${a.worldInfoStats ? `<span class="ps-pill">Lore: ${a.worldInfoStats.activatedAfterBudget}/${a.worldInfoStats.totalCandidates}</span>` : ""}${a.memoryStats?.enabled ? `<span class="ps-pill">Memories: ${a.memoryStats.chunksRetrieved}</span>` : ""}<button class="ps-btn-sm" data-action="toggle-xray-expand">${state.xrayExpanded ? "▸ Collapse All" : "▾ Expand All"}</button></div></div><details class="ps-card" style="margin:10px 0" data-details-id="xray-audit-table" open><summary><strong>\uD83D\uDCCB Complete Prompt Architect Block Audit (${auditRows.length} blocks in Prompt Order)</strong></summary><p class="ps-muted" style="margin:6px 0">Shows every block from Tab 01 and its exact role during assembly.</p><div class="ps-list">${auditRows.map((row) => `<div class="ps-block ${row.status === "off" ? "ps-is-off" : ""}"><span class="ps-pill ${row.status === "sent" ? "ps-pill-ok" : row.status === "helper" ? "ps-pill-accent" : row.status === "empty" || row.status === "skipped" ? "ps-pill-warn" : ""}">${row.status === "sent" ? "✅ Sent" : row.status === "helper" ? "\uD83D\uDD17 Setvar Helper" : row.status === "off" ? "⏸ Off" : row.status === "category" ? "\uD83D\uDCC1 Category" : "⚠ Skipped/Empty"}</span><strong style="min-width:110px">${esc(row.blk.name || "Untitled")}</strong><span class="ps-pill">${esc(row.blk.marker || row.blk.role)}</span><span class="ps-muted" style="flex:1">${esc(row.reason)}</span><button class="ps-btn-sm" data-action="jump-to-block" data-index="${row.idx}">Edit in Tab 01 →</button></div>`).join("")}</div></details><div class="ps-bar-stack" title="Token distribution"><div class="ps-bar-seg" style="width:${buckets.block / totalEst * 100}%;background:#a795e8"></div><div class="ps-bar-seg" style="width:${buckets.chat_history / totalEst * 100}%;background:#64b5f6"></div><div class="ps-bar-seg" style="width:${buckets.world_info / totalEst * 100}%;background:#81c784"></div><div class="ps-bar-seg" style="width:${buckets.memory / totalEst * 100}%;background:#ffb74d"></div></div><div class="ps-between" style="margin:8px 0"><div class="ps-chips">${[["all", "All"], ["block", "Preset Blocks"], ["chat_history", "Chat History"], ["world_info", "World Info"], ["system", "System"], ["user", "User"], ["assistant", "Assistant"]].map(([id, lbl]) => `<button class="ps-btn-sm ${state.breakdownFilter === id ? "ps-primary" : ""}" data-action="filter-breakdown" data-filter="${id}">${lbl}</button>`).join("")}</div><input style="width:200px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Search assembled prompt…" data-state="breakdownSearch" value="${esc(state.breakdownSearch)}"></div><div class="ps-list" data-scroll-id="xray-list">${filtered.map((item, idx) => `<details class="ps-card" data-details-id="xray-${idx}" ${state.xrayExpanded ? "open" : ""}><summary class="ps-between"><span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span> <span class="ps-pill">${esc(item.type)}</span></span><span class="ps-muted">~${Math.ceil((item.content || "").length / 4)}t</span></summary><pre class="ps-result" style="margin-top:8px">${esc(item.content || "(empty)")}</pre></details>`).join("") || '<p class="ps-muted">No breakdown items match filter.</p>'}</div><details class="ps-card" style="margin-top:10px" data-details-id="xray-final-messages" open><summary><strong>\uD83D\uDCE8 Final Messages Sent to AI Provider (${messages.length} messages)</strong></summary><div class="ps-list" style="margin-top:8px">${messages.map((m, mi) => `<div class="ps-card"><div class="ps-between"><strong>#${mi + 1} · ${esc(m.role)}</strong><span class="ps-muted">~${Math.ceil((typeof m.content === "string" ? m.content : JSON.stringify(m.content)).length / 4)}t</span></div><pre class="ps-result" style="margin-top:6px;max-height:220px">${esc(typeof m.content === "string" ? m.content : JSON.stringify(m.content, null, 2))}</pre></div>`).join("")}</div></details></div>`;
 }
 function renderTestTab(state) {
   const runA = state.runs[state.compareA];
@@ -2349,11 +2278,6 @@ function setup(ctx) {
           state.view = "blocks";
           state.mobileDetailOpen = true;
         }
-      } else if (a === "fix-modular-blocks" && d) {
-        const fixed = normalizeDraftForAssembly(d);
-        d.prompt_order = fixed.prompt_order;
-        persist();
-        state.notice = "Fixed modular {{setvar}} blocks, standalone {{trim}} tags, and marker overrides in draft.";
       } else if (a === "clear-marker" && b) {
         b.marker = null;
         persist();
@@ -2740,7 +2664,7 @@ function setup(ctx) {
         state.reasoning = "";
         state.lastUsage = null;
         state.assembled = null;
-        const snapshot = normalizeDraftForAssembly(d);
+        const snapshot = structuredClone(d);
         const requestId = uid();
         state.activeRun = requestId;
         render();
@@ -2794,7 +2718,7 @@ function setup(ctx) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!["refresh", "save", "save-copy", "dry", "profile", "collect-blocks", "save-template", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-current-to-basket", "insert-sov-hand", "fix-modular-blocks", "clear-marker"].includes(a)) {
+      if (!["refresh", "save", "save-copy", "dry", "profile", "collect-blocks", "save-template", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-current-to-basket", "insert-sov-hand", "clear-marker"].includes(a)) {
         state.notice = "";
       }
       render();

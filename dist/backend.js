@@ -22,111 +22,6 @@ async function changeTemplates(userId, mutate) {
   }
 }
 var reply = (userId, requestId, type, data = {}) => spindle.sendToFrontend({ type, requestId, ...data }, userId);
-function prepareBlocksForExecution(rawBlocks) {
-  const blocks = Array.isArray(rawBlocks) ? structuredClone(rawBlocks) : [];
-  const validMarkers = new Set([
-    "category",
-    "chat_history",
-    "world_info_before",
-    "world_info_after",
-    "char_description",
-    "char_personality",
-    "persona_description",
-    "persona",
-    "scenario",
-    "dialogue_examples",
-    "mes_examples",
-    "main_prompt",
-    "system_prompt",
-    "enhance_definitions",
-    "jailbreak",
-    "post_history_instructions",
-    "nsfw_prompt"
-  ]);
-  const structuralOnly = new Set([
-    "chat_history",
-    "world_info_before",
-    "world_info_after",
-    "char_description",
-    "char_personality",
-    "persona_description",
-    "persona",
-    "scenario",
-    "dialogue_examples",
-    "mes_examples"
-  ]);
-  const readVars = new Set;
-  const getvarRe = /\{\{\s*(?:getvar|getchatvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
-  for (const b of blocks) {
-    if (!b || !b.enabled || typeof b.content !== "string")
-      continue;
-    let m;
-    while ((m = getvarRe.exec(b.content)) !== null)
-      readVars.add(m[1]);
-    while ((m = dotReadRe.exec(b.content)) !== null)
-      readVars.add(m[1]);
-  }
-  const skipHelperVars = new Set([
-    "mod_pov",
-    "mod_length",
-    "check_length",
-    "tempo_log",
-    "check_relations",
-    "check_conflict",
-    "check_antislop",
-    "sola_msg",
-    "sola_trackers_any"
-  ]);
-  return blocks.map((b) => {
-    if (!b || typeof b !== "object")
-      return b;
-    const copy = { ...b };
-    let content = typeof copy.content === "string" ? copy.content : "";
-    if (content.includes("{{trim}}") && !content.includes("{{/trim}}")) {
-      content = content.replace(/\{\{trim\}\}/g, "");
-    }
-    const hasContent = content.trim().length > 0;
-    if (copy.marker === "category" && !hasContent) {
-      copy.enabled = true;
-      if (copy.categoryMode === "radio")
-        copy.categoryMode = "checkbox";
-      return copy;
-    }
-    if (hasContent && (!copy.marker || !structuralOnly.has(copy.marker))) {
-      copy.marker = null;
-    } else if (copy.marker && !validMarkers.has(copy.marker)) {
-      copy.marker = null;
-    }
-    if (copy.enabled && hasContent) {
-      const setVars = [];
-      const setInlineRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)::/gi;
-      const setScopedRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-      let sm;
-      while ((sm = setInlineRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1]))
-          setVars.push(sm[1]);
-      }
-      while ((sm = setScopedRe.exec(content)) !== null) {
-        if (!setVars.includes(sm[1]))
-          setVars.push(sm[1]);
-      }
-      const unread = setVars.filter((v) => !readVars.has(v) && !skipHelperVars.has(v));
-      if (unread.length > 0) {
-        const alreadyEmitted = unread.every((v) => content.includes(`{{getvar::${v}}}`));
-        if (!alreadyEmitted) {
-          content = `${content.trimEnd()}
-
-${unread.map((v) => `{{getvar::${v}}}`).join(`
-
-`)}`;
-        }
-      }
-    }
-    copy.content = content;
-    return copy;
-  });
-}
 var clean = (p) => ({ name: p.name, provider: p.provider || "loom", engine: p.engine || "classic", parameters: p.parameters || {}, prompt_order: p.prompt_order || [], prompts: p.prompts || {}, metadata: p.metadata || {} });
 function protectMacros(text) {
   const tokens = [];
@@ -407,8 +302,7 @@ spindle.onFrontendMessage(async (msg, userId) => {
         const key = userId + ":" + id;
         runs.set(key, controller);
         try {
-          const normalizedBlocks = prepareBlocksForExecution(msg.preset?.prompt_order || []);
-          const assembled = await spindle.assemble({ chatId: msg.chatId, blocks: normalizedBlocks, ...msg.connectionId ? { connectionId: msg.connectionId } : {}, generationType: msg.generationType || "normal", promptVariables: msg.preset.metadata?.promptVariables || {}, signal: controller.signal }, userId);
+          const assembled = await spindle.assemble({ chatId: msg.chatId, blocks: msg.preset?.prompt_order || [], ...msg.connectionId ? { connectionId: msg.connectionId } : {}, generationType: msg.generationType || "normal", promptVariables: msg.preset.metadata?.promptVariables || {}, signal: controller.signal }, userId);
           const messages = [...assembled.messages];
           const breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
           if (msg.customMessage?.trim()) {
