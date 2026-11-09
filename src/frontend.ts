@@ -1140,6 +1140,14 @@ export function setup(ctx: any) {
       } else if (a === 'delete-block' && b) {
         await deleteBlockAtIndex(state.selected);
         return;
+      } else if ((a === 'enable-checked-blocks' || a === 'disable-checked-blocks') && d) {
+        const enable = a === 'enable-checked-blocks';
+        const targetIds = new Set(state.selectedDraft);
+        for (const blk of d.prompt_order) {
+          if (targetIds.has(blk.id)) blk.enabled = enable;
+        }
+        state.selectedDraft = [];
+        persist();
       } else if (a === 'delete-checked-blocks' && d) {
         const count = state.selectedDraft.length;
         if (!count) return;
