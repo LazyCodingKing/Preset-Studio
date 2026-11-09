@@ -210,6 +210,7 @@ export function setup(ctx: any) {
     if (!p) return;
     if (msg.type === 'token') { p.onToken?.(msg.token); return; }
     if (msg.type === 'reasoning') { p.onReasoning?.(msg.token); return; }
+    if (msg.type === 'progress') { p.onProgress?.(msg); return; }
     if (msg.type === 'assembled') { p.onAssembled?.(msg.data); return; }
     if (msg.type === 'result' || msg.type === 'error') {
       pending.delete(msg.requestId);
@@ -455,11 +456,13 @@ export function setup(ctx: any) {
     const original: Record<string, string> = { name: block.name || '', content: block.content || '' };
     const fields = scope === 'both' ? ['name', 'content'] : [scope];
     const result: any = { original };
-    for (const field of fields) {
-      if (!original[field].trim()) throw new Error(field === 'name' ? 'This block has no title to translate.' : 'This block has no prompt text to translate.');
-      const translated = await request('translate', { text: original[field], language: state.translationLanguage, connectionId: state.translationConnection });
-      result[field] = translated.content;
-    }
+    await Promise.all(
+      fields.map(async (field) => {
+        if (!original[field].trim()) throw new Error(field === 'name' ? 'This block has no title to translate.' : 'This block has no prompt text to translate.');
+        const translated = await request('translate', { text: original[field], language: state.translationLanguage, connectionId: state.translationConnection });
+        result[field] = translated.content;
+      }),
+    );
     return result;
   }
 
@@ -996,25 +999,28 @@ export function setup(ctx: any) {
         const chosen = list.filter((block: any, i: number) => group === 'all' || (target === 'source' ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)));
         if (!chosen.length) throw new Error('Select at least one block to translate.');
         const snapshots = chosen.map((block: any) => ({ id: block.id, name: block.name || '', content: block.content || '' }));
-        const entries: any[] = [];
         state.batchTranslation = null;
         state.translating = true;
         render();
+        const progressEl = root.querySelector('[data-batch-progress]');
+        if (progressEl) progressEl.textContent = `Translating ${snapshots.length} block(s) in parallel batches…`;
         try {
-          for (let i = 0; i < snapshots.length; i++) {
-            const block = snapshots[i];
-            const fields = scope === 'both' ? ['name', 'content'] : [scope];
-            const available = fields.filter((field) => block[field].trim());
-            if (!available.length) continue;
-            const progress = root.querySelector('[data-batch-progress]');
-            if (progress) progress.textContent = `Translating ${i + 1} of ${snapshots.length}…`;
-            const result: any = { id: block.id, original: { name: block.name, content: block.content } };
-            for (const field of available) {
-              const translated = await request('translate', { text: block[field], language: state.translationLanguage, connectionId: state.translationConnection });
-              result[field] = translated.content;
-            }
-            entries.push(result);
-          }
+          const res = await request(
+            'translate-batch',
+            {
+              blocks: snapshots,
+              scope,
+              language: state.translationLanguage,
+              connectionId: state.translationConnection,
+            },
+            {
+              onProgress: (p: any) => {
+                const elProg = root.querySelector('[data-batch-progress]');
+                if (elProg) elProg.textContent = `Translated ${p.completed} / ${p.total} fields…`;
+              },
+            },
+          );
+          const entries = res?.entries || [];
           if (!entries.length) throw new Error('The selected blocks have no text in the chosen fields.');
           if ((target === 'source' ? state.importPreset : state.draft) !== owner) throw new Error('The preset changed while translating. Start again.');
           state.batchTranslation = { target, owner, entries };

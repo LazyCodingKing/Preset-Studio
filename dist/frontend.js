@@ -1619,6 +1619,10 @@ function setup(ctx) {
       p.onReasoning?.(msg.token);
       return;
     }
+    if (msg.type === "progress") {
+      p.onProgress?.(msg);
+      return;
+    }
     if (msg.type === "assembled") {
       p.onAssembled?.(msg.data);
       return;
@@ -1875,12 +1879,12 @@ function setup(ctx) {
     const original = { name: block.name || "", content: block.content || "" };
     const fields = scope === "both" ? ["name", "content"] : [scope];
     const result = { original };
-    for (const field of fields) {
+    await Promise.all(fields.map(async (field) => {
       if (!original[field].trim())
         throw new Error(field === "name" ? "This block has no title to translate." : "This block has no prompt text to translate.");
       const translated = await request("translate", { text: original[field], language: state.translationLanguage, connectionId: state.translationConnection });
       result[field] = translated.content;
-    }
+    }));
     return result;
   }
   function applyTranslatedFields(block, t) {
@@ -2461,27 +2465,26 @@ function setup(ctx) {
         if (!chosen.length)
           throw new Error("Select at least one block to translate.");
         const snapshots = chosen.map((block) => ({ id: block.id, name: block.name || "", content: block.content || "" }));
-        const entries = [];
         state.batchTranslation = null;
         state.translating = true;
         render();
+        const progressEl = root.querySelector("[data-batch-progress]");
+        if (progressEl)
+          progressEl.textContent = `Translating ${snapshots.length} block(s) in parallel batches…`;
         try {
-          for (let i = 0;i < snapshots.length; i++) {
-            const block = snapshots[i];
-            const fields = scope === "both" ? ["name", "content"] : [scope];
-            const available = fields.filter((field) => block[field].trim());
-            if (!available.length)
-              continue;
-            const progress = root.querySelector("[data-batch-progress]");
-            if (progress)
-              progress.textContent = `Translating ${i + 1} of ${snapshots.length}…`;
-            const result = { id: block.id, original: { name: block.name, content: block.content } };
-            for (const field of available) {
-              const translated = await request("translate", { text: block[field], language: state.translationLanguage, connectionId: state.translationConnection });
-              result[field] = translated.content;
+          const res = await request("translate-batch", {
+            blocks: snapshots,
+            scope,
+            language: state.translationLanguage,
+            connectionId: state.translationConnection
+          }, {
+            onProgress: (p) => {
+              const elProg = root.querySelector("[data-batch-progress]");
+              if (elProg)
+                elProg.textContent = `Translated ${p.completed} / ${p.total} fields…`;
             }
-            entries.push(result);
-          }
+          });
+          const entries = res?.entries || [];
           if (!entries.length)
             throw new Error("The selected blocks have no text in the chosen fields.");
           if ((target === "source" ? state.importPreset : state.draft) !== owner)
