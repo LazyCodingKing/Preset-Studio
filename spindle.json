@@ -3,6 +3,8 @@
   "identifier": "preset_studio",
   "version": "1.1.0",
   "author": "Preset Studio",
+    "github": "https://github.com/LazyCodingKing/Preset-Studio",
+  "homepage": "https://github.com/LazyCodingKing/Preset-Studio",
   "description": "Create, edit and test Loom presets against real chat context.",
   "permissions": [
     "presets",
