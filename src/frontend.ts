@@ -13,6 +13,7 @@ import {
 import {
   closeModalRef,
   askConfirm,
+  promptTemplateName,
   openFindReplaceDialog,
   openTemplatePickerModal,
   openBlockContextMenu,
@@ -577,11 +578,23 @@ export function setup(ctx: any) {
     render();
   }
 
+  async function saveEntriesAsTemplate(entries: any[], suggestedName = '') {
+    if (!entries.length) throw new Error('Select at least one block first.');
+    const name = await promptTemplateName(root, modalRef, suggestedName, entries.length);
+    if (!name) return;
+    state.templates = await request('template-save', {
+      template: { id: uid(), name, entries: structuredClone(entries) },
+    });
+    state.notice = `Saved template “${name}” (${entries.length} block${entries.length === 1 ? '' : 's'}).`;
+    render();
+  }
+
   const contextMenuCallbacks = {
     openFullTextEditorForBlock,
     runMacroPreview,
     moveBlock,
     deleteBlockAtIndex,
+    saveEntriesAsTemplate,
     persist,
     render,
   };
@@ -706,6 +719,7 @@ export function setup(ctx: any) {
       state.selectedImports = (el as HTMLInputElement).checked
         ? [...new Set([...state.selectedImports, i])]
         : state.selectedImports.filter((n: number) => n !== i);
+      render();
       return;
     }
     if (el.dataset.varCheck === 'placementSelector' && state.draft) {
@@ -891,8 +905,11 @@ export function setup(ctx: any) {
         if (state.showMacroPane && b) await runMacroPreview(b);
       } else if (a === 'refresh-macro' && b) { await runMacroPreview(b); return; }
       else if (a === 'add-current-to-basket' && b) {
-        state.basket.push({ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || 'Draft' });
-        state.notice = `Added “${b.name}” to template basket.`;
+        await saveEntriesAsTemplate(
+          [{ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || 'Draft' }],
+          b.name || 'Block Template',
+        );
+        return;
       } else if (a === 'add-variable' && b) {
         b.variables = Array.isArray(b.variables) ? b.variables : [];
         const idx = b.variables.length + 1;
@@ -944,22 +961,30 @@ export function setup(ctx: any) {
         if (!source) throw new Error('Source block is no longer available.');
         insertEntries([{ block: source, values: state.importValues[source.id] }]);
         state.notice = `Added “${source.name || 'Block'}” to draft.`;
-      } else if (a === 'collect-blocks') {
-        if (!state.selectedImports.length) throw new Error('Select at least one block.');
-        const source = state.presets.find((p: any) => p.id === state.importPreset)?.name || 'Preset';
-        for (const i of state.selectedImports) {
-          const block = state.importBlocks[i];
-          if (block) state.basket.push({ block: structuredClone(block), values: structuredClone(state.importValues[block.id] || {}), source });
-        }
+      } else if (a === 'add-checked-imports') {
+        if (!state.selectedImports.length) throw new Error('Check at least one source block first.');
+        const entries = state.selectedImports
+          .map((i: number) => state.importBlocks[i])
+          .filter(Boolean)
+          .map((block: any) => ({ block, values: state.importValues[block.id] }));
+        insertEntries(entries);
         state.selectedImports = [];
-        state.notice = 'Blocks added to your template basket.';
-      } else if (a === 'remove-collected') state.basket.splice(Number(el.dataset.index), 1);
-      else if (a === 'save-template') {
-        if (!state.templateName.trim()) throw new Error('Give your template a name.');
-        state.templates = await request('template-save', { template: { id: uid(), name: state.templateName, entries: structuredClone(state.basket) } });
-        state.basket = [];
-        state.templateName = '';
-        state.notice = 'Template saved.';
+        state.notice = `Added ${entries.length} checked block(s) to your draft.`;
+      } else if (a === 'collect-blocks') {
+        if (!state.selectedImports.length) throw new Error('Check at least one source block first.');
+        const source = state.presets.find((p: any) => p.id === state.importPreset)?.name || 'Preset';
+        const entries = state.selectedImports
+          .map((i: number) => state.importBlocks[i])
+          .filter(Boolean)
+          .map((block: any) => ({
+            block: structuredClone(block),
+            values: structuredClone(state.importValues[block.id] || {}),
+            source,
+          }));
+        await saveEntriesAsTemplate(entries, `${source} Selection`);
+        state.selectedImports = [];
+        render();
+        return;
       } else if (a === 'move-row-up' || a === 'move-row-down') {
         const idx = Number(el.dataset.index);
         moveBlock(idx, idx + (a === 'move-row-up' ? -1 : 1));
@@ -970,16 +995,15 @@ export function setup(ctx: any) {
       } else if (a === 'quick-template-from-selected') {
         const chosen = d.prompt_order.filter((blk: any) => state.selectedDraft.includes(blk.id));
         if (!chosen.length) throw new Error('Check at least one block first.');
-        for (const blk of chosen) {
-          state.basket.push({
-            block: structuredClone(blk),
-            values: structuredClone(d.metadata?.promptVariables?.[blk.id] || {}),
-            source: d.name || 'Draft',
-          });
-        }
+        const entries = chosen.map((blk: any) => ({
+          block: structuredClone(blk),
+          values: structuredClone(d.metadata?.promptVariables?.[blk.id] || {}),
+          source: d.name || 'Draft',
+        }));
+        await saveEntriesAsTemplate(entries, chosen.length === 1 ? chosen[0].name : `${d.name || 'Preset'} Pack`);
         state.selectedDraft = [];
-        state.view = 'remix';
-        state.notice = `Added ${chosen.length} checked block(s) to Template Basket. Name and save your template below.`;
+        render();
+        return;
       } else if (a === 'insert-template') {
         const t = state.templates[Number(el.dataset.index)];
         if (!t) throw new Error('Template not found.');

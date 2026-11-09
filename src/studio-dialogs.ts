@@ -52,6 +52,52 @@ export function askConfirm(
   });
 }
 
+export function promptTemplateName(
+  root: HTMLElement,
+  modalRef: ModalRef,
+  defaultName = '',
+  blockCount = 1,
+): Promise<string | null> {
+  closeModalRef(modalRef);
+  const returnFocus = document.activeElement as HTMLElement | null;
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'ps-native-dialog';
+    dialog.style.width = 'min(420px, calc(100vw - 24px))';
+    dialog.innerHTML = `<h3 style="margin-bottom:6px">📦 Save as Template</h3><p class="ps-muted" style="margin-bottom:12px">Save ${blockCount} block${blockCount === 1 ? '' : 's'} as a reusable template.</p><label>Template Name<input type="text" data-tpl-name value="${esc(defaultName)}" placeholder="e.g. Dialogue & Pacing Rules" maxlength="120"></label><div class="ps-actions" style="justify-content:flex-end;margin-top:14px"><button type="button" data-tpl-action="cancel">Cancel</button><button type="button" class="ps-primary" data-tpl-action="save">Save Template</button></div>`;
+    const input = dialog.querySelector<HTMLInputElement>('[data-tpl-name]')!;
+    const finish = (val: string | null) => {
+      if (modalRef.current === dialog) modalRef.current = null;
+      try { dialog.close(); } catch (_) {}
+      dialog.remove();
+      returnFocus?.focus?.({ preventScroll: true });
+      resolve(val);
+    };
+    dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); finish(null); });
+    dialog.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') ev.stopPropagation();
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const trimmed = input.value.trim();
+        if (trimmed) finish(trimmed);
+      }
+    });
+    dialog.addEventListener('click', (ev) => {
+      if (ev.target === dialog) finish(null);
+      const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-tpl-action]');
+      if (!btn) return;
+      if (btn.dataset.tplAction === 'cancel') finish(null);
+      else if (btn.dataset.tplAction === 'save' && input.value.trim()) finish(input.value.trim());
+    });
+    root.appendChild(dialog);
+    modalRef.current = dialog;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    input.focus({ preventScroll: true });
+    input.select();
+  });
+}
+
 export function openFindReplaceDialog(
   root: HTMLElement,
   modalRef: ModalRef,
@@ -235,6 +281,7 @@ export function openBlockContextMenu(
     runMacroPreview: (b: any) => Promise<void>;
     moveBlock: (from: number, to: number) => void;
     deleteBlockAtIndex: (idx: number) => Promise<void>;
+    saveEntriesAsTemplate: (entries: any[], suggestedName?: string) => Promise<void>;
     persist: () => void;
     render: () => void;
   },
@@ -257,7 +304,7 @@ export function openBlockContextMenu(
     <button type="button" data-ctx-key="lock">${b.isLocked ? '🔓 Unlock Block' : '🔒 Lock Block'}</button>
     <hr style="border:0;border-top:1px solid var(--ps-border);margin:3px 0">
     <button type="button" data-ctx-key="dup">Duplicate Block</button>
-    <button type="button" data-ctx-key="basket">＋ Add to Template Basket</button>
+    <button type="button" data-ctx-key="basket">📦 Save Block as Template…</button>
     <button type="button" data-ctx-key="top" ${index === 0 ? 'disabled' : ''}>⇈ Move to Top</button>
     <button type="button" data-ctx-key="bottom" ${index >= d.prompt_order.length - 1 ? 'disabled' : ''}>⇊ Move to Bottom</button>
     <hr style="border:0;border-top:1px solid var(--ps-border);margin:3px 0">
@@ -287,9 +334,10 @@ export function openBlockContextMenu(
       callbacks.persist();
       callbacks.render();
     } else if (selectedKey === 'basket') {
-      state.basket.push({ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || 'Draft' });
-      state.notice = `Added “${b.name}” to template basket.`;
-      callbacks.render();
+      await callbacks.saveEntriesAsTemplate(
+        [{ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || 'Draft' }],
+        b.name || 'Block Template',
+      );
     } else if (selectedKey === 'top' && index > 0) callbacks.moveBlock(index, 0);
     else if (selectedKey === 'bottom' && index < d.prompt_order.length - 1) callbacks.moveBlock(index, d.prompt_order.length - 1);
     else if (selectedKey === 'delete') await callbacks.deleteBlockAtIndex(index);
