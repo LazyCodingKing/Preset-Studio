@@ -31,8 +31,10 @@ export function setup(ctx) {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   box-sizing: border-box;
-  padding: 12px;
+  padding: 0;
 }
 .ps-root *, .ps-root *::before, .ps-root *::after { box-sizing: border-box; }
 .ps-root h2, .ps-root h3, .ps-root h4 { margin: 0; font-weight: 650; letter-spacing: -0.02em; }
@@ -109,15 +111,16 @@ export function setup(ctx) {
 .ps-list { display: grid; gap: 6px; min-width: 0; }
 .ps-col-list, .ps-col-detail { min-width: 0; max-width: 100%; overflow-x: hidden; }
 .ps-col-list {
-  max-height: min(680px, calc(var(--app-scaled-viewport-height, 100vh) - 200px)) !important;
-  min-height: 320px;
+  max-height: min(720px, calc(var(--app-scaled-viewport-height, 100vh) - 190px)) !important;
+  min-height: 300px;
   overflow-y: scroll !important;
+  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: auto;
   scrollbar-color: var(--ps-accent) rgba(0, 0, 0, 0.35);
-  padding-right: 8px !important;
+  padding: 10px 8px 12px 10px !important;
 }
-.ps-col-list::-webkit-scrollbar { width: 11px; height: 11px; display: block; }
+.ps-col-list::-webkit-scrollbar { width: 10px; height: 10px; display: block; }
 .ps-col-list::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.35); border-radius: 999px; }
 .ps-col-list::-webkit-scrollbar-thumb {
   background: rgba(167, 149, 232, 0.55);
@@ -136,14 +139,13 @@ export function setup(ctx) {
 .ps-block {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  overflow: hidden;
   border: 1px solid var(--ps-border);
   border-radius: 8px;
-  padding: 4px 6px;
+  padding: 6px 7px;
   background: var(--ps-bg);
   transition: border-color 0.14s ease, background-color 0.14s ease;
 }
@@ -153,7 +155,7 @@ export function setup(ctx) {
   margin-top: 6px;
 }
 .ps-block.ps-is-child { margin-left: 8px; width: calc(100% - 8px); }
-.ps-block.ps-active-row { border-color: var(--ps-accent); box-shadow: 0 0 0 1px var(--ps-accent); }
+.ps-block.ps-active-row { border-color: var(--ps-accent); box-shadow: 0 0 0 1px var(--ps-accent); background: rgba(167, 149, 232, 0.07); }
 .ps-block.ps-dragging { opacity: 0.4; border-style: dashed; }
 .ps-block.ps-drag-over-top { border-top: 2px solid var(--ps-accent); }
 .ps-block.ps-drag-over-bottom { border-bottom: 2px solid var(--ps-accent); }
@@ -162,7 +164,7 @@ export function setup(ctx) {
   user-select: none;
   touch-action: none;
   color: var(--ps-muted);
-  padding: 2px 3px;
+  padding: 2px;
   border-radius: 4px;
   font-size: 0.95rem;
   line-height: 1;
@@ -177,19 +179,81 @@ export function setup(ctx) {
   text-align: left;
   border: 0 !important;
   background: transparent !important;
-  padding: 3px 4px !important;
-  min-height: 30px !important;
-  justify-content: flex-start !important;
+  padding: 2px 4px !important;
+  min-height: 34px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  gap: 2px !important;
 }
-.ps-block-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; min-width: 0; flex: 1; }
-.ps-block .ps-pill { max-width: 86px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; font-size: 0.7rem; padding: 1px 6px; }
+.ps-block-title-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+}
+.ps-block-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+  font-size: 0.86rem;
+  line-height: 1.28;
+  min-width: 0;
+  flex: 1;
+}
+.ps-block-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 0.71rem;
+  color: var(--ps-muted);
+  line-height: 1.2;
+}
+.ps-mini-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  background: var(--ps-surface);
+  border: 1px solid var(--ps-border);
+  color: var(--ps-muted);
+}
+.ps-mini-badge.ps-def { color: var(--ps-accent); border-color: var(--ps-accent); }
+.ps-mini-badge.ps-ref { color: var(--ps-warning); border-color: rgba(255, 183, 77, 0.45); }
+.ps-row-actions { display: flex; align-items: center; gap: 3px; flex: none; }
+.ps-row-step { display: none !important; }
+.ps-block:hover .ps-row-step, .ps-block.ps-active-row .ps-row-step, .ps-block:focus-within .ps-row-step { display: inline-flex !important; }
 .ps-row-btn {
   min-height: 26px !important;
-  min-width: 26px !important;
+  min-width: 24px !important;
   padding: 2px 5px !important;
-  font-size: 0.75rem !important;
+  font-size: 0.74rem !important;
   flex: none;
 }
+.ps-native-dialog {
+  box-sizing: border-box;
+  width: min(640px, calc(100vw - 24px));
+  max-height: min(680px, calc(var(--app-scaled-viewport-height, 100vh) - 28px));
+  margin: auto;
+  padding: 18px;
+  border: 1px solid var(--ps-border);
+  border-radius: 12px;
+  background: var(--ps-surface);
+  color: var(--ps-text);
+  overflow: auto;
+  box-shadow: 0 20px 52px rgba(0, 0, 0, 0.65);
+}
+.ps-native-dialog::backdrop { background: rgba(8, 7, 12, 0.72); backdrop-filter: blur(3px); }
+.ps-mark-del { background: rgba(229, 115, 115, 0.25); color: #ffcdd2; border-radius: 3px; padding: 0 2px; }
+.ps-mark-ins { background: rgba(102, 187, 106, 0.25); color: #c8e6c9; border-radius: 3px; padding: 0 2px; }
 .ps-overlay-backdrop {
   position: fixed;
   inset: 0;
@@ -259,7 +323,7 @@ export function setup(ctx) {
 .ps-shell {
   max-width: 1640px;
   margin: 0 auto;
-  padding: 16px clamp(12px, 2.5vw, 32px) calc(84px + var(--ps-kb-inset, 0px) + env(safe-area-inset-bottom, 0px));
+  padding: 12px clamp(10px, 2vw, 28px) calc(84px + var(--ps-kb-inset, 0px) + env(safe-area-inset-bottom, 0px));
 }
 .ps-full .ps-shell { padding-top: max(16px, env(safe-area-inset-top, 0px)); }
 .ps-masthead {
@@ -288,11 +352,10 @@ export function setup(ctx) {
 .ps-kicker { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.11em; color: var(--ps-muted); font-weight: 700; }
 .ps-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   border-bottom: 1px solid var(--ps-border);
-  margin: 12px 0 14px;
-  overflow-x: auto;
-  scrollbar-width: none;
+  margin: 10px 0 12px;
 }
 .ps-tabs button {
   border: 0 !important;
@@ -414,6 +477,8 @@ export function setup(ctx) {
     editorMode: 'studio',
     blockFilter: 'all',
     blockSearch: '',
+    collapsedCategories: [],
+    savedFingerprint: '',
     mobileDetailOpen: false,
     showMacroPane: false,
     macroPreview: null,
@@ -533,27 +598,193 @@ export function setup(ctx) {
     }
   }
 
+  function computeDraftFingerprint(d) {
+    if (!d) return '';
+    return JSON.stringify({
+      name: d.name || '',
+      provider: d.provider || 'loom',
+      engine: d.engine || 'classic',
+      prompt_order: d.prompt_order || [],
+      parameters: d.parameters || {},
+      prompts: d.prompts || {},
+      metadata: d.metadata || {},
+    });
+  }
+
+  function ensureUniqueBlockIds(d) {
+    if (!d || !Array.isArray(d.prompt_order)) return d;
+    const seen = new Set();
+    for (const blk of d.prompt_order) {
+      if (!blk.id || seen.has(blk.id)) blk.id = uid();
+      seen.add(blk.id);
+    }
+    return d;
+  }
+
+  function buildPresetVariableDiagnostics(blocks) {
+    const defsByName = new Map();
+    const refsByName = new Map();
+    const defCountByBlock = new Map();
+    const refCountByBlock = new Map();
+    const varRe = /\{\{\s*(?:var|promptVar|presetVar)\s*::\s*([a-zA-Z0-9_.-]+)/gi;
+
+    for (const blk of blocks || []) {
+      const vars = Array.isArray(blk.variables) ? blk.variables : [];
+      defCountByBlock.set(blk.id, vars.length);
+      for (const v of vars) {
+        if (!v?.name) continue;
+        const list = defsByName.get(v.name) || [];
+        list.push({ blockId: blk.id, blockName: blk.name || 'Untitled', def: v });
+        defsByName.set(v.name, list);
+      }
+      const text = blk.content || '';
+      const blockRefSet = new Set();
+      let m;
+      while ((m = varRe.exec(text)) !== null) {
+        const name = m[1];
+        blockRefSet.add(name);
+        const rList = refsByName.get(name) || [];
+        if (!rList.some((x) => x.blockId === blk.id)) {
+          rList.push({ blockId: blk.id, blockName: blk.name || 'Untitled' });
+          refsByName.set(name, rList);
+        }
+      }
+      refCountByBlock.set(blk.id, blockRefSet.size);
+    }
+
+    const missing = [];
+    const duplicates = [];
+    const unused = [];
+    for (const [name, refs] of refsByName.entries()) {
+      if (!defsByName.has(name)) missing.push({ name, refs });
+    }
+    for (const [name, defs] of defsByName.entries()) {
+      if (defs.length > 1) duplicates.push({ name, defs });
+      if (!refsByName.has(name)) unused.push({ name, defs });
+    }
+    return { defCountByBlock, refCountByBlock, missing, duplicates, unused };
+  }
+
   function askConfirm(title, message, variant = 'warning', confirmLabel = 'Confirm') {
     closeActiveModal();
+    const returnFocus = document.activeElement;
     return new Promise((resolve) => {
-      const backdrop = document.createElement('div');
-      backdrop.className = 'ps-overlay-backdrop';
+      const dialog = document.createElement('dialog');
+      dialog.className = 'ps-native-dialog';
       const isDanger = variant === 'danger';
-      backdrop.innerHTML = `<div class="ps-overlay-dialog" role="alertdialog" aria-modal="true"><h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? 'ps-danger-btn' : 'ps-primary'}" style="${isDanger ? 'background:var(--ps-danger);color:#14111c;font-weight:700' : ''}" data-confirm-result="ok">${esc(confirmLabel)}</button></div></div>`;
+      dialog.innerHTML = `<h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? 'ps-danger-btn' : 'ps-primary'}" style="${isDanger ? 'background:var(--ps-danger);color:#14111c;font-weight:700' : ''}" data-confirm-result="ok">${esc(confirmLabel)}</button></div>`;
       const finish = (val) => {
-        if (activeModal === backdrop) activeModal = null;
-        backdrop.remove();
+        if (activeModal === dialog) activeModal = null;
+        try { dialog.close(); } catch (_) {}
+        dialog.remove();
+        returnFocus?.focus?.({ preventScroll: true });
         resolve(val);
       };
-      backdrop.addEventListener('click', (ev) => {
-        if (ev.target === backdrop) finish(false);
+      dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); finish(false); });
+      dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') ev.stopPropagation(); });
+      dialog.addEventListener('click', (ev) => {
+        if (ev.target === dialog) finish(false);
         const btn = ev.target.closest('button[data-confirm-result]');
         if (btn) finish(btn.dataset.confirmResult === 'ok');
       });
-      root.appendChild(backdrop);
-      activeModal = backdrop;
-      backdrop.querySelector('[data-confirm-result="ok"]')?.focus();
+      root.appendChild(dialog);
+      activeModal = dialog;
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+      dialog.querySelector('[data-confirm-result="ok"]')?.focus({ preventScroll: true });
     });
+  }
+
+  function openFindReplaceDialog() {
+    const d = state.draft;
+    if (!d) return;
+    closeActiveModal();
+    const returnFocus = document.activeElement;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'ps-native-dialog';
+    dialog.innerHTML = `<div class="ps-between" style="margin-bottom:8px"><h3>🔍 Find & Replace Across Preset</h3><button type="button" class="ps-btn-sm ps-btn-icon" data-fr="close" aria-label="Close">✕</button></div><p class="ps-muted" style="margin-bottom:10px">Search and replace literal text across all unlocked blocks in your draft. Locked blocks are skipped unless unlocked first.</p><div class="ps-grid"><label>Find Text<textarea data-fr="find" rows="2" style="min-height:64px" spellcheck="false" placeholder="Text or {{macro}} to find…"></textarea></label><label>Replace With<textarea data-fr="replace" rows="2" style="min-height:64px" spellcheck="false" placeholder="Replacement text (leave empty to delete)…"></textarea></label></div><p class="ps-muted" style="margin:8px 0" data-fr="status" role="status">Enter text above to preview matching blocks.</p><div class="ps-list" style="max-height:280px;overflow:auto" data-fr="results"></div><div class="ps-between" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--ps-border)"><button type="button" class="ps-btn-sm" data-fr="close">Cancel</button><button type="button" class="ps-btn-sm ps-primary" data-fr="apply" disabled>Replace Matches</button></div>`;
+    const findInput = dialog.querySelector('[data-fr="find"]');
+    const replaceInput = dialog.querySelector('[data-fr="replace"]');
+    const statusEl = dialog.querySelector('[data-fr="status"]');
+    const resultsEl = dialog.querySelector('[data-fr="results"]');
+    const applyBtn = dialog.querySelector('[data-fr="apply"]');
+    const selectedIds = new Set();
+    let matches = [];
+
+    const close = () => {
+      if (activeModal === dialog) activeModal = null;
+      try { dialog.close(); } catch (_) {}
+      dialog.remove();
+      returnFocus?.focus?.({ preventScroll: true });
+    };
+
+    const updatePreview = () => {
+      const needle = findInput.value;
+      const rep = replaceInput.value;
+      matches = [];
+      if (needle && needle !== rep) {
+        for (const blk of d.prompt_order) {
+          if (blk.isLocked || blk.marker === 'category') continue;
+          const parts = (blk.content || '').split(needle);
+          if (parts.length > 1) {
+            matches.push({ blk, count: parts.length - 1, parts });
+            if (!selectedIds.size) selectedIds.add(blk.id);
+          }
+        }
+      }
+      const totalCount = matches.reduce((acc, m) => acc + (selectedIds.has(m.blk.id) ? m.count : 0), 0);
+      statusEl.textContent = !needle
+        ? 'Enter text above to preview matching blocks.'
+        : needle === rep
+          ? 'Find and Replace strings are identical.'
+          : `${matches.length} matching unlocked block(s) · ${totalCount} replacement(s) selected.`;
+      applyBtn.disabled = totalCount === 0;
+      applyBtn.textContent = totalCount ? `Replace ${totalCount} Match(es)` : 'Replace Matches';
+      resultsEl.innerHTML = matches
+        .map(({ blk, count, parts }) => {
+          const previewHtml = parts
+            .map((p) => esc(p))
+            .join(`<mark class="ps-mark-del">${esc(needle)}</mark><mark class="ps-mark-ins">${esc(rep)}</mark>`);
+          return `<details class="ps-card" style="padding:8px"><summary class="ps-between"><label style="display:inline-flex;align-items:center;gap:8px;flex:1"><input type="checkbox" style="width:auto;min-height:18px" data-fr-id="${esc(blk.id)}" ${selectedIds.has(blk.id) ? 'checked' : ''}><strong>${esc(blk.name || 'Untitled')}</strong></label><span class="ps-pill">${count} match${count === 1 ? '' : 'es'}</span></summary><pre class="ps-result" style="margin-top:6px;max-height:140px">${previewHtml}</pre></details>`;
+        })
+        .join('');
+    };
+
+    findInput.addEventListener('input', () => { selectedIds.clear(); updatePreview(); });
+    replaceInput.addEventListener('input', updatePreview);
+    resultsEl.addEventListener('change', (ev) => {
+      const cb = ev.target.closest('input[data-fr-id]');
+      if (!cb) return;
+      if (cb.checked) selectedIds.add(cb.dataset.frId);
+      else selectedIds.delete(cb.dataset.frId);
+      updatePreview();
+    });
+    dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
+    dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') ev.stopPropagation(); });
+    dialog.addEventListener('click', (ev) => {
+      if (ev.target === dialog || ev.target.closest('[data-fr="close"]')) { close(); return; }
+      if (ev.target.closest('[data-fr="apply"]')) {
+        const needle = findInput.value;
+        const rep = replaceInput.value;
+        let changedBlocks = 0;
+        for (const { blk } of matches) {
+          if (!selectedIds.has(blk.id)) continue;
+          blk.content = (blk.content || '').split(needle).join(rep);
+          changedBlocks++;
+        }
+        close();
+        if (changedBlocks > 0) {
+          persist();
+          state.notice = `Replaced matches across ${changedBlocks} block(s). Use Undo (Ctrl+Z) to revert.`;
+          render();
+        }
+      }
+    });
+    root.appendChild(dialog);
+    activeModal = dialog;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
+    findInput.focus({ preventScroll: true });
   }
 
   const unsub = ctx.onBackendMessage((msg) => {
@@ -640,7 +871,7 @@ export function setup(ctx) {
 
   function persist(skipHistory = false) {
     if (!skipHistory && state.draft) pushHistory(state.draft);
-    state.dirty = true;
+    state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
     clearTimeout(timer);
     timer = setTimeout(() => {
       const draft = structuredClone(state.draft);
@@ -889,10 +1120,11 @@ export function setup(ctx) {
     const d = state.draft;
     if (!d) return;
     closeActiveModal();
+    const returnFocus = document.activeElement;
     const afterName = d.prompt_order[state.selected]?.name || 'selected block';
-    const backdrop = document.createElement('div');
-    backdrop.className = 'ps-overlay-backdrop';
-    backdrop.innerHTML = `<div class="ps-overlay-dialog" role="dialog" aria-modal="true"><div class="ps-between" style="margin-bottom:8px"><h3>Choose a Template to Add</h3><button type="button" class="ps-btn-sm ps-btn-icon" data-modal-action="close" aria-label="Close">✕</button></div><p class="ps-muted" style="margin-bottom:12px">Blocks will be inserted right after <strong>${esc(afterName)}</strong>.</p>${
+    const dialog = document.createElement('dialog');
+    dialog.className = 'ps-native-dialog';
+    dialog.innerHTML = `<div class="ps-between" style="margin-bottom:8px"><h3>Choose a Template to Add</h3><button type="button" class="ps-btn-sm ps-btn-icon" data-modal-action="close" aria-label="Close">✕</button></div><p class="ps-muted" style="margin-bottom:12px">Blocks will be inserted right after <strong>${esc(afterName)}</strong>.</p>${
       state.templates.length
         ? `<div class="ps-list">${state.templates
             .map((t, idx) => {
@@ -901,14 +1133,22 @@ export function setup(ctx) {
             })
             .join('')}</div>`
         : `<div class="ps-card" style="text-align:center;padding:18px 12px"><p class="ps-muted">No saved templates yet. Import a template JSON or build one in Remix & Templates.</p></div>`
-    }<div class="ps-between" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--ps-border)"><button type="button" class="ps-btn-sm" data-modal-action="import">📥 Import Template JSON</button><button type="button" class="ps-btn-sm" data-modal-action="remix">Manage in Remix Tab →</button></div></div>`;
+    }<div class="ps-between" style="margin-top:14px;padding-top:10px;border-top:1px solid var(--ps-border)"><button type="button" class="ps-btn-sm" data-modal-action="import">📥 Import Template JSON</button><button type="button" class="ps-btn-sm" data-modal-action="remix">Manage in Remix Tab →</button></div>`;
 
-    backdrop.addEventListener('click', async (ev) => {
-      if (ev.target === backdrop) { closeActiveModal(); return; }
+    const close = () => {
+      if (activeModal === dialog) activeModal = null;
+      try { dialog.close(); } catch (_) {}
+      dialog.remove();
+      returnFocus?.focus?.({ preventScroll: true });
+    };
+    dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
+    dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') ev.stopPropagation(); });
+    dialog.addEventListener('click', async (ev) => {
+      if (ev.target === dialog) { close(); return; }
       const insBtn = ev.target.closest('button[data-modal-insert]');
       if (insBtn) {
         const t = state.templates[Number(insBtn.dataset.modalInsert)];
-        closeActiveModal();
+        close();
         if (t) {
           insertEntries(t.entries);
           state.notice = `Added ${t.entries.length} blocks from “${t.name}”.`;
@@ -919,7 +1159,7 @@ export function setup(ctx) {
       const actBtn = ev.target.closest('button[data-modal-action]');
       if (!actBtn) return;
       const act = actBtn.dataset.modalAction;
-      closeActiveModal();
+      close();
       if (act === 'remix') {
         state.view = 'remix';
         render();
@@ -934,8 +1174,10 @@ export function setup(ctx) {
         }
       }
     });
-    root.appendChild(backdrop);
-    activeModal = backdrop;
+    root.appendChild(dialog);
+    activeModal = dialog;
+    if (typeof dialog.showModal === 'function') dialog.showModal();
+    else dialog.setAttribute('open', '');
   }
 
   function insertEntries(entries) {
@@ -1163,13 +1405,19 @@ export function setup(ctx) {
       return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div><h3>Native Loom Block Editor</h3><p class="ps-muted">Drag-and-drop blocks, configure placement selectors, and insert macros using Lumiverse's built-in component.</p></div><button data-action="editor-mode" data-mode="studio">Switch to Studio Power Inspector</button></div><div id="ps-native-loom-slot"></div></div>`;
     }
     const b = d.prompt_order[state.selected];
-    let currentCat = null;
+    const varDiag = buildPresetVariableDiagnostics(d.prompt_order);
+    const categoryBlocks = d.prompt_order.filter((blk) => blk.marker === 'category');
+    const allCatsCollapsed = categoryBlocks.length > 0 && categoryBlocks.every((c) => state.collapsedCategories.includes(c.id));
+    let currentCatId = null;
+    const hasSearchOrFilter = Boolean(state.blockSearch.trim()) || state.blockFilter !== 'all';
+
     const filteredBlocks = d.prompt_order
       .map((block, index) => {
-        if (block.marker === 'category') currentCat = block.name;
-        return { block, index, isChild: block.marker !== 'category' && Boolean(currentCat) };
+        if (block.marker === 'category') currentCatId = block.id;
+        return { block, index, parentCatId: block.marker === 'category' ? null : currentCatId, isChild: block.marker !== 'category' && Boolean(currentCatId) };
       })
-      .filter(({ block }) => {
+      .filter(({ block, parentCatId }) => {
+        if (!hasSearchOrFilter && parentCatId && state.collapsedCategories.includes(parentCatId)) return false;
         if (state.blockFilter === 'enabled' && !block.enabled) return false;
         if (state.blockFilter === 'categories' && block.marker !== 'category') return false;
         if (state.blockFilter === 'markers' && (!block.marker || block.marker === 'category')) return false;
@@ -1199,9 +1447,13 @@ export function setup(ctx) {
     const normalizedPreview = normalizeDraftForAssembly(d);
     const needsModularFix = JSON.stringify(normalizedPreview.prompt_order) !== JSON.stringify(d.prompt_order);
 
-    return `${needsModularFix ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><div class="ps-between"><span>⚡ <strong>Modular <code>{{setvar}}</code> / Category Content Detected:</strong> Some blocks in this preset store prompt text inside <code>{{setvar::...}}</code> variables without an output <code>{{getvar::...}}</code> block (or have prompt text inside a Category header). Test Lab automatically emits them—click here to apply this fix directly to your draft blocks.</span><button class="ps-btn-sm ps-primary" data-action="fix-modular-blocks">🔧 Fix Blocks in Draft</button></div></div>` : ''}<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[['all', 'All'], ['enabled', 'Active'], ['categories', 'Categories'], ['markers', 'Markers']].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? 'ps-primary' : ''}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join('')}<input style="width:180px;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm ps-primary" data-action="quick-insert-template">📦 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="quick-template-from-selected">📦 Save Checked (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">🗑 Delete Checked (${state.selectedDraft.length})</button>` : ''}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ''}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? 'ps-has-detail' : ''} ${state.showMacroPane ? 'ps-with-xray' : ''}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong><span class="ps-muted">Drag ⠿ or ↑↓</span></div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
+    return `${needsModularFix ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><div class="ps-between"><span>⚡ <strong>Modular <code>{{setvar}}</code> / Category Content Detected:</strong> Some blocks in this preset store prompt text inside <code>{{setvar::...}}</code> variables without an output <code>{{getvar::...}}</code> block (or have prompt text inside a Category header). Test Lab automatically emits them—click here to apply this fix directly to your draft blocks.</span><button class="ps-btn-sm ps-primary" data-action="fix-modular-blocks">🔧 Fix Blocks in Draft</button></div></div>` : ''}<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[['all', 'All'], ['enabled', 'Active'], ['categories', 'Categories'], ['markers', 'Markers']].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? 'ps-primary' : ''}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join('')}<input style="width:160px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="open-find-replace" title="Find and replace text across all unlocked blocks">🔍 Find & Replace</button><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm ps-primary" data-action="quick-insert-template">📦 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="quick-template-from-selected">📦 Save Checked (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">🗑 Delete Checked (${state.selectedDraft.length})</button>` : ''}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ''}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? 'ps-has-detail' : ''} ${state.showMacroPane ? 'ps-with-xray' : ''}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong>${categoryBlocks.length ? `<button class="ps-btn-sm" data-action="toggle-all-categories">${allCatsCollapsed ? '▾ Expand Categories' : '▸ Collapse Categories'}</button>` : '<span class="ps-muted">Drag ⠿ or ↑↓</span>'}</div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
       const tok = state.tokenCounts[block.id];
-      return `<div class="ps-block ${block.marker === 'category' ? 'ps-is-cat' : isChild ? 'ps-is-child' : ''} ${!block.enabled ? 'ps-is-off' : ''} ${index === state.selected ? 'ps-active-row' : ''}" draggable="true" data-context-index="${index}"><span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span><input type="checkbox" style="width:auto;min-height:18px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? 'checked' : ''}><button class="ps-block-main" data-action="select-block" data-index="${index}" title="${esc(block.name || 'Untitled')}">${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ''}${block.isLocked ? '<span title="Locked" style="font-size:0.78rem">🔒</span>' : ''}<span class="ps-block-title">${esc(block.name || 'Untitled')}</span></button><span class="ps-pill" data-token-id="${esc(block.id)}" title="${esc(block.marker || block.role)}">${block.content?.trim() && tok ? `${tok}t` : esc(block.marker || block.role)}</span><button class="ps-row-btn" data-action="move-row-up" data-index="${index}" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button><button class="ps-row-btn" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? 'disabled' : ''} title="Move down">↓</button><button class="ps-row-btn ${block.enabled ? 'ps-toggle-on' : ''}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? 'On' : 'Off'}</button><button class="ps-row-btn ps-danger-btn" data-action="delete-row" data-index="${index}" title="Delete block">🗑</button><button class="ps-row-btn" data-action="block-menu" data-index="${index}" title="More actions">⋯</button></div>`;
+      const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
+      const refCnt = varDiag.refCountByBlock.get(block.id) || 0;
+      const isCat = block.marker === 'category';
+      const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
+      return `<div class="ps-block ${isCat ? 'ps-is-cat' : isChild ? 'ps-is-child' : ''} ${!block.enabled ? 'ps-is-off' : ''} ${index === state.selected ? 'ps-active-row' : ''}" draggable="true" data-context-index="${index}"><span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}" title="${isCatCollapsed ? 'Expand category' : 'Collapse category'}">${isCatCollapsed ? '▸' : '▾'}</button>` : `<input type="checkbox" style="width:auto;min-height:18px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? 'checked' : ''}>`}<button class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || 'Untitled')}"><div class="ps-block-title-row">${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ''}${block.isLocked ? '<span title="Locked" style="font-size:0.75rem;flex:none">🔒</span>' : ''}<span class="ps-block-title">${esc(block.name || 'Untitled')}</span></div><div class="ps-block-sub"><span>${esc(block.marker || block.role)}</span>${block.content?.trim() && tok ? `<span data-token-id="${esc(block.id)}">· ${tok}t</span>` : `<span data-token-id="${esc(block.id)}"></span>`}${defCnt ? `<span class="ps-mini-badge ps-def" title="Defines ${defCnt} variable(s)">D${defCnt}</span>` : ''}${refCnt ? `<span class="ps-mini-badge ps-ref" title="References ${refCnt} variable(s)">V${refCnt}</span>` : ''}</div></button><div class="ps-row-actions"><button class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button><button class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? 'disabled' : ''} title="Move down">↓</button>${!isCat ? `<button class="ps-row-btn ${block.enabled ? 'ps-toggle-on' : ''}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? 'On' : 'Off'}</button>` : ''}<button class="ps-row-btn ps-danger-btn ps-row-step" data-action="delete-row" data-index="${index}" title="Delete block">🗑</button><button class="ps-row-btn" data-action="block-menu" data-index="${index}" title="More actions">⋯</button></div></div>`;
     }).join('') || '<p class="ps-muted">No matching blocks.</p>'}</div></div><div class="ps-col-detail" data-scroll-id="inspector-detail">${!b ? '<div class="ps-panel"><p class="ps-muted">Select or add a block to inspect.</p></div>' : `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div class="ps-row"><button class="ps-btn-sm ps-mobile-back" data-action="close-mobile-detail">← Back</button><h3>${esc(b.name || 'Untitled')}</h3><span class="ps-pill ps-pill-accent">${esc(b.marker || b.role)}</span><button class="ps-btn-sm ${b.enabled ? 'ps-toggle-on' : ''}" data-action="toggle" data-index="${state.selected}">${b.enabled ? '● Enabled (On)' : '○ Disabled (Off — Skipped in Test)'}</button></div><div class="ps-actions"><button class="ps-btn-sm ${b.isLocked ? 'ps-primary' : ''}" data-action="toggle-lock">${b.isLocked ? '🔒 Locked (Click to Unlock)' : '🔓 Unlocked'}</button><button class="ps-btn-sm" data-action="view" data-view="variables">🎛 Variables (${varCount})</button><button class="ps-btn-sm ${state.showMacroPane ? 'ps-primary' : ''}" data-action="toggle-macro-pane">⚡ Macro Preview</button><button class="ps-btn-sm ps-primary" data-action="open-text-editor" ${b.isLocked ? 'disabled' : ''}>⤢ Full-Screen Editor</button></div></div>${b.isLocked ? `<div class="ps-notice" style="margin-bottom:10px;border-left-color:var(--ps-warning)">🔒 This block is locked against accidental text edits. Click <strong>🔒 Locked (Click to Unlock)</strong> above to edit its fields, or use <strong>Delete Block</strong> below to remove it.</div>` : ''}${b.marker && b.marker !== 'category' && b.content?.trim() ? `<div class="ps-notice" style="margin-bottom:10px"><div class="ps-between"><span>ℹ This block has custom <strong>Prompt Content</strong> and a marker (<code>${esc(b.marker)}</code>). Test Lab will use your custom text, but saving to Lumiverse works best with Marker set to <strong>None (Custom Prompt)</strong>.</span><button type="button" class="ps-btn-sm ps-primary" data-action="clear-marker">Set Marker to None</button></div></div>` : ''}<div class="ps-grid"><label>Block Name<input data-block="name" value="${esc(b.name)}" ${b.isLocked ? 'disabled' : ''}></label><label>Role<select data-block="role" ${b.isLocked ? 'disabled' : ''}>${['system', 'user', 'assistant', 'user_append', 'assistant_append'].map((x) => `<option value="${x}" ${b.role === x ? 'selected' : ''}>${x}</option>`).join('')}</select></label><label>Position<select data-block="position" ${b.isLocked ? 'disabled' : ''}>${[['pre_history', 'Before Chat History (pre_history)'], ['post_history', 'After Chat History (post_history)'], ['in_history', 'At Depth in History (in_history)']].map(([val, lbl]) => `<option value="${val}" ${b.position === val ? 'selected' : ''}>${lbl}</option>`).join('')}</select></label><label>In-History Depth<div id="ps-depth-stepper-slot"><input data-block="depth" type="number" min="0" value="${esc(b.depth ?? 0)}" ${b.isLocked ? 'disabled' : ''}></div></label><label>Structural Marker<select data-block="marker" ${b.isLocked ? 'disabled' : ''}>${markerOptions.map((m) => `<option value="${esc(m.id)}" ${(b.marker || '') === m.id ? 'selected' : ''}>${esc(m.label)}</option>`).join('')}</select></label><label>Category Selection Mode<select data-block="categoryMode" ${b.marker !== 'category' || b.isLocked ? 'disabled' : ''}><option value="">None</option><option value="checkbox" ${b.categoryMode === 'checkbox' ? 'selected' : ''}>Checkbox (Multi)</option><option value="radio" ${b.categoryMode === 'radio' ? 'selected' : ''}>Radio (Single)</option></select></label><label>Block Group <span class="ps-muted">(Optional mutual-exclusion group ID)</span><input data-block="group" value="${esc(b.group || '')}" placeholder="e.g. style_group" ${b.isLocked ? 'disabled' : ''}></label></div><div style="margin-top:10px"><label>Injection Triggers <span class="ps-muted">(Empty = active on all generation types)</span><div id="ps-triggers-slot"><div class="ps-chips">${TRIGGERS.map((tr) => `<button type="button" class="ps-btn-sm ${(b.injectionTrigger || []).includes(tr) ? 'ps-primary' : ''}" data-action="toggle-trigger" data-trigger="${tr}" ${b.isLocked ? 'disabled' : ''}>${tr}</button>`).join('')}</div></div></label></div><div class="ps-between" style="margin:10px 0"><div class="ps-row"><span class="ps-muted">Color Tag:</span><button class="ps-btn-sm" data-action="set-color" data-color="">None</button>${SWATCHES.map((c) => `<button class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join('')}</div>${translationButtons('translate', b)}</div><div class="ps-card" style="margin-bottom:8px;padding:8px 10px"><div class="ps-between" style="gap:6px"><div class="ps-row" style="flex:1"><span class="ps-muted" style="font-weight:600">Insert Macro:</span><select style="width:auto;max-width:260px;min-height:30px;padding:3px 8px;font-size:0.82rem" data-state="quickMacroSnippet" ${b.isLocked ? 'disabled' : ''}>${MACRO_CATALOG.map((m) => `<option value="${esc(m.snippet)}" ${state.quickMacroSnippet === m.snippet ? 'selected' : ''}>${esc(m.group)}: ${esc(m.label)}</option>`).join('')}${presetVarNames.map((vn) => `<option value="{{var::${esc(vn)}}}">Preset Var: {{var::${esc(vn)}}}</option>`).join('')}</select><button type="button" class="ps-btn-sm ps-primary" data-action="insert-selected-macro" ${b.isLocked ? 'disabled' : ''}>＋ Insert at Cursor</button></div><div class="ps-chips">${['{{char}}', '{{user}}', '{{persona}}', '{{if::...}}', '{{memories}}', '{{loomSovHand}}'].map((chip) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="${esc(chip === '{{if::...}}' ? '{{if::{{isGroupChat}}}}\n\n{{/if}}' : chip)}" ${b.isLocked ? 'disabled' : ''}>${esc(chip)}</button>`).join('')}${presetVarNames.slice(0, 4).map((vn) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="{{var::${esc(vn)}}}" ${b.isLocked ? 'disabled' : ''}>{{var::${esc(vn)}}}</button>`).join('')}</div></div></div><label>Prompt Content <span class="ps-muted">Supports {{char}}, {{user}}, {{var::name}}, {{if::...}}</span><textarea class="ps-content" data-block="content" placeholder="${b.marker ? `Structural marker (${b.marker}) — leave empty unless overriding.` : 'Write prompt instructions…'}" ${b.isLocked ? 'disabled' : ''}>${esc(b.content)}</textarea></label>${state.translation?.blockId === b.id ? `<div class="ps-card" style="margin-top:8px"><strong>Translation Preview (${esc(state.translationLanguage)})</strong>${translationPreview(state.translation, 'translation')}<div class="ps-actions" style="margin-top:8px"><button class="ps-primary ps-btn-sm" data-action="apply-translation">Apply Translation</button><button class="ps-btn-sm" data-action="discard-translation">Discard</button></div></div>` : ''}<div class="ps-between" style="margin-top:12px"><div class="ps-actions"><button class="ps-btn-sm" data-action="up" ${state.selected === 0 ? 'disabled' : ''}>↑ Up</button><button class="ps-btn-sm" data-action="down" ${state.selected >= d.prompt_order.length - 1 ? 'disabled' : ''}>↓ Down</button><button class="ps-btn-sm" data-action="duplicate-block">Duplicate</button><button class="ps-btn-sm" data-action="add-current-to-basket">＋ To Template Basket</button></div><button class="ps-btn-sm ps-danger-btn" data-action="delete-block">🗑 Delete Block</button></div></div>`}</div>${state.showMacroPane && b ? `<div class="ps-panel"><div class="ps-between"><h4>⚡ Live Macro Preview</h4><button class="ps-btn-sm" data-action="refresh-macro">↻ Resolve</button></div><p class="ps-muted" style="margin:4px 0 8px">Evaluated non-committing (commit: false) against ${state.chatId ? 'selected chat' : 'global context'}.</p>${macroData?.diagnostics?.length ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><strong>${macroData.diagnostics.length} Macro Diagnostic(s):</strong><ul style="margin:4px 0;padding-left:18px">${macroData.diagnostics.map((dg) => `<li>${esc(dg.message)}</li>`).join('')}</ul></div>` : ''}<pre class="ps-result">${esc(state.macroBusy ? 'Resolving macros…' : macroData ? macroData.text || '(Resolved to empty string)' : 'Click Resolve to preview expanded macros.')}</pre></div>` : ''}</div>`;
   }
 
@@ -1211,7 +1463,9 @@ export function setup(ctx) {
     if (!b) return `<div class="ps-panel"><p class="ps-muted">Select a block in Tab 01 first to configure its Prompt Variables.</p></div>`;
     const vars = Array.isArray(b.variables) ? b.variables : [];
     const savedValues = d.metadata?.promptVariables?.[b.id] || {};
-    return `<div class="ps-panel"><div class="ps-between"><div><h3>Prompt Variables for “${esc(b.name || 'Untitled')}”</h3><p class="ps-muted">Expose clean user-facing inputs (Sliders, Dropdowns, Switches, Text, Multi-select, Placement Selectors) that inject into <code>{{var::name}}</code> or <code>{{.name}}</code>.</p></div><div class="ps-actions"><select data-action="select-block-dropdown">${d.prompt_order.map((blk, idx) => `<option value="${idx}" ${idx === state.selected ? 'selected' : ''}>${esc(blk.name || 'Untitled')} (${(blk.variables || []).length} vars)</option>`).join('')}</select><button class="ps-primary" data-action="add-variable">＋ Add Variable</button></div></div></div><div class="ps-list" data-scroll-id="variables-list">${vars.map((v, vi) => {
+    const diag = buildPresetVariableDiagnostics(d.prompt_order);
+    const hasIssues = diag.missing.length > 0 || diag.duplicates.length > 0 || diag.unused.length > 0;
+    return `${hasIssues ? `<details class="ps-panel" data-details-id="var-health-linter" open><summary><strong>🩺 Preset Variable Health Check (${diag.missing.length + diag.duplicates.length + diag.unused.length} notice${diag.missing.length + diag.duplicates.length + diag.unused.length === 1 ? '' : 's'})</strong></summary><div class="ps-list" style="margin-top:8px">${diag.missing.map((m) => `<div class="ps-card ps-between" style="border-left:3px solid var(--ps-warning)"><div><strong>Unknown <code>{{var::${esc(m.name)}}}</code></strong><div class="ps-muted">Referenced in ${esc(m.refs.map((r) => r.blockName).join(', '))} — no block defines this variable.</div></div><button class="ps-btn-sm" data-action="jump-to-block-id" data-block-id="${esc(m.refs[0].blockId)}">Open Block →</button></div>`).join('')}${diag.duplicates.map((dup) => `<div class="ps-card" style="border-left:3px solid var(--ps-danger)"><strong>Duplicate <code>{{var::${esc(dup.name)}}}</code></strong><div class="ps-muted">Defined in multiple blocks: ${esc(dup.defs.map((df) => df.blockName).join(', '))}</div></div>`).join('')}${diag.unused.map((u) => `<div class="ps-card ps-between"><div><strong>Unused <code>{{var::${esc(u.name)}}}</code></strong><div class="ps-muted">Defined in ${esc(u.defs[0].blockName)}, but not referenced via <code>{{var::${esc(u.name)}}}</code> in any prompt.</div></div><button class="ps-btn-sm" data-action="jump-to-block-id" data-block-id="${esc(u.defs[0].blockId)}">Inspect →</button></div>`).join('')}</div></details>` : ''}<div class="ps-panel"><div class="ps-between"><div><h3>Prompt Variables for “${esc(b.name || 'Untitled')}”</h3><p class="ps-muted">Expose clean user-facing inputs (Sliders, Dropdowns, Switches, Text, Multi-select, Placement Selectors) that inject into <code>{{var::name}}</code> or <code>{{.name}}</code>.</p></div><div class="ps-actions"><select data-action="select-block-dropdown">${d.prompt_order.map((blk, idx) => `<option value="${idx}" ${idx === state.selected ? 'selected' : ''}>${esc(blk.name || 'Untitled')} (${(blk.variables || []).length} vars)</option>`).join('')}</select><button class="ps-primary" data-action="add-variable">＋ Add Variable</button></div></div></div><div class="ps-list" data-scroll-id="variables-list">${vars.map((v, vi) => {
       const curVal = savedValues[v.name] ?? v.defaultValue ?? '';
       return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:8px"><div class="ps-row"><strong>${esc(v.label || v.name || 'Variable')}</strong><code class="ps-pill ps-mono">{{var::${esc(v.name || 'key')}}}</code>${v.type === 'multiselect' ? `<code class="ps-pill ps-mono">{{var::${esc(v.name || 'key')}::ison::opt}}</code>` : ''}</div><button class="ps-btn-sm ps-danger-btn" data-action="delete-variable" data-vindex="${vi}">Remove</button></div><div class="ps-grid-3"><label>Internal ID (alphanumeric/underscore)<input data-var-index="${vi}" data-var-field="name" value="${esc(v.name || '')}" placeholder="e.g. writing_tone"></label><label>Display Label<input data-var-index="${vi}" data-var-field="label" value="${esc(v.label || '')}" placeholder="e.g. Writing Tone"></label><label>Input Type<select data-var-index="${vi}" data-var-field="type">${[['text', 'Text'], ['textarea', 'Text Area'], ['number', 'Number'], ['slider', 'Slider'], ['select', 'Dropdown'], ['boolean', 'On / Off Switch'], ['multiselect', 'Multi-select']].map(([tid, tlbl]) => `<option value="${tid}" ${v.type === tid ? 'selected' : ''}>${tlbl}</option>`).join('')}</select></label></div><div class="ps-grid" style="margin-top:8px"><label>Description / Helper Hint<input data-var-index="${vi}" data-var-field="description" value="${esc(v.description || '')}"></label><label>Default Value<input data-var-index="${vi}" data-var-field="defaultValue" value="${esc(v.defaultValue ?? '')}"></label></div>${v.type === 'textarea' ? `<div class="ps-grid" style="margin-top:8px"><label>Text Area Rows (Height)<input type="number" min="2" max="30" data-var-index="${vi}" data-var-field="rows" value="${esc(v.rows ?? 4)}"></label></div>` : ''}${v.type === 'multiselect' ? `<div class="ps-grid" style="margin-top:8px"><label>Join Separator <span class="ps-muted">(Use \\n for newline; default is \\n\\n)</span><input data-var-index="${vi}" data-var-field="separator" value="${esc((v.separator ?? '\n\n').replace(/\n/g, '\\n'))}"></label></div>` : ''}${['number', 'slider'].includes(v.type) ? `<div class="ps-grid-3" style="margin-top:8px"><label>Min<input type="number" data-var-index="${vi}" data-var-field="min" value="${esc(v.min ?? 0)}"></label><label>Max<input type="number" data-var-index="${vi}" data-var-field="max" value="${esc(v.max ?? 100)}"></label><label>Step<input type="number" step="any" data-var-index="${vi}" data-var-field="step" value="${esc(v.step ?? 1)}"></label></div>` : ''}${['select', 'multiselect'].includes(v.type) ? `<div class="ps-card" style="margin-top:8px"><div class="ps-between"><div><strong>Options (${(v.options || []).length})</strong>${v.type === 'select' ? `<label style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><input type="checkbox" style="width:auto;min-height:18px" data-var-index="${vi}" data-var-check="placementSelector" ${v.placementSelector ? 'checked' : ''}><span>Enable Placement Selector (override block Role/Position/Depth per option)</span></label>` : ''}</div><button class="ps-btn-sm" data-action="add-var-option" data-vindex="${vi}">＋ Add Option</button></div><div class="ps-list" style="margin-top:6px">${(v.options || []).map((opt, oi) => `<div class="ps-card" style="padding:8px"><div class="ps-row"><input style="flex:1" placeholder="Key/ID" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="id" value="${esc(opt.id ?? opt.label ?? '')}"><input style="flex:1" placeholder="Label shown to user" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="label" value="${esc(opt.label || '')}"><input style="flex:2" placeholder="Prompt text substituted" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="value" value="${esc(opt.value || '')}"><button class="ps-btn-sm ps-danger-btn" data-action="delete-var-option" data-vindex="${vi}" data-oindex="${oi}">✕</button></div>${v.type === 'select' && v.placementSelector ? `<div class="ps-grid-3" style="margin-top:6px"><label>Option Role Override<select data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="role"><option value="">Use Block Role</option>${['system', 'user', 'assistant', 'user_append', 'assistant_append'].map((r) => `<option value="${r}" ${opt.role === r ? 'selected' : ''}>${r}</option>`).join('')}</select></label><label>Option Position Override<select data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="position"><option value="">Use Block Position</option>${['pre_history', 'post_history', 'in_history'].map((pos) => `<option value="${pos}" ${opt.position === pos ? 'selected' : ''}>${pos}</option>`).join('')}</select></label><label>Option Depth Override<input type="number" min="0" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="depth" value="${esc(opt.depth ?? '')}" placeholder="Block default"></label></div>` : ''}</div>`).join('')}</div></div>` : ''}<div class="ps-card" style="margin-top:8px"><label>Active Override Value in Draft (<code>metadata.promptVariables</code>)<input data-var-runtime="${esc(v.name || '')}" value="${esc(typeof curVal === 'object' ? JSON.stringify(curVal) : curVal)}" placeholder="Uses default if empty"></label></div></div>`;
     }).join('') || '<div class="ps-panel"><p class="ps-muted">No variables defined on this block yet. Click “＋ Add Variable” to create one.</p></div>'}</div><details class="ps-panel" data-details-id="raw-vars-json"><summary>Advanced: Raw Block Variables JSON</summary><textarea data-json="variables">${esc(JSON.stringify(b.variables || [], null, 2))}</textarea><button class="ps-btn-sm" style="margin-top:6px" data-action="apply-json" data-target="variables">Apply Variables JSON</button></details>`;
@@ -1792,9 +2046,11 @@ export function setup(ctx) {
           render();
           return;
         }
-        state.draft = await request('get', { id: el.value });
+        state.draft = ensureUniqueBlockIds(await request('get', { id: el.value }));
+        state.savedFingerprint = computeDraftFingerprint(state.draft);
         state.selected = 0;
         state.selectedDraft = [];
+        state.collapsedCategories = [];
         state.historyPast = [structuredClone(state.draft)];
         state.historyFuture = [];
         state.batchTranslation = null;
@@ -1845,13 +2101,30 @@ export function setup(ctx) {
         if (t) exportJsonFile(`template-${t.name.replace(/[^a-z0-9-_]+/gi, '_')}.json`, t);
       } else if (a === 'view') state.view = el.dataset.view;
       else if (a === 'editor-mode') state.editorMode = el.dataset.mode;
-      else if (a === 'filter-blocks') state.blockFilter = el.dataset.filter;
+      else if (a === 'open-find-replace') { openFindReplaceDialog(); return; }
+      else if (a === 'toggle-category-collapse') {
+        const catId = el.dataset.catId;
+        state.collapsedCategories = state.collapsedCategories.includes(catId)
+          ? state.collapsedCategories.filter((id) => id !== catId)
+          : [...state.collapsedCategories, catId];
+      } else if (a === 'toggle-all-categories' && d) {
+        const catIds = d.prompt_order.filter((blk) => blk.marker === 'category').map((blk) => blk.id);
+        const allCollapsed = catIds.length > 0 && catIds.every((id) => state.collapsedCategories.includes(id));
+        state.collapsedCategories = allCollapsed ? [] : catIds;
+      } else if (a === 'filter-blocks') state.blockFilter = el.dataset.filter;
       else if (a === 'filter-breakdown') state.breakdownFilter = el.dataset.filter;
       else if (a === 'toggle-xray-expand') state.xrayExpanded = !state.xrayExpanded;
       else if (a === 'jump-to-block') {
         state.selected = Number(el.dataset.index) || 0;
         state.view = 'blocks';
         state.mobileDetailOpen = true;
+      } else if (a === 'jump-to-block-id' && d) {
+        const idx = d.prompt_order.findIndex((blk) => blk.id === el.dataset.blockId);
+        if (idx >= 0) {
+          state.selected = idx;
+          state.view = 'blocks';
+          state.mobileDetailOpen = true;
+        }
       } else if (a === 'fix-modular-blocks' && d) {
         const fixed = normalizeDraftForAssembly(d);
         d.prompt_order = fixed.prompt_order;
@@ -2157,14 +2430,22 @@ export function setup(ctx) {
         }
         persist();
       } else if (a === 'save' || a === 'save-copy') {
-        const saved = await syncSaveWithNativePresetEditor(d, a === 'save-copy');
-        state.draft = saved;
-        state.dirty = false;
-        clearTimeout(timer);
-        await saveChain;
-        await request('draft', { draft: saved });
-        await refresh();
-        state.notice = saved.provider === 'loom' ? 'Saved and applied live to Lumiverse (no page refresh needed).' : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
+        root.inert = true;
+        root.setAttribute('aria-busy', 'true');
+        try {
+          const saved = ensureUniqueBlockIds(await syncSaveWithNativePresetEditor(d, a === 'save-copy'));
+          state.draft = saved;
+          state.savedFingerprint = computeDraftFingerprint(saved);
+          state.dirty = false;
+          clearTimeout(timer);
+          await saveChain;
+          await request('draft', { draft: saved });
+          await refresh();
+          state.notice = saved.provider === 'loom' ? 'Saved and applied live to Lumiverse (no page refresh needed).' : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
+        } finally {
+          root.inert = false;
+          root.removeAttribute('aria-busy');
+        }
       } else if (a === 'profile') {
         if (!state.chatId) throw new Error('Choose a chat first.');
         const active = await request('active', { chatId: state.chatId });
