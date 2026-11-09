@@ -449,16 +449,61 @@ var freshDraft = () => ({
   name: "New preset",
   provider: "loom",
   engine: "classic",
-  parameters: { temperature: 0.8, max_tokens: 800, top_p: 0.95 },
+  parameters: {},
   prompts: {},
   metadata: { promptVariables: {} },
   prompt_order: [
-    { id: uid(), name: "Core System", marker: "category", categoryMode: "checkbox", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, isLocked: false, color: "#a795e8", injectionTrigger: [], group: null },
-    { id: uid(), name: "Instructions", content: "Write vivid, natural prose and stay in character as {{char}}.", role: "system", enabled: true, position: "pre_history", depth: 0, marker: null, isLocked: false, color: null, injectionTrigger: [], group: null },
-    { id: uid(), name: "Character Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: false, color: null, injectionTrigger: [], group: null },
-    { id: uid(), name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: false, color: null, injectionTrigger: [], group: null }
+    { id: uid(), name: "Main Prompt", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "main_prompt", isLocked: false, color: null, injectionTrigger: [], group: null },
+    { id: uid(), name: "Char Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: true, color: null, injectionTrigger: [], group: null },
+    { id: uid(), name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true, color: null, injectionTrigger: [], group: null }
   ]
 });
+function normalizeVariableDef(v) {
+  const type = v?.type === "boolean" ? "switch" : ["text", "textarea", "number", "slider", "select", "switch", "multiselect"].includes(v?.type) ? v.type : "text";
+  const base = {
+    name: String(v?.name || "var_1").replace(/[^a-zA-Z0-9_]/g, "_") || "var_1",
+    label: String(v?.label || v?.name || "Variable"),
+    type
+  };
+  if (typeof v?.description === "string" && v.description)
+    base.description = v.description;
+  if (type === "switch") {
+    base.defaultValue = v?.defaultValue === 1 || v?.defaultValue === "1" || v?.defaultValue === true || v?.defaultValue === "true" ? 1 : 0;
+  } else if (type === "number" || type === "slider") {
+    const min = Number.isFinite(Number(v?.min)) ? Number(v.min) : 0;
+    const max = Number.isFinite(Number(v?.max)) ? Number(v.max) : 100;
+    if (type === "slider" || v?.min !== undefined)
+      base.min = min;
+    if (type === "slider" || v?.max !== undefined)
+      base.max = max;
+    if (v?.step !== undefined && Number.isFinite(Number(v.step)))
+      base.step = Number(v.step);
+    const defNum = Number(v?.defaultValue);
+    base.defaultValue = Number.isFinite(defNum) ? defNum : min;
+  } else if (type === "select" || type === "multiselect") {
+    const rawOpts = Array.isArray(v?.options) && v.options.length ? v.options : [{ id: "option_1", label: "Option 1", value: "" }];
+    base.options = rawOpts.map((o, i) => ({
+      id: String(o?.id || `option_${i + 1}`),
+      label: String(o?.label || o?.id || `Option ${i + 1}`),
+      value: String(o?.value ?? "")
+    }));
+    if (type === "select") {
+      const defStr = String(v?.defaultValue ?? base.options[0].id);
+      base.defaultValue = base.options.some((o) => o.id === defStr) ? defStr : base.options[0].id;
+    } else {
+      const validIds = new Set(base.options.map((o) => o.id));
+      const rawDef = Array.isArray(v?.defaultValue) ? v.defaultValue.map(String) : typeof v?.defaultValue === "string" && v.defaultValue.trim() ? v.defaultValue.split(",").map((s) => s.trim()) : [];
+      base.defaultValue = rawDef.filter((id) => validIds.has(id));
+      if (typeof v?.separator === "string")
+        base.separator = v.separator;
+    }
+  } else {
+    base.defaultValue = String(v?.defaultValue ?? "");
+    if (type === "textarea" && Number.isFinite(Number(v?.rows)))
+      base.rows = Math.max(2, Number(v.rows));
+  }
+  return base;
+}
 function computeDraftFingerprint(d) {
   if (!d)
     return "";
@@ -567,7 +612,7 @@ function cloneBlocksForHost(blocks) {
     group: block.group ? String(block.group) : null,
     categoryMode: block.categoryMode === "radio" || block.categoryMode === "checkbox" ? block.categoryMode : null,
     ...Array.isArray(block.variables) ? {
-      variables: block.variables.map((v) => v.type === "select" || v.type === "multiselect" ? { ...v, options: (v.options || []).map((o) => ({ ...o })) } : { ...v })
+      variables: block.variables.map(normalizeVariableDef)
     } : {}
   }));
 }
@@ -584,12 +629,13 @@ function sanitizeBlockForLoom(b) {
     isLocked: Boolean(b.isLocked),
     color: b.color ? String(b.color) : null,
     injectionTrigger: Array.isArray(b.injectionTrigger) ? b.injectionTrigger.map(String) : [],
+    ...Array.isArray(b.characterTagTrigger) ? { characterTagTrigger: b.characterTagTrigger.map(String) } : {},
     group: b.group ? String(b.group) : null
   };
   if (b.categoryMode === "radio" || b.categoryMode === "checkbox")
     cleanBlock.categoryMode = b.categoryMode;
   if (Array.isArray(b.variables))
-    cleanBlock.variables = structuredClone(b.variables);
+    cleanBlock.variables = b.variables.map(normalizeVariableDef);
   return cleanBlock;
 }
 function exportJsonFile(filename, dataObj) {
@@ -1031,7 +1077,7 @@ function renderArchitectTab(ctx, state) {
     const isCat = block.marker === "category";
     const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
     return `<div class="ps-block ${isCat ? "ps-is-cat" : isChild ? "ps-is-child" : ""} ${!block.enabled ? "ps-is-off" : ""} ${index === state.selected ? "ps-active-row" : ""}" draggable="true" data-context-index="${index}"><span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}" title="${isCatCollapsed ? "Expand category" : "Collapse category"}">${isCatCollapsed ? "▸" : "▾"}</button>` : `<input type="checkbox" style="width:auto;min-height:18px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? "checked" : ""}>`}<button class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || "Untitled")}"><div class="ps-block-title-row">${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ""}${block.isLocked ? '<span title="Locked" style="font-size:0.75rem;flex:none">\uD83D\uDD12</span>' : ""}<span class="ps-block-title">${esc(block.name || "Untitled")}</span></div><div class="ps-block-sub"><span>${esc(block.marker || block.role)}</span>${block.content?.trim() && tok ? `<span data-token-id="${esc(block.id)}">· ${tok}t</span>` : `<span data-token-id="${esc(block.id)}"></span>`}${defCnt ? `<span class="ps-mini-badge ps-def" title="Defines ${defCnt} variable(s)">D${defCnt}</span>` : ""}${refCnt ? `<span class="ps-mini-badge ps-ref" title="References ${refCnt} variable(s)">V${refCnt}</span>` : ""}</div></button><div class="ps-row-actions"><button class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? "disabled" : ""} title="Move up">↑</button><button class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? "disabled" : ""} title="Move down">↓</button>${!isCat ? `<button class="ps-row-btn ${block.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? "On" : "Off"}</button>` : ""}<button class="ps-row-btn ps-danger-btn ps-row-step" data-action="delete-row" data-index="${index}" title="Delete block">\uD83D\uDDD1</button><button class="ps-row-btn" data-action="block-menu" data-index="${index}" title="More actions">⋯</button></div></div>`;
-  }).join("") || '<p class="ps-muted">No matching blocks.</p>'}</div></div><div class="ps-col-detail" data-scroll-id="inspector-detail">${!b ? '<div class="ps-panel"><p class="ps-muted">Select or add a block to inspect.</p></div>' : `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div class="ps-row"><button class="ps-btn-sm ps-mobile-back" data-action="close-mobile-detail">← Back</button><h3>${esc(b.name || "Untitled")}</h3><span class="ps-pill ps-pill-accent">${esc(b.marker || b.role)}</span><button class="ps-btn-sm ${b.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${state.selected}">${b.enabled ? "● Enabled (On)" : "○ Disabled (Off — Skipped in Test)"}</button></div><div class="ps-actions"><button class="ps-btn-sm ${b.isLocked ? "ps-primary" : ""}" data-action="toggle-lock">${b.isLocked ? "\uD83D\uDD12 Locked (Click to Unlock)" : "\uD83D\uDD13 Unlocked"}</button><button class="ps-btn-sm" data-action="view" data-view="variables">\uD83C\uDF9B Variables (${varCount})</button><button class="ps-btn-sm ${state.showMacroPane ? "ps-primary" : ""}" data-action="toggle-macro-pane">⚡ Macro Preview</button><button class="ps-btn-sm ps-primary" data-action="open-text-editor" ${b.isLocked ? "disabled" : ""}>⤢ Full-Screen Editor</button></div></div>${b.isLocked ? `<div class="ps-notice" style="margin-bottom:10px;border-left-color:var(--ps-warning)">\uD83D\uDD12 This block is locked against accidental text edits. Click <strong>\uD83D\uDD12 Locked (Click to Unlock)</strong> above to edit its fields, or use <strong>Delete Block</strong> below to remove it.</div>` : ""}${b.marker && b.marker !== "category" && b.content?.trim() ? `<div class="ps-notice" style="margin-bottom:10px"><div class="ps-between"><span>ℹ This block has custom <strong>Prompt Content</strong> and a marker (<code>${esc(b.marker)}</code>). Test Lab will use your custom text, but saving to Lumiverse works best with Marker set to <strong>None (Custom Prompt)</strong>.</span><button type="button" class="ps-btn-sm ps-primary" data-action="clear-marker">Set Marker to None</button></div></div>` : ""}<div class="ps-grid"><label>Block Name<input data-block="name" value="${esc(b.name)}" ${b.isLocked ? "disabled" : ""}></label><label>Role<select data-block="role" ${b.isLocked ? "disabled" : ""}>${["system", "user", "assistant", "user_append", "assistant_append"].map((x) => `<option value="${x}" ${b.role === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label>Position<select data-block="position" ${b.isLocked ? "disabled" : ""}>${[["pre_history", "Before Chat History (pre_history)"], ["post_history", "After Chat History (post_history)"], ["in_history", "At Depth in History (in_history)"]].map(([val, lbl]) => `<option value="${val}" ${b.position === val ? "selected" : ""}>${lbl}</option>`).join("")}</select></label><label>In-History Depth<div id="ps-depth-stepper-slot"><input data-block="depth" type="number" min="0" value="${esc(b.depth ?? 0)}" ${b.isLocked ? "disabled" : ""}></div></label><label>Structural Marker<select data-block="marker" ${b.isLocked ? "disabled" : ""}>${markerOptions.map((m) => `<option value="${esc(m.id)}" ${(b.marker || "") === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label><label>Category Selection Mode<select data-block="categoryMode" ${b.marker !== "category" || b.isLocked ? "disabled" : ""}><option value="">None</option><option value="checkbox" ${b.categoryMode === "checkbox" ? "selected" : ""}>Checkbox (Multi)</option><option value="radio" ${b.categoryMode === "radio" ? b.categoryMode === "radio" ? "selected" : "" : ""}>Radio (Single)</option></select></label><label>Block Group <span class="ps-muted">(Optional mutual-exclusion group ID)</span><input data-block="group" value="${esc(b.group || "")}" placeholder="e.g. style_group" ${b.isLocked ? "disabled" : ""}></label></div><div style="margin-top:10px"><label>Injection Triggers <span class="ps-muted">(Empty = active on all generation types)</span><div id="ps-triggers-slot"><div class="ps-chips">${TRIGGERS.map((tr) => `<button type="button" class="ps-btn-sm ${(b.injectionTrigger || []).includes(tr) ? "ps-primary" : ""}" data-action="toggle-trigger" data-trigger="${tr}" ${b.isLocked ? "disabled" : ""}>${tr}</button>`).join("")}</div></div></label></div><div class="ps-between" style="margin:10px 0"><div class="ps-row"><span class="ps-muted">Color Tag:</span><button class="ps-btn-sm" data-action="set-color" data-color="">None</button>${SWATCHES.map((c) => `<button class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join("")}</div>${translationButtons(state, "translate", b)}</div><div class="ps-card" style="margin-bottom:8px;padding:8px 10px"><div class="ps-between" style="gap:6px"><div class="ps-row" style="flex:1"><span class="ps-muted" style="font-weight:600">Insert Macro:</span><select style="width:auto;max-width:260px;min-height:30px;padding:3px 8px;font-size:0.82rem" data-state="quickMacroSnippet" ${b.isLocked ? "disabled" : ""}>${MACRO_CATALOG.map((m) => `<option value="${esc(m.snippet)}" ${state.quickMacroSnippet === m.snippet ? "selected" : ""}>${esc(m.group)}: ${esc(m.label)}</option>`).join("")}${presetVarNames.map((vn) => `<option value="{{var::${esc(vn)}}}">Preset Var: {{var::${esc(vn)}}}</option>`).join("")}</select><button type="button" class="ps-btn-sm ps-primary" data-action="insert-selected-macro" ${b.isLocked ? "disabled" : ""}>＋ Insert at Cursor</button></div><div class="ps-chips">${["{{char}}", "{{user}}", "{{persona}}", "{{if::...}}", "{{memories}}", "{{loomSovHand}}"].map((chip) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="${esc(chip === "{{if::...}}" ? `{{if::{{isGroupChat}}}}
+  }).join("") || '<p class="ps-muted">No matching blocks.</p>'}</div></div><div class="ps-col-detail" data-scroll-id="inspector-detail">${!b ? '<div class="ps-panel"><p class="ps-muted">Select or add a block to inspect.</p></div>' : `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div class="ps-row"><button class="ps-btn-sm ps-mobile-back" data-action="close-mobile-detail">← Back</button><h3>${esc(b.name || "Untitled")}</h3><span class="ps-pill ps-pill-accent">${esc(b.marker || b.role)}</span><button class="ps-btn-sm ${b.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${state.selected}">${b.enabled ? "● Enabled (On)" : "○ Disabled (Off — Skipped in Test)"}</button></div><div class="ps-actions"><button class="ps-btn-sm ${b.isLocked ? "ps-primary" : ""}" data-action="toggle-lock">${b.isLocked ? "\uD83D\uDD12 Locked (Click to Unlock)" : "\uD83D\uDD13 Unlocked"}</button><button class="ps-btn-sm" data-action="view" data-view="variables">\uD83C\uDF9B Variables (${varCount})</button><button class="ps-btn-sm ${state.showMacroPane ? "ps-primary" : ""}" data-action="toggle-macro-pane">⚡ Macro Preview</button><button class="ps-btn-sm ps-primary" data-action="open-text-editor" ${b.isLocked ? "disabled" : ""}>⤢ Full-Screen Editor</button></div></div>${b.isLocked ? `<div class="ps-notice" style="margin-bottom:10px;border-left-color:var(--ps-warning)">\uD83D\uDD12 This block is locked against accidental text edits. Click <strong>\uD83D\uDD12 Locked (Click to Unlock)</strong> above to edit its fields, or use <strong>Delete Block</strong> below to remove it.</div>` : ""}<div class="ps-grid"><label>Block Name<input data-block="name" value="${esc(b.name)}" ${b.isLocked ? "disabled" : ""}></label><label>Role<select data-block="role" ${b.isLocked ? "disabled" : ""}>${["system", "user", "assistant", "user_append", "assistant_append"].map((x) => `<option value="${x}" ${b.role === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label>Position<select data-block="position" ${b.isLocked ? "disabled" : ""}>${[["pre_history", "Before Chat History (pre_history)"], ["post_history", "After Chat History (post_history)"], ["in_history", "At Depth in History (in_history)"]].map(([val, lbl]) => `<option value="${val}" ${b.position === val ? "selected" : ""}>${lbl}</option>`).join("")}</select></label><label>In-History Depth<div id="ps-depth-stepper-slot"><input data-block="depth" type="number" min="0" value="${esc(b.depth ?? 0)}" ${b.isLocked ? "disabled" : ""}></div></label><label>Structural Marker<select data-block="marker" ${b.isLocked ? "disabled" : ""}>${markerOptions.map((m) => `<option value="${esc(m.id)}" ${(b.marker || "") === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label><label>Category Selection Mode<select data-block="categoryMode" ${b.marker !== "category" || b.isLocked ? "disabled" : ""}><option value="">None</option><option value="checkbox" ${b.categoryMode === "checkbox" ? "selected" : ""}>Checkbox (Multi)</option><option value="radio" ${b.categoryMode === "radio" ? b.categoryMode === "radio" ? "selected" : "" : ""}>Radio (Single)</option></select></label><label>Block Group <span class="ps-muted">(Optional mutual-exclusion group ID)</span><input data-block="group" value="${esc(b.group || "")}" placeholder="e.g. style_group" ${b.isLocked ? "disabled" : ""}></label></div><div style="margin-top:10px"><label>Injection Triggers <span class="ps-muted">(Empty = active on all generation types)</span><div id="ps-triggers-slot"><div class="ps-chips">${TRIGGERS.map((tr) => `<button type="button" class="ps-btn-sm ${(b.injectionTrigger || []).includes(tr) ? "ps-primary" : ""}" data-action="toggle-trigger" data-trigger="${tr}" ${b.isLocked ? "disabled" : ""}>${tr}</button>`).join("")}</div></div></label></div><div class="ps-between" style="margin:10px 0"><div class="ps-row"><span class="ps-muted">Color Tag:</span><button class="ps-btn-sm" data-action="set-color" data-color="">None</button>${SWATCHES.map((c) => `<button class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join("")}</div>${translationButtons(state, "translate", b)}</div><div class="ps-card" style="margin-bottom:8px;padding:8px 10px"><div class="ps-between" style="gap:6px"><div class="ps-row" style="flex:1"><span class="ps-muted" style="font-weight:600">Insert Macro:</span><select style="width:auto;max-width:260px;min-height:30px;padding:3px 8px;font-size:0.82rem" data-state="quickMacroSnippet" ${b.isLocked ? "disabled" : ""}>${MACRO_CATALOG.map((m) => `<option value="${esc(m.snippet)}" ${state.quickMacroSnippet === m.snippet ? "selected" : ""}>${esc(m.group)}: ${esc(m.label)}</option>`).join("")}${presetVarNames.map((vn) => `<option value="{{var::${esc(vn)}}}">Preset Var: {{var::${esc(vn)}}}</option>`).join("")}</select><button type="button" class="ps-btn-sm ps-primary" data-action="insert-selected-macro" ${b.isLocked ? "disabled" : ""}>＋ Insert at Cursor</button></div><div class="ps-chips">${["{{char}}", "{{user}}", "{{persona}}", "{{if::...}}", "{{memories}}", "{{loomSovHand}}"].map((chip) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="${esc(chip === "{{if::...}}" ? `{{if::{{isGroupChat}}}}
 
 {{/if}}` : chip)}" ${b.isLocked ? "disabled" : ""}>${esc(chip)}</button>`).join("")}${presetVarNames.slice(0, 4).map((vn) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="{{var::${esc(vn)}}}" ${b.isLocked ? "disabled" : ""}>{{var::${esc(vn)}}}</button>`).join("")}</div></div></div><label>Prompt Content <span class="ps-muted">Supports {{char}}, {{user}}, {{var::name}}, {{if::...}}</span><textarea class="ps-content" data-block="content" placeholder="${b.marker ? `Structural marker (${b.marker}) — leave empty unless overriding.` : "Write prompt instructions…"}" ${b.isLocked ? "disabled" : ""}>${esc(b.content)}</textarea></label>${state.translation?.blockId === b.id ? `<div class="ps-card" style="margin-top:8px"><strong>Translation Preview (${esc(state.translationLanguage)})</strong>${translationPreview(state.translation, "translation")}<div class="ps-actions" style="margin-top:8px"><button class="ps-primary ps-btn-sm" data-action="apply-translation">Apply Translation</button><button class="ps-btn-sm" data-action="discard-translation">Discard</button></div></div>` : ""}<div class="ps-between" style="margin-top:12px"><div class="ps-actions"><button class="ps-btn-sm ps-primary" data-action="save" ${state.busy ? "disabled" : ""}>\uD83D\uDCBE Save Block</button><button class="ps-btn-sm" data-action="up" ${state.selected === 0 ? "disabled" : ""}>↑ Up</button><button class="ps-btn-sm" data-action="down" ${state.selected >= d.prompt_order.length - 1 ? "disabled" : ""}>↓ Down</button><button class="ps-btn-sm" data-action="duplicate-block">Duplicate</button></div><button class="ps-btn-sm ps-danger-btn" data-action="delete-block">\uD83D\uDDD1 Delete Block</button></div></div>`}</div>${state.showMacroPane && b ? `<div class="ps-panel"><div class="ps-between"><h4>⚡ Live Macro Preview</h4><button class="ps-btn-sm" data-action="refresh-macro">↻ Resolve</button></div><p class="ps-muted" style="margin:4px 0 8px">Evaluated non-committing (commit: false) against ${state.chatId ? "selected chat" : "global context"}.</p>${macroData?.diagnostics?.length ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><strong>${macroData.diagnostics.length} Macro Diagnostic(s):</strong><ul style="margin:4px 0;padding-left:18px">${macroData.diagnostics.map((dg) => `<li>${esc(dg.message)}</li>`).join("")}</ul></div>` : ""}<pre class="ps-result">${esc(state.macroBusy ? "Resolving macros…" : macroData ? macroData.text || "(Resolved to empty string)" : "Click Resolve to preview expanded macros.")}</pre></div>` : ""}</div>`;
 }
@@ -1046,20 +1092,15 @@ function renderVariablesTab(state) {
   const hasIssues = diag.missing.length > 0 || diag.duplicates.length > 0 || diag.unused.length > 0;
   return `${hasIssues ? `<details class="ps-panel" data-details-id="var-health-linter" open><summary><strong>\uD83E\uDE7A Preset Variable Health Check (${diag.missing.length + diag.duplicates.length + diag.unused.length} notice${diag.missing.length + diag.duplicates.length + diag.unused.length === 1 ? "" : "s"})</strong></summary><div class="ps-list" style="margin-top:8px">${diag.missing.map((m) => `<div class="ps-card ps-between" style="border-left:3px solid var(--ps-warning)"><div><strong>Unknown <code>{{var::${esc(m.name)}}}</code></strong><div class="ps-muted">Referenced in ${esc(m.refs.map((r) => r.blockName).join(", "))} — no block defines this variable.</div></div><button class="ps-btn-sm" data-action="jump-to-block-id" data-block-id="${esc(m.refs[0].blockId)}">Open Block →</button></div>`).join("")}${diag.duplicates.map((dup) => `<div class="ps-card" style="border-left:3px solid var(--ps-danger)"><strong>Duplicate <code>{{var::${esc(dup.name)}}}</code></strong><div class="ps-muted">Defined in multiple blocks: ${esc(dup.defs.map((df) => df.blockName).join(", "))}</div></div>`).join("")}${diag.unused.map((u) => `<div class="ps-card ps-between"><div><strong>Unused <code>{{var::${esc(u.name)}}}</code></strong><div class="ps-muted">Defined in ${esc(u.defs[0].blockName)}, but not referenced via <code>{{var::${esc(u.name)}}}</code> in any prompt.</div></div><button class="ps-btn-sm" data-action="jump-to-block-id" data-block-id="${esc(u.defs[0].blockId)}">Inspect →</button></div>`).join("")}</div></details>` : ""}<div class="ps-panel"><div class="ps-between"><div><h3>Prompt Variables for “${esc(b.name || "Untitled")}”</h3><p class="ps-muted">Expose clean user-facing inputs (Sliders, Dropdowns, Switches, Text, Multi-select, Placement Selectors) that inject into <code>{{var::name}}</code> or <code>{{.name}}</code>.</p></div><div class="ps-actions"><select data-action="select-block-dropdown">${d.prompt_order.map((blk, idx) => `<option value="${idx}" ${idx === state.selected ? "selected" : ""}>${esc(blk.name || "Untitled")} (${(blk.variables || []).length} vars)</option>`).join("")}</select><button class="ps-primary" data-action="add-variable">＋ Add Variable</button></div></div></div><div class="ps-list" data-scroll-id="variables-list">${vars.map((v, vi) => {
     const curVal = savedValues[v.name] ?? v.defaultValue ?? "";
-    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:8px"><div class="ps-row"><strong>${esc(v.label || v.name || "Variable")}</strong><code class="ps-pill ps-mono">{{var::${esc(v.name || "key")}}}</code>${v.type === "multiselect" ? `<code class="ps-pill ps-mono">{{var::${esc(v.name || "key")}::ison::opt}}</code>` : ""}</div><button class="ps-btn-sm ps-danger-btn" data-action="delete-variable" data-vindex="${vi}">Remove</button></div><div class="ps-grid-3"><label>Internal ID (alphanumeric/underscore)<input data-var-index="${vi}" data-var-field="name" value="${esc(v.name || "")}" placeholder="e.g. writing_tone"></label><label>Display Label<input data-var-index="${vi}" data-var-field="label" value="${esc(v.label || "")}" placeholder="e.g. Writing Tone"></label><label>Input Type<select data-var-index="${vi}" data-var-field="type">${[["text", "Text"], ["textarea", "Text Area"], ["number", "Number"], ["slider", "Slider"], ["select", "Dropdown"], ["boolean", "On / Off Switch"], ["multiselect", "Multi-select"]].map(([tid, tlbl]) => `<option value="${tid}" ${v.type === tid ? "selected" : ""}>${tlbl}</option>`).join("")}</select></label></div><div class="ps-grid" style="margin-top:8px"><label>Description / Helper Hint<input data-var-index="${vi}" data-var-field="description" value="${esc(v.description || "")}"></label><label>Default Value<input data-var-index="${vi}" data-var-field="defaultValue" value="${esc(v.defaultValue ?? "")}"></label></div>${v.type === "textarea" ? `<div class="ps-grid" style="margin-top:8px"><label>Text Area Rows (Height)<input type="number" min="2" max="30" data-var-index="${vi}" data-var-field="rows" value="${esc(v.rows ?? 4)}"></label></div>` : ""}${v.type === "multiselect" ? `<div class="ps-grid" style="margin-top:8px"><label>Join Separator <span class="ps-muted">(Use \\n for newline; default is \\n\\n)</span><input data-var-index="${vi}" data-var-field="separator" value="${esc((v.separator ?? `
+    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:8px"><div class="ps-row"><strong>${esc(v.label || v.name || "Variable")}</strong><code class="ps-pill ps-mono">{{var::${esc(v.name || "key")}}}</code>${v.type === "multiselect" ? `<code class="ps-pill ps-mono">{{var::${esc(v.name || "key")}::ison::opt}}</code>` : ""}</div><button class="ps-btn-sm ps-danger-btn" data-action="delete-variable" data-vindex="${vi}">Remove</button></div><div class="ps-grid-3"><label>Internal ID (alphanumeric/underscore)<input data-var-index="${vi}" data-var-field="name" value="${esc(v.name || "")}" placeholder="e.g. writing_tone"></label><label>Display Label<input data-var-index="${vi}" data-var-field="label" value="${esc(v.label || "")}" placeholder="e.g. Writing Tone"></label><label>Input Type<select data-var-index="${vi}" data-var-field="type">${[["text", "Text"], ["textarea", "Text Area"], ["number", "Number"], ["slider", "Slider"], ["select", "Dropdown"], ["switch", "On / Off Switch"], ["multiselect", "Multi-select"]].map(([tid, tlbl]) => `<option value="${tid}" ${(v.type === "boolean" ? "switch" : v.type) === tid ? "selected" : ""}>${tlbl}</option>`).join("")}</select></label></div><div class="ps-grid" style="margin-top:8px"><label>Description / Helper Hint<input data-var-index="${vi}" data-var-field="description" value="${esc(v.description || "")}"></label><label>Default Value ${v.type === "switch" ? '<span class="ps-muted">(1 = On, 0 = Off)</span>' : v.type === "multiselect" ? '<span class="ps-muted">(Comma-separated option IDs)</span>' : ""}<input data-var-index="${vi}" data-var-field="defaultValue" value="${esc(Array.isArray(v.defaultValue) ? v.defaultValue.join(", ") : v.defaultValue ?? "")}"></label></div>${v.type === "textarea" ? `<div class="ps-grid" style="margin-top:8px"><label>Text Area Rows (Height)<input type="number" min="2" max="30" data-var-index="${vi}" data-var-field="rows" value="${esc(v.rows ?? 4)}"></label></div>` : ""}${v.type === "multiselect" ? `<div class="ps-grid" style="margin-top:8px"><label>Join Separator <span class="ps-muted">(Use \\n for newline; default is \\n\\n)</span><input data-var-index="${vi}" data-var-field="separator" value="${esc((v.separator ?? `
 
-`).replace(/\n/g, "\\n"))}"></label></div>` : ""}${["number", "slider"].includes(v.type) ? `<div class="ps-grid-3" style="margin-top:8px"><label>Min<input type="number" data-var-index="${vi}" data-var-field="min" value="${esc(v.min ?? 0)}"></label><label>Max<input type="number" data-var-index="${vi}" data-var-field="max" value="${esc(v.max ?? 100)}"></label><label>Step<input type="number" step="any" data-var-index="${vi}" data-var-field="step" value="${esc(v.step ?? 1)}"></label></div>` : ""}${["select", "multiselect"].includes(v.type) ? `<div class="ps-card" style="margin-top:8px"><div class="ps-between"><div><strong>Options (${(v.options || []).length})</strong>${v.type === "select" ? `<label style="display:inline-flex;align-items:center;gap:6px;margin-left:12px"><input type="checkbox" style="width:auto;min-height:18px" data-var-index="${vi}" data-var-check="placementSelector" ${v.placementSelector ? "checked" : ""}><span>Enable Placement Selector (override block Role/Position/Depth per option)</span></label>` : ""}</div><button class="ps-btn-sm" data-action="add-var-option" data-vindex="${vi}">＋ Add Option</button></div><div class="ps-list" style="margin-top:6px">${(v.options || []).map((opt, oi) => `<div class="ps-card" style="padding:8px"><div class="ps-row"><input style="flex:1" placeholder="Key/ID" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="id" value="${esc(opt.id ?? opt.label ?? "")}"><input style="flex:1" placeholder="Label shown to user" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="label" value="${esc(opt.label || "")}"><input style="flex:2" placeholder="Prompt text substituted" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="value" value="${esc(opt.value || "")}"><button class="ps-btn-sm ps-danger-btn" data-action="delete-var-option" data-vindex="${vi}" data-oindex="${oi}">✕</button></div>${v.type === "select" && v.placementSelector ? `<div class="ps-grid-3" style="margin-top:6px"><label>Option Role Override<select data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="role"><option value="">Use Block Role</option>${["system", "user", "assistant", "user_append", "assistant_append"].map((r) => `<option value="${r}" ${opt.role === r ? "selected" : ""}>${r}</option>`).join("")}</select></label><label>Option Position Override<select data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="position"><option value="">Use Block Position</option>${["pre_history", "post_history", "in_history"].map((pos) => `<option value="${pos}" ${opt.position === pos ? "selected" : ""}>${pos}</option>`).join("")}</select></label><label>Option Depth Override<input type="number" min="0" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="depth" value="${esc(opt.depth ?? "")}" placeholder="Block default"></label></div>` : ""}</div>`).join("")}</div></div>` : ""}<div class="ps-card" style="margin-top:8px"><label>Active Override Value in Draft (<code>metadata.promptVariables</code>)<input data-var-runtime="${esc(v.name || "")}" value="${esc(typeof curVal === "object" ? JSON.stringify(curVal) : curVal)}" placeholder="Uses default if empty"></label></div></div>`;
+`).replace(/\n/g, "\\n"))}"></label></div>` : ""}${["number", "slider"].includes(v.type) ? `<div class="ps-grid-3" style="margin-top:8px"><label>Min<input type="number" data-var-index="${vi}" data-var-field="min" value="${esc(v.min ?? 0)}"></label><label>Max<input type="number" data-var-index="${vi}" data-var-field="max" value="${esc(v.max ?? 100)}"></label><label>Step<input type="number" step="any" data-var-index="${vi}" data-var-field="step" value="${esc(v.step ?? 1)}"></label></div>` : ""}${["select", "multiselect"].includes(v.type) ? `<div class="ps-card" style="margin-top:8px"><div class="ps-between"><strong>Options (${(v.options || []).length})</strong><button class="ps-btn-sm" data-action="add-var-option" data-vindex="${vi}">＋ Add Option</button></div><div class="ps-list" style="margin-top:6px">${(v.options || []).map((opt, oi) => `<div class="ps-row"><input style="flex:1" placeholder="Key/ID" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="id" value="${esc(opt.id ?? opt.label ?? "")}"><input style="flex:1" placeholder="Label shown to user" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="label" value="${esc(opt.label || "")}"><input style="flex:2" placeholder="Prompt text substituted" data-var-index="${vi}" data-opt-index="${oi}" data-opt-field="value" value="${esc(opt.value || "")}"><button class="ps-btn-sm ps-danger-btn" data-action="delete-var-option" data-vindex="${vi}" data-oindex="${oi}">✕</button></div>`).join("")}</div></div>` : ""}<div class="ps-card" style="margin-top:8px"><label>Active Override Value in Draft (<code>metadata.promptVariables</code>)<input data-var-runtime="${esc(v.name || "")}" value="${esc(typeof curVal === "object" ? JSON.stringify(curVal) : curVal)}" placeholder="Uses default if empty"></label></div></div>`;
   }).join("") || '<div class="ps-panel"><p class="ps-muted">No variables defined on this block yet. Click “＋ Add Variable” to create one.</p></div>'}</div><details class="ps-panel" data-details-id="raw-vars-json"><summary>Advanced: Raw Block Variables JSON</summary><textarea data-json="variables">${esc(JSON.stringify(b.variables || [], null, 2))}</textarea><button class="ps-btn-sm" style="margin-top:6px" data-action="apply-json" data-target="variables">Apply Variables JSON</button></details>`;
 }
 function renderSamplersTab(state) {
   const d = state.draft;
   const p = d.parameters || {};
-  const pr = d.prompts || {};
-  const cf = pr.contextFilters || d.metadata?.contextFilters || {};
-  const htmlF = cf.stripHtml || {};
-  const detF = cf.filterDetails || {};
-  const loomF = cf.filterLoom || {};
-  return `<div class="ps-panel"><h3>Preset Identity</h3><div class="ps-grid-3" style="margin-top:8px"><label>Preset Name<input data-preset="name" value="${esc(d.name)}"></label><label>Provider <span class="ps-muted">(use "loom" for Presets tab)</span><input data-preset="provider" value="${esc(d.provider)}"></label><label>Engine<input data-preset="engine" value="${esc(d.engine)}"></label></div></div><div class="ps-panel"><h3>Sampler Parameters</h3><p class="ps-muted" style="margin-bottom:12px">Adjust generation creativity, token limits, and repetition controls visually.</p><div class="ps-grid" id="ps-sampler-sliders"><div class="ps-card" data-slider-slot="temperature"></div><div class="ps-card" data-slider-slot="top_p"></div><div class="ps-card" data-slider-slot="min_p"></div><div class="ps-card" data-slider-slot="frequency_penalty"></div><div class="ps-card" data-slider-slot="presence_penalty"></div><div class="ps-card" data-slider-slot="repetition_penalty"></div></div><div class="ps-grid-3" style="margin-top:12px"><label>Max Response Tokens<input type="number" min="1" max="128000" data-param-num="max_tokens" value="${esc(p.max_tokens ?? 800)}"></label><label>Top-K (0 = disabled)<input type="number" min="0" max="1000" data-param-num="top_k" value="${esc(p.top_k ?? 0)}"></label><label>Fixed Seed (empty = random)<input type="number" data-param-num="seed" value="${esc(p.seed ?? "")}" placeholder="Random"></label></div></div><div class="ps-panel"><h3>Utility Prompts & Completion Settings (<code>prompts</code>)</h3><p class="ps-muted" style="margin-bottom:10px">Configure native utility nudges, assistant prefill, and Author's Note defaults.</p><div class="ps-grid"><label>Assistant Prefill (Start Reply With)<input data-prompt-field="assistant_prefill" value="${esc(pr.assistant_prefill || "")}" placeholder="Optional text to start AI response with…"></label><label>Prompt Bias<input data-prompt-field="prompt_bias" value="${esc(pr.prompt_bias || "")}" placeholder="Optional generation bias prefix…"></label><label>Continue Nudge Prompt<input data-prompt-field="continue_nudge" value="${esc(pr.continue_nudge || "")}" placeholder="e.g. [Continue the scene naturally without repeating.]"></label><label>Impersonation Prompt<input data-prompt-field="impersonation_prompt" value="${esc(pr.impersonation_prompt || "")}" placeholder="e.g. [Write the next reply from {{user}}'s perspective.]"></label><label>Default Author's Note<input data-prompt-field="authors_note" value="${esc(pr.authors_note || "")}" placeholder="Optional default Author's Note…"></label><label>Author's Note Depth<input type="number" min="0" max="100" data-prompt-num="authors_note_depth" value="${esc(pr.authors_note_depth ?? 4)}"></label></div></div><div class="ps-panel"><h3>Context Filters (Older Message Compression)</h3><p class="ps-muted" style="margin-bottom:10px">Strip formatting, <code>&lt;details&gt;</code> blocks, or Loom tags from messages older than Keep Depth to save context tokens.</p><div class="ps-grid-3"><div class="ps-card"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="stripHtml" data-cf-check="enabled" ${htmlF.enabled ? "checked" : ""}><strong>Strip HTML Tags</strong></label><label style="margin-top:6px">Keep Depth<input type="number" min="0" max="100" data-cf-group="stripHtml" data-cf-num="keepDepth" value="${esc(htmlF.keepDepth ?? 3)}"></label><label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="stripHtml" data-cf-check="stripFonts" ${htmlF.stripFonts ? "checked" : ""}><span>Also Strip &lt;font&gt; Tags</span></label></div><div class="ps-card"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="filterDetails" data-cf-check="enabled" ${detF.enabled ? "checked" : ""}><strong>Filter &lt;details&gt; Blocks</strong></label><label style="margin-top:6px">Keep Depth<input type="number" min="0" max="100" data-cf-group="filterDetails" data-cf-num="keepDepth" value="${esc(detF.keepDepth ?? 3)}"></label><label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="filterDetails" data-cf-check="keepOnly" ${detF.keepOnly ? "checked" : ""}><span>Keep Only Mode (Summaries)</span></label></div><div class="ps-card"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="filterLoom" data-cf-check="enabled" ${loomF.enabled ? "checked" : ""}><strong>Filter Loom System Tags</strong></label><label style="margin-top:6px">Keep Depth<input type="number" min="0" max="100" data-cf-group="filterLoom" data-cf-num="keepDepth" value="${esc(loomF.keepDepth ?? 5)}"></label><label style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" style="width:auto;min-height:18px" data-cf-group="filterLoom" data-cf-check="keepOnly" ${loomF.keepOnly ? "checked" : ""}><span>Keep Only Mode</span></label></div></div></div><div class="ps-panel"><div class="ps-between"><div><h3>Sovereign Hand Co-Pilot Block</h3><p class="ps-muted">Insert a ready-made conditional <code>{{loomSovHand}}</code> directorial block into your prompt order.</p></div><button class="ps-btn-sm ps-primary" data-action="insert-sov-hand">＋ Insert Sovereign Hand Block</button></div></div><div class="ps-panel"><h3>Advanced Native JSON Inspector</h3><p class="ps-muted">All unknown native keys are preserved automatically.</p>${[["parameters", "Sampler & Custom Body Parameters"], ["prompts", "Prompt & Completion Settings"], ["metadata", "Metadata & Variable Overrides"]].map(([k, l]) => `<details style="margin:8px 0" data-details-id="json-${k}"><summary>${l}</summary><textarea data-json="${k}">${esc(JSON.stringify(d[k] || {}, null, 2))}</textarea><button class="ps-btn-sm" style="margin-top:6px" data-action="apply-json" data-target="${k}">Apply ${l}</button></details>`).join("")}</div>`;
+  return `<div class="ps-panel"><h3>Preset Identity</h3><div class="ps-grid-3" style="margin-top:8px"><label>Preset Name<input data-preset="name" value="${esc(d.name)}"></label><label>Provider <span class="ps-muted">(use "loom" for Presets tab)</span><input data-preset="provider" value="${esc(d.provider)}"></label><label>Engine<input data-preset="engine" value="${esc(d.engine)}"></label></div></div><div class="ps-panel"><h3>Sampler Parameters</h3><p class="ps-muted" style="margin-bottom:12px">Adjust generation creativity, token limits, and repetition controls visually.</p><div class="ps-grid" id="ps-sampler-sliders"><div class="ps-card" data-slider-slot="temperature"></div><div class="ps-card" data-slider-slot="top_p"></div><div class="ps-card" data-slider-slot="min_p"></div><div class="ps-card" data-slider-slot="frequency_penalty"></div><div class="ps-card" data-slider-slot="presence_penalty"></div><div class="ps-card" data-slider-slot="repetition_penalty"></div></div><div class="ps-grid-3" style="margin-top:12px"><label>Max Response Tokens<input type="number" min="1" max="128000" data-param-num="max_tokens" value="${esc(p.max_tokens ?? "")}" placeholder="Provider default"></label><label>Top-K (0 = disabled)<input type="number" min="0" max="1000" data-param-num="top_k" value="${esc(p.top_k ?? "")}" placeholder="0"></label><label>Fixed Seed (empty = random)<input type="number" data-param-num="seed" value="${esc(p.seed ?? "")}" placeholder="Random"></label></div></div><div class="ps-panel"><h3>Advanced Native JSON Inspector</h3><p class="ps-muted">All native fields in <code>parameters</code>, <code>prompts</code>, and <code>metadata</code> are preserved untouched.</p>${[["parameters", "Sampler & Custom Body Parameters"], ["prompts", "Prompt & Completion Settings"], ["metadata", "Metadata & Variable Overrides"]].map(([k, l]) => `<details style="margin:8px 0" data-details-id="json-${k}"><summary>${l}</summary><textarea data-json="${k}">${esc(JSON.stringify(d[k] || {}, null, 2))}</textarea><button class="ps-btn-sm" style="margin-top:6px" data-action="apply-json" data-target="${k}">Apply ${l}</button></details>`).join("")}</div>`;
 }
 function renderRemixTab(state) {
   const allExpanded = state.importBlocks.length > 0 && state.expandedImports.length >= state.importBlocks.length;
@@ -1136,11 +1177,7 @@ function renderXRayBreakdown(state) {
       return { idx, blk, status: "empty", reason: 'Prompt Content is blank ("") in Prompt Architect' };
     const writtenVars = varDiag.setVarsByBlock.get(blk.id);
     if (writtenVars?.length) {
-      const usedVars = writtenVars.filter((v) => varDiag.allReadLocalVars.has(v));
-      if (usedVars.length > 0) {
-        return { idx, blk, status: "helper", reason: `Sets {{setvar}} variable(s) (${usedVars.join(", ")}) used by other blocks; outputs no direct text of its own` };
-      }
-      return { idx, blk, status: "skipped", reason: `Sets {{setvar}} (${writtenVars.join(", ")}), but no block in this preset calls {{getvar}} for them (missing output block)` };
+      return { idx, blk, status: "helper", reason: `Sets {{setvar}} variable(s) (${writtenVars.join(", ")}); emits no direct text of its own` };
     }
     if (blk.marker)
       return { idx, blk, status: "empty", reason: `Marker "${blk.marker}" resolved to empty for the selected chat/character` };
@@ -2024,39 +2061,27 @@ function setup(ctx) {
       else
         d.parameters[el.dataset.paramNum] = Number(el.value);
       persist();
-    } else if (el.dataset.promptField && d) {
-      d.prompts = d.prompts || {};
-      d.prompts[el.dataset.promptField] = el.value;
-      persist();
-    } else if (el.dataset.promptNum && d) {
-      d.prompts = d.prompts || {};
-      d.prompts[el.dataset.promptNum] = Math.max(0, Number(el.value) || 0);
-      persist();
-    } else if (el.dataset.cfGroup && el.dataset.cfNum && d) {
-      d.prompts = d.prompts || {};
-      d.prompts.contextFilters = d.prompts.contextFilters || {};
-      d.prompts.contextFilters[el.dataset.cfGroup] = d.prompts.contextFilters[el.dataset.cfGroup] || {};
-      d.prompts.contextFilters[el.dataset.cfGroup][el.dataset.cfNum] = Math.max(0, Number(el.value) || 0);
-      persist();
-    } else if (el.dataset.varIndex !== undefined && el.dataset.varCheck === undefined && d) {
+    } else if (el.dataset.varIndex !== undefined && d) {
       const b = d.prompt_order[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
+      const idx = Number(el.dataset.varIndex);
+      const v = b?.variables?.[idx];
       if (!v)
         return;
       if (el.dataset.optIndex !== undefined) {
         const opt = v.options?.[Number(el.dataset.optIndex)];
-        if (opt && el.dataset.optField) {
-          const of = el.dataset.optField;
-          opt[of] = of === "depth" ? el.value === "" ? undefined : Math.max(0, Number(el.value) || 0) : el.value;
-        }
+        if (opt && el.dataset.optField)
+          opt[el.dataset.optField] = el.value;
       } else if (el.dataset.varField) {
         const f = el.dataset.varField;
         if (f === "separator")
           v[f] = el.value.replace(/\\n/g, `
 `);
+        else if (f === "defaultValue" && v.type === "multiselect")
+          v[f] = el.value.split(",").map((s) => s.trim()).filter(Boolean);
         else
           v[f] = ["min", "max", "step", "rows"].includes(f) ? Number(el.value) : el.value;
       }
+      b.variables[idx] = normalizeVariableDef(v);
       persist();
     } else if (el.dataset.varRuntime && d) {
       const b = d.prompt_order[state.selected];
@@ -2113,31 +2138,13 @@ function setup(ctx) {
       render();
       return;
     }
-    if (el.dataset.varCheck === "placementSelector" && state.draft) {
-      const b = state.draft.prompt_order?.[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
-      if (v) {
-        v.placementSelector = Boolean(el.checked);
-        persist();
-        render();
-      }
-      return;
-    }
-    if (el.dataset.cfGroup && el.dataset.cfCheck && state.draft) {
-      const d = state.draft;
-      d.prompts = d.prompts || {};
-      d.prompts.contextFilters = d.prompts.contextFilters || {};
-      d.prompts.contextFilters[el.dataset.cfGroup] = d.prompts.contextFilters[el.dataset.cfGroup] || {};
-      d.prompts.contextFilters[el.dataset.cfGroup][el.dataset.cfCheck] = Boolean(el.checked);
-      persist();
-      return;
-    }
     if (el.dataset.varField === "type") {
       const b = state.draft?.prompt_order?.[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
-      if (v && ["select", "multiselect"].includes(v.type) && !Array.isArray(v.options)) {
-        v.options = [{ id: "option_1", label: "Option 1", value: "Option 1 text" }];
+      const idx = Number(el.dataset.varIndex);
+      if (b?.variables?.[idx]) {
+        b.variables[idx] = normalizeVariableDef({ ...b.variables[idx], type: el.value });
       }
+      persist();
       render();
       return;
     }
@@ -2278,10 +2285,6 @@ function setup(ctx) {
           state.view = "blocks";
           state.mobileDetailOpen = true;
         }
-      } else if (a === "clear-marker" && b) {
-        b.marker = null;
-        persist();
-        state.notice = `Cleared marker on “${b.name}” so its custom Prompt Content is always used.`;
       } else if (a === "select-block") {
         state.selected = Number(el.dataset.index);
         state.mobileDetailOpen = true;
@@ -2347,27 +2350,6 @@ function setup(ctx) {
         const v = b.variables?.[Number(el.dataset.vindex)];
         v?.options?.splice(Number(el.dataset.oindex), 1);
         persist();
-      } else if (a === "insert-sov-hand" && d) {
-        d.prompt_order.push({
-          id: uid(),
-          name: "Sovereign Hand Co-Pilot",
-          content: `{{if::{{loomSovHandActive}}}}
-{{loomSovHand}}
-{{/if}}`,
-          role: "system",
-          enabled: true,
-          position: "post_history",
-          depth: 0,
-          marker: null,
-          isLocked: false,
-          color: "#4db6ac",
-          injectionTrigger: [],
-          group: null
-        });
-        state.selected = d.prompt_order.length - 1;
-        state.view = "blocks";
-        persist();
-        state.notice = "Inserted Sovereign Hand Co-Pilot block.";
       } else if (a === "collapse-all-imports")
         state.expandedImports = [];
       else if (a === "expand-all-imports")
@@ -2727,7 +2709,7 @@ function setup(ctx) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!["refresh", "save", "save-copy", "dry", "profile", "collect-blocks", "save-template", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-current-to-basket", "insert-sov-hand", "clear-marker"].includes(a)) {
+      if (!["refresh", "save", "save-copy", "dry", "profile", "collect-blocks", "save-template", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-current-to-basket"].includes(a)) {
         state.notice = "";
       }
       render();

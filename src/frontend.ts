@@ -6,6 +6,7 @@ import {
   freshDraft,
   computeDraftFingerprint,
   ensureUniqueBlockIds,
+  normalizeVariableDef,
   sanitizeBlockForLoom,
   exportJsonFile,
 } from './studio-core.js';
@@ -638,35 +639,21 @@ export function setup(ctx: any) {
       if (el.value === '') delete d.parameters[el.dataset.paramNum];
       else d.parameters[el.dataset.paramNum] = Number(el.value);
       persist();
-    } else if (el.dataset.promptField && d) {
-      d.prompts = d.prompts || {};
-      d.prompts[el.dataset.promptField] = el.value;
-      persist();
-    } else if (el.dataset.promptNum && d) {
-      d.prompts = d.prompts || {};
-      d.prompts[el.dataset.promptNum] = Math.max(0, Number(el.value) || 0);
-      persist();
-    } else if (el.dataset.cfGroup && el.dataset.cfNum && d) {
-      d.prompts = d.prompts || {};
-      d.prompts.contextFilters = d.prompts.contextFilters || {};
-      d.prompts.contextFilters[el.dataset.cfGroup] = d.prompts.contextFilters[el.dataset.cfGroup] || {};
-      d.prompts.contextFilters[el.dataset.cfGroup][el.dataset.cfNum] = Math.max(0, Number(el.value) || 0);
-      persist();
-    } else if (el.dataset.varIndex !== undefined && el.dataset.varCheck === undefined && d) {
+    } else if (el.dataset.varIndex !== undefined && d) {
       const b = d.prompt_order[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
+      const idx = Number(el.dataset.varIndex);
+      const v = b?.variables?.[idx];
       if (!v) return;
       if (el.dataset.optIndex !== undefined) {
         const opt = v.options?.[Number(el.dataset.optIndex)];
-        if (opt && el.dataset.optField) {
-          const of = el.dataset.optField;
-          opt[of] = of === 'depth' ? (el.value === '' ? undefined : Math.max(0, Number(el.value) || 0)) : el.value;
-        }
+        if (opt && el.dataset.optField) opt[el.dataset.optField] = el.value;
       } else if (el.dataset.varField) {
         const f = el.dataset.varField;
         if (f === 'separator') v[f] = el.value.replace(/\\n/g, '\n');
+        else if (f === 'defaultValue' && v.type === 'multiselect') v[f] = el.value.split(',').map((s) => s.trim()).filter(Boolean);
         else v[f] = ['min', 'max', 'step', 'rows'].includes(f) ? Number(el.value) : el.value;
       }
+      b.variables[idx] = normalizeVariableDef(v);
       persist();
     } else if (el.dataset.varRuntime && d) {
       const b = d.prompt_order[state.selected];
@@ -721,31 +708,13 @@ export function setup(ctx: any) {
       render();
       return;
     }
-    if (el.dataset.varCheck === 'placementSelector' && state.draft) {
-      const b = state.draft.prompt_order?.[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
-      if (v) {
-        v.placementSelector = Boolean((el as HTMLInputElement).checked);
-        persist();
-        render();
-      }
-      return;
-    }
-    if (el.dataset.cfGroup && el.dataset.cfCheck && state.draft) {
-      const d = state.draft;
-      d.prompts = d.prompts || {};
-      d.prompts.contextFilters = d.prompts.contextFilters || {};
-      d.prompts.contextFilters[el.dataset.cfGroup] = d.prompts.contextFilters[el.dataset.cfGroup] || {};
-      d.prompts.contextFilters[el.dataset.cfGroup][el.dataset.cfCheck] = Boolean((el as HTMLInputElement).checked);
-      persist();
-      return;
-    }
     if (el.dataset.varField === 'type') {
       const b = state.draft?.prompt_order?.[state.selected];
-      const v = b?.variables?.[Number(el.dataset.varIndex)];
-      if (v && ['select', 'multiselect'].includes(v.type) && !Array.isArray(v.options)) {
-        v.options = [{ id: 'option_1', label: 'Option 1', value: 'Option 1 text' }];
+      const idx = Number(el.dataset.varIndex);
+      if (b?.variables?.[idx]) {
+        b.variables[idx] = normalizeVariableDef({ ...b.variables[idx], type: el.value });
       }
+      persist();
       render();
       return;
     }
@@ -864,10 +833,6 @@ export function setup(ctx: any) {
           state.view = 'blocks';
           state.mobileDetailOpen = true;
         }
-      } else if (a === 'clear-marker' && b) {
-        b.marker = null;
-        persist();
-        state.notice = `Cleared marker on “${b.name}” so its custom Prompt Content is always used.`;
       } else if (a === 'select-block') {
         state.selected = Number(el.dataset.index);
         state.mobileDetailOpen = true;
@@ -924,25 +889,6 @@ export function setup(ctx: any) {
         const v = b.variables?.[Number(el.dataset.vindex)];
         v?.options?.splice(Number(el.dataset.oindex), 1);
         persist();
-      } else if (a === 'insert-sov-hand' && d) {
-        d.prompt_order.push({
-          id: uid(),
-          name: 'Sovereign Hand Co-Pilot',
-          content: '{{if::{{loomSovHandActive}}}}\n{{loomSovHand}}\n{{/if}}',
-          role: 'system',
-          enabled: true,
-          position: 'post_history',
-          depth: 0,
-          marker: null,
-          isLocked: false,
-          color: '#4db6ac',
-          injectionTrigger: [],
-          group: null,
-        });
-        state.selected = d.prompt_order.length - 1;
-        state.view = 'blocks';
-        persist();
-        state.notice = 'Inserted Sovereign Hand Co-Pilot block.';
       } else if (a === 'collapse-all-imports') state.expandedImports = [];
       else if (a === 'expand-all-imports') state.expandedImports = state.importBlocks.map((_: any, idx: number) => idx);
       else if (a === 'toggle-import-expand') {
@@ -1266,7 +1212,7 @@ export function setup(ctx: any) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'collect-blocks', 'save-template', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-current-to-basket', 'insert-sov-hand', 'clear-marker'].includes(a)) {
+      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'collect-blocks', 'save-template', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-current-to-basket'].includes(a)) {
         state.notice = '';
       }
       render();

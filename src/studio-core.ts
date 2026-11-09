@@ -76,16 +76,60 @@ export const freshDraft = () => ({
   name: 'New preset',
   provider: 'loom',
   engine: 'classic',
-  parameters: { temperature: 0.8, max_tokens: 800, top_p: 0.95 },
+  parameters: {},
   prompts: {},
   metadata: { promptVariables: {} },
   prompt_order: [
-    { id: uid(), name: 'Core System', marker: 'category', categoryMode: 'checkbox', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, isLocked: false, color: '#a795e8', injectionTrigger: [], group: null },
-    { id: uid(), name: 'Instructions', content: 'Write vivid, natural prose and stay in character as {{char}}.', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: null, isLocked: false, color: null, injectionTrigger: [], group: null },
-    { id: uid(), name: 'Character Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: false, color: null, injectionTrigger: [], group: null },
-    { id: uid(), name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: false, color: null, injectionTrigger: [], group: null },
+    { id: uid(), name: 'Main Prompt', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'main_prompt', isLocked: false, color: null, injectionTrigger: [], group: null },
+    { id: uid(), name: 'Char Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: true, color: null, injectionTrigger: [], group: null },
+    { id: uid(), name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: true, color: null, injectionTrigger: [], group: null },
   ],
 });
+
+export function normalizeVariableDef(v: any): any {
+  const type = v?.type === 'boolean' ? 'switch' : ['text', 'textarea', 'number', 'slider', 'select', 'switch', 'multiselect'].includes(v?.type) ? v.type : 'text';
+  const base: any = {
+    name: String(v?.name || 'var_1').replace(/[^a-zA-Z0-9_]/g, '_') || 'var_1',
+    label: String(v?.label || v?.name || 'Variable'),
+    type,
+  };
+  if (typeof v?.description === 'string' && v.description) base.description = v.description;
+  if (type === 'switch') {
+    base.defaultValue = v?.defaultValue === 1 || v?.defaultValue === '1' || v?.defaultValue === true || v?.defaultValue === 'true' ? 1 : 0;
+  } else if (type === 'number' || type === 'slider') {
+    const min = Number.isFinite(Number(v?.min)) ? Number(v.min) : 0;
+    const max = Number.isFinite(Number(v?.max)) ? Number(v.max) : 100;
+    if (type === 'slider' || v?.min !== undefined) base.min = min;
+    if (type === 'slider' || v?.max !== undefined) base.max = max;
+    if (v?.step !== undefined && Number.isFinite(Number(v.step))) base.step = Number(v.step);
+    const defNum = Number(v?.defaultValue);
+    base.defaultValue = Number.isFinite(defNum) ? defNum : min;
+  } else if (type === 'select' || type === 'multiselect') {
+    const rawOpts = Array.isArray(v?.options) && v.options.length ? v.options : [{ id: 'option_1', label: 'Option 1', value: '' }];
+    base.options = rawOpts.map((o: any, i: number) => ({
+      id: String(o?.id || `option_${i + 1}`),
+      label: String(o?.label || o?.id || `Option ${i + 1}`),
+      value: String(o?.value ?? ''),
+    }));
+    if (type === 'select') {
+      const defStr = String(v?.defaultValue ?? base.options[0].id);
+      base.defaultValue = base.options.some((o: any) => o.id === defStr) ? defStr : base.options[0].id;
+    } else {
+      const validIds = new Set(base.options.map((o: any) => o.id));
+      const rawDef = Array.isArray(v?.defaultValue)
+        ? v.defaultValue.map(String)
+        : typeof v?.defaultValue === 'string' && v.defaultValue.trim()
+          ? v.defaultValue.split(',').map((s: string) => s.trim())
+          : [];
+      base.defaultValue = rawDef.filter((id: string) => validIds.has(id));
+      if (typeof v?.separator === 'string') base.separator = v.separator;
+    }
+  } else {
+    base.defaultValue = String(v?.defaultValue ?? '');
+    if (type === 'textarea' && Number.isFinite(Number(v?.rows))) base.rows = Math.max(2, Number(v.rows));
+  }
+  return base;
+}
 
 export function computeDraftFingerprint(d: any): string {
   if (!d) return '';
@@ -194,11 +238,7 @@ export function cloneBlocksForHost(blocks: any[]): any[] {
     categoryMode: block.categoryMode === 'radio' || block.categoryMode === 'checkbox' ? block.categoryMode : null,
     ...(Array.isArray(block.variables)
       ? {
-          variables: block.variables.map((v: any) =>
-            v.type === 'select' || v.type === 'multiselect'
-              ? { ...v, options: (v.options || []).map((o: any) => ({ ...o })) }
-              : { ...v },
-          ),
+          variables: block.variables.map(normalizeVariableDef),
         }
       : {}),
   }));
@@ -217,10 +257,11 @@ export function sanitizeBlockForLoom(b: any): any {
     isLocked: Boolean(b.isLocked),
     color: b.color ? String(b.color) : null,
     injectionTrigger: Array.isArray(b.injectionTrigger) ? b.injectionTrigger.map(String) : [],
+    ...(Array.isArray(b.characterTagTrigger) ? { characterTagTrigger: b.characterTagTrigger.map(String) } : {}),
     group: b.group ? String(b.group) : null,
   };
   if (b.categoryMode === 'radio' || b.categoryMode === 'checkbox') cleanBlock.categoryMode = b.categoryMode;
-  if (Array.isArray(b.variables)) cleanBlock.variables = structuredClone(b.variables);
+  if (Array.isArray(b.variables)) cleanBlock.variables = b.variables.map(normalizeVariableDef);
   return cleanBlock;
 }
 
