@@ -89,6 +89,9 @@ export function setup(ctx: any) {
     result: '',
     reasoning: '',
     lastUsage: null,
+    testPromptSource: 'preset',
+    testCustomPrompt: '',
+    testCustomPromptIncludeHistory: true,
     runs: [],
     compareA: 0,
     compareB: 1,
@@ -717,6 +720,11 @@ export function setup(ctx: any) {
       render();
       return;
     }
+    if (el.dataset.customCheck === 'history') {
+      state.testCustomPromptIncludeHistory = (el as HTMLInputElement).checked;
+      render();
+      return;
+    }
     if (el.dataset.varField === 'type') {
       const b = state.draft?.prompt_order?.[state.selected];
       const idx = Number(el.dataset.varIndex);
@@ -865,7 +873,22 @@ export function setup(ctx: any) {
         insertTextAtPromptCursor(el.dataset.snippet || '');
         return;
       } else if (a === 'open-text-editor' && b) { await openFullTextEditorForBlock(b); return; }
-      else if (a === 'open-custom-editor') {
+      else if (a === 'set-test-prompt-source') {
+        state.testPromptSource = el.dataset.source || 'preset';
+        render();
+        return;
+      } else if (a === 'open-test-custom-prompt-editor') {
+        const res = await request('text-editor', {
+          title: 'Custom Test Prompt',
+          value: state.testCustomPrompt,
+          placeholder: 'Type or paste custom system prompt / instructions to test…',
+        });
+        if (res && !res.cancelled && typeof res.text === 'string') {
+          state.testCustomPrompt = res.text;
+          render();
+        }
+        return;
+      } else if (a === 'open-custom-editor') {
         const res = await request('text-editor', { title: 'Custom Test Message', value: state.custom, placeholder: 'Enter test user message…' });
         if (res && !res.cancelled && typeof res.text === 'string') state.custom = res.text;
       } else if (a === 'toggle-macro-pane') {
@@ -1169,7 +1192,11 @@ export function setup(ctx: any) {
         state.notice = 'Saved-preset dry run complete.';
         state.busy = false;
       } else if (a === 'preview' || a === 'run') {
-        if (!state.chatId) throw new Error('Choose a chat first.');
+        const isCustomSource = state.testPromptSource === 'custom';
+        if (!isCustomSource && !state.chatId) throw new Error('Choose a chat first.');
+        if (isCustomSource && !state.testCustomPrompt.trim() && !state.custom.trim()) {
+          throw new Error('Type your custom prompt text or a custom test turn first.');
+        }
         state.busy = true;
         state.result = '';
         state.reasoning = '';
@@ -1199,6 +1226,9 @@ export function setup(ctx: any) {
             action: a,
             requestId,
             preset: snapshot,
+            promptSource: state.testPromptSource,
+            customPrompt: state.testCustomPrompt,
+            includeChatHistory: state.testCustomPromptIncludeHistory,
             chatId: state.chatId,
             connectionId: state.connectionId,
             generationType: state.generationType,

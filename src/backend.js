@@ -392,24 +392,89 @@ spindle.onFrontendMessage(async (msg, userId) => {
       case 'preview':
       case 'run': {
         if (!spindle.permissions.has('generation')) throw new Error('Enable the "generation" permission to preview or generate test replies.');
-        if (!msg.chatId) throw new Error('Select a chat for context.');
+        const isCustomSource = msg.promptSource === 'custom';
+        if (!isCustomSource && !msg.chatId) throw new Error('Select a chat for context.');
         const controller = new AbortController(); const key = userId + ':' + id; runs.set(key, controller);
         try {
-          const assembled = await spindle.assemble({chatId:msg.chatId, blocks:msg.preset?.prompt_order || [], ...(msg.connectionId ? {connectionId:msg.connectionId}:{}), generationType:msg.generationType || 'normal', promptVariables:msg.preset.metadata?.promptVariables || {}, signal:controller.signal}, userId);
-          const messages = [...assembled.messages];
-          const breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
-          if (msg.customMessage?.trim()) {
-            const customText = msg.customMessage.trim();
-            messages.push({role:'user',content:customText});
-            breakdown.push({type:'block', name:'Custom Test Turn (Studio)', role:'user', content:customText});
+          let messages = [];
+          let breakdown = [];
+          let assembledData = {};
+
+          if (isCustomSource) {
+            const customText = typeof msg.customPrompt === 'string' ? msg.customPrompt : '';
+            if (msg.chatId) {
+              const customBlocks = [
+                {
+                  id: 'test_custom_prompt',
+                  name: 'Custom Prompt (Test Lab)',
+                  content: customText,
+                  role: 'system',
+                  enabled: true,
+                  position: 'pre_history',
+                  depth: 0,
+                  marker: null,
+                },
+                ...(msg.includeChatHistory ? [{
+                  id: 'test_custom_chat_history',
+                  name: 'Chat History',
+                  content: '',
+                  role: 'system',
+                  enabled: true,
+                  position: 'pre_history',
+                  depth: 0,
+                  marker: 'chat_history',
+                }] : []),
+              ];
+              const assembled = await spindle.assemble({
+                chatId: msg.chatId,
+                blocks: customBlocks,
+                ...(msg.connectionId ? {connectionId: msg.connectionId} : {}),
+                generationType: msg.generationType || 'normal',
+                promptVariables: {},
+                signal: controller.signal,
+              }, userId);
+              assembledData = assembled;
+              messages = [...assembled.messages];
+              breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
+            } else {
+              if (customText.trim()) {
+                messages.push({role: 'system', content: customText.trim()});
+                breakdown.push({type: 'block', name: 'Custom Prompt', role: 'system', content: customText.trim()});
+              }
+              assembledData = {messages, breakdown, source: 'custom'};
+            }
+            if (msg.customMessage?.trim()) {
+              const customTurn = msg.customMessage.trim();
+              messages.push({role: 'user', content: customTurn});
+              breakdown.push({type: 'block', name: 'Custom Test Turn (Studio)', role: 'user', content: customTurn});
+            }
+            reply(userId, id, 'assembled', {data: {...assembledData, messages, breakdown, source: 'custom'}});
+          } else {
+            const assembled = await spindle.assemble({
+              chatId: msg.chatId,
+              blocks: msg.preset?.prompt_order || [],
+              ...(msg.connectionId ? {connectionId: msg.connectionId} : {}),
+              generationType: msg.generationType || 'normal',
+              promptVariables: msg.preset?.metadata?.promptVariables || {},
+              signal: controller.signal,
+            }, userId);
+            messages = [...assembled.messages];
+            breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
+            if (msg.customMessage?.trim()) {
+              const customTurn = msg.customMessage.trim();
+              messages.push({role: 'user', content: customTurn});
+              breakdown.push({type: 'block', name: 'Custom Test Turn (Studio)', role: 'user', content: customTurn});
+            }
+            reply(userId, id, 'assembled', {data: {...assembled, messages, breakdown, source: 'draft'}});
           }
-          reply(userId,id,'assembled',{data:{...assembled,messages,breakdown,source:'draft'}});
+
           if (msg.action === 'run') {
-            const args = {userId, messages, parameters:msg.preset.parameters || {}, ...(msg.connectionId ? {connection_id:msg.connectionId}:{}), signal:controller.signal};
+            if (!messages.length) throw new Error('No prompt content or messages to generate a reply from.');
+            const args = {userId, messages, parameters: msg.preset?.parameters || {}, ...(msg.connectionId ? {connection_id: msg.connectionId} : {}), signal: controller.signal};
             for await (const chunk of spindle.generate.quietStream(args)) {
-              if (chunk.type === 'token') reply(userId,id,'token',{token:chunk.token});
-              else if (chunk.type === 'reasoning') reply(userId,id,'reasoning',{token:chunk.token});
-              else if (chunk.type === 'done') data = {content:chunk.content, reasoning:chunk.reasoning, usage:chunk.usage, finish_reason:chunk.finish_reason};
+              if (chunk.type === 'token') reply(userId, id, 'token', {token: chunk.token});
+              else if (chunk.type === 'reasoning') reply(userId, id, 'reasoning', {token: chunk.token});
+              else if (chunk.type === 'done') data = {content: chunk.content, reasoning: chunk.reasoning, usage: chunk.usage, finish_reason: chunk.finish_reason};
             }
           } else data = true;
         } finally { runs.delete(key); }
