@@ -7,6 +7,7 @@ export interface ModalRef {
 export function closeModalRef(modalRef: ModalRef): void {
   if (modalRef.current) {
     try {
+      modalRef.current.cleanup?.();
       modalRef.current.close?.();
       modalRef.current.remove?.();
       modalRef.current.dismiss?.();
@@ -127,7 +128,7 @@ export function openFindReplaceDialog(
     returnFocus?.focus?.({ preventScroll: true });
   };
 
-  const updatePreview = () => {
+  const updatePreview = (selectAllMatches = false) => {
     const needle = findInput.value;
     const rep = replaceInput.value;
     matches = [];
@@ -137,7 +138,7 @@ export function openFindReplaceDialog(
         const parts = (blk.content || '').split(needle);
         if (parts.length > 1) {
           matches.push({ blk, count: parts.length - 1, parts });
-          if (!selectedIds.size) selectedIds.add(blk.id);
+          if (selectAllMatches) selectedIds.add(blk.id);
         }
       }
     }
@@ -159,14 +160,14 @@ export function openFindReplaceDialog(
       .join('');
   };
 
-  findInput.addEventListener('input', () => { selectedIds.clear(); updatePreview(); });
-  replaceInput.addEventListener('input', updatePreview);
+  findInput.addEventListener('input', () => { selectedIds.clear(); updatePreview(true); });
+  replaceInput.addEventListener('input', () => updatePreview(false));
   resultsEl.addEventListener('change', (ev) => {
     const cb = (ev.target as HTMLElement).closest<HTMLInputElement>('input[data-fr-id]');
     if (!cb) return;
     if (cb.checked) selectedIds.add(cb.dataset.frId!);
     else selectedIds.delete(cb.dataset.frId!);
-    updatePreview();
+    updatePreview(false);
   });
   dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
   dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') ev.stopPropagation(); });
@@ -311,10 +312,11 @@ export function openBlockContextMenu(
     <button type="button" class="ps-danger-btn" data-ctx-key="delete">🗑 Delete Block</button>
   `;
   const dismiss = () => {
+    document.removeEventListener('pointerdown', onOutside, true);
     if (modalRef.current === menu) modalRef.current = null;
     menu.remove();
-    document.removeEventListener('pointerdown', onOutside, true);
   };
+  (menu as any).cleanup = dismiss;
   const onOutside = (ev: Event) => {
     if (!menu.contains(ev.target as Node)) dismiss();
   };

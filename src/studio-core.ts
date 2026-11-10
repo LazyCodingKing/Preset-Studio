@@ -86,11 +86,12 @@ export const freshDraft = () => ({
   ],
 });
 
-export function normalizeVariableDef(v: any): any {
+export function normalizeVariableDef(v: any, allowEmptyWhileEditing = false): any {
   const type = v?.type === 'boolean' ? 'switch' : ['text', 'textarea', 'number', 'slider', 'select', 'switch', 'multiselect'].includes(v?.type) ? v.type : 'text';
+  const cleanedName = String(v?.name ?? '').replace(/[^a-zA-Z0-9_]/g, '_');
   const base: any = {
-    name: String(v?.name || 'var_1').replace(/[^a-zA-Z0-9_]/g, '_') || 'var_1',
-    label: String(v?.label || v?.name || 'Variable'),
+    name: allowEmptyWhileEditing ? cleanedName : cleanedName || 'var_1',
+    label: allowEmptyWhileEditing ? String(v?.label ?? '') : String(v?.label || cleanedName || 'Variable'),
     type,
   };
   if (typeof v?.description === 'string' && v.description) base.description = v.description;
@@ -159,7 +160,8 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
   const refsByName = new Map<string, Array<{ blockId: string; blockName: string }>>();
   const defCountByBlock = new Map<string, number>();
   const refCountByBlock = new Map<string, number>();
-  const varRe = /\{\{\s*(?:var|promptVar|presetVar)\s*::\s*([a-zA-Z0-9_.-]+)/gi;
+  const varRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)|\.([a-zA-Z0-9_]+)|([a-zA-Z0-9_.-]+))/gi;
+  const explicitVarRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
 
   for (const blk of blocks || []) {
     const vars = Array.isArray(blk.variables) ? blk.variables : [];
@@ -173,8 +175,9 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
     const text = blk.content || '';
     const blockRefSet = new Set<string>();
     let m: RegExpExecArray | null;
-    while ((m = varRe.exec(text)) !== null) {
-      const name = m[1];
+    while ((m = explicitVarRe.exec(text)) !== null) {
+      const name = m[1] || m[2];
+      if (!name) continue;
       blockRefSet.add(name);
       const rList = refsByName.get(name) || [];
       if (!rList.some((x) => x.blockId === blk.id)) {
@@ -182,6 +185,7 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
         refsByName.set(name, rList);
       }
     }
+    void varRe;
     refCountByBlock.set(blk.id, blockRefSet.size);
   }
 
@@ -257,11 +261,10 @@ export function sanitizeBlockForLoom(b: any): any {
     isLocked: Boolean(b.isLocked),
     color: b.color ? String(b.color) : null,
     injectionTrigger: Array.isArray(b.injectionTrigger) ? b.injectionTrigger.map(String) : [],
-    ...(Array.isArray(b.characterTagTrigger) ? { characterTagTrigger: b.characterTagTrigger.map(String) } : {}),
     group: b.group ? String(b.group) : null,
   };
   if (b.categoryMode === 'radio' || b.categoryMode === 'checkbox') cleanBlock.categoryMode = b.categoryMode;
-  if (Array.isArray(b.variables)) cleanBlock.variables = b.variables.map(normalizeVariableDef);
+  if (Array.isArray(b.variables)) cleanBlock.variables = b.variables.map((v: any) => normalizeVariableDef(v, false));
   return cleanBlock;
 }
 

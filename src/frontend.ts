@@ -111,10 +111,7 @@ export function setup(ctx: any) {
     importValues: {},
     selectedImports: [],
     expandedImports: [],
-    basket: [],
-    templateName: '',
     templates: [],
-    quickTemplateIndex: '0',
     quickMacroSnippet: '{{char}}',
     translationLanguage: 'English',
     translationConnection: '',
@@ -126,11 +123,14 @@ export function setup(ctx: any) {
   };
 
   const pending = new Map<string, any>();
+  const tokenCache = new Map<string, { count: number; tokenizerName: string }>();
   const mountedHandles = new Set<{ destroy?: () => void }>();
   const modalRef: ModalRef = { current: null };
   let timer: any = null;
   let tokenTimer: any = null;
   let longPressTimer: any = null;
+  let refreshPromise: Promise<void> | null = null;
+  let hasLoadedOnce = false;
   let destroyed = false;
   let saveChain = Promise.resolve();
 
@@ -193,12 +193,14 @@ export function setup(ctx: any) {
     if (!msg) return;
     if (msg.type === 'backend-ready') {
       if (msg.permissions) state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      if (full || hasLoadedOnce) refresh().catch(() => {});
+      else render();
       return;
     }
     if (msg.type === 'permissions' && msg.permissions) {
       state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      if (full || hasLoadedOnce) refresh().catch(() => {});
+      else render();
       return;
     }
     if (msg.type === 'command') {
@@ -208,7 +210,11 @@ export function setup(ctx: any) {
         if (!state.draft) state.draft = freshDraft();
         state.view = 'test';
         if (mount) setFull(true);
-        else { tab.activate?.(); render(); }
+        else {
+          tab.activate?.();
+          refresh().catch(() => {});
+          render();
+        }
       }
       return;
     }
@@ -238,20 +244,45 @@ export function setup(ctx: any) {
     tokenTimer = setTimeout(async () => {
       if (destroyed || !state.draft?.prompt_order?.length) return;
       const blocks = state.draft.prompt_order;
-      const texts = blocks.map((b: any) => b.content || '');
+      const connKey = state.connectionId || 'default';
+      const missingIndices: number[] = [];
+      const missingTexts: string[] = [];
+
+      blocks.forEach((b: any, idx: number) => {
+        const text = b.content || '';
+        if (!text.trim()) return;
+        const cacheKey = `${connKey}:${text}`;
+        if (!tokenCache.has(cacheKey)) {
+          missingIndices.push(idx);
+          missingTexts.push(text);
+        }
+      });
+
       try {
-        const res = await request('count-tokens', { texts, connectionId: state.connectionId });
-        if (destroyed || !res?.counts) return;
+        if (missingTexts.length > 0) {
+          const res = await request('count-tokens', { texts: missingTexts, connectionId: state.connectionId });
+          if (destroyed || !res?.counts) return;
+          if (tokenCache.size > 512) tokenCache.clear();
+          missingIndices.forEach((blockIdx, i) => {
+            const text = blocks[blockIdx]?.content || '';
+            tokenCache.set(`${connKey}:${text}`, {
+              count: Number(res.counts[i]) || 0,
+              tokenizerName: res.tokenizerName || '',
+            });
+          });
+          if (res.tokenizerName) state.tokenizerName = res.tokenizerName;
+        }
+
         const map: Record<string, number> = {};
         let sum = 0;
-        blocks.forEach((b: any, idx: number) => {
-          const c = Number(res.counts[idx]) || 0;
+        for (const b of blocks) {
+          const text = b.content || '';
+          const c = text.trim() ? tokenCache.get(`${connKey}:${text}`)?.count || 0 : 0;
           map[b.id] = c;
           if (b.enabled && b.marker !== 'category') sum += c;
-        });
+        }
         state.tokenCounts = map;
         state.totalDraftTokens = sum;
-        state.tokenizerName = res.tokenizerName || '';
         const totalBadge = root.querySelector('[data-total-tokens]');
         if (totalBadge) totalBadge.textContent = `~${sum.toLocaleString()} block tokens`;
         blocks.forEach((b: any) => {
@@ -262,11 +293,20 @@ export function setup(ctx: any) {
     }, 420);
   }
 
-  function persist(skipHistory = false) {
-    if (!skipHistory && state.draft) pushHistory(state.draft);
-    state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
+  function persist(skipHistory = false, deferHistory = false) {
+    if (!skipHistory && !deferHistory && state.draft) {
+      pushHistory(state.draft);
+      state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
+    } else if (deferHistory) {
+      state.dirty = true;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => {
+      if (destroyed || !state.draft) return;
+      if (!skipHistory && deferHistory) {
+        pushHistory(state.draft);
+      }
+      state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
       const draft = structuredClone(state.draft);
       state.recovery = draft;
       saveChain = saveChain
@@ -576,21 +616,30 @@ export function setup(ctx: any) {
   const cleanupLauncher = mountPresetEditorLauncher(ctx, state, setFull, Boolean(mount), tab, scheduleTokenCount, render);
   bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
 
-  async function refresh() {
-    const data = await request('load');
-    state.presets = data.presets || [];
-    state.chats = data.chats || [];
-    state.connections = data.connections || [];
-    state.recovery = data.draft;
-    if (data.permissions) state.permissions = { ...state.permissions, ...data.permissions };
-    if (!state.preferencesLoaded) {
-      state.translationLanguage = data.preferences?.translationLanguage || 'English';
-      state.translationConnection = data.preferences?.translationConnection || '';
-      state.preferencesLoaded = true;
-    }
-    state.templates = Array.isArray(data.templates) ? data.templates : [];
-    if (!state.chatId) state.chatId = data.active?.id || '';
-    render();
+  function refresh(): Promise<void> {
+    if (refreshPromise) return refreshPromise;
+    hasLoadedOnce = true;
+    refreshPromise = request('load')
+      .then((data) => {
+        if (destroyed) return;
+        state.presets = data.presets || [];
+        state.chats = data.chats || [];
+        state.connections = data.connections || [];
+        state.recovery = data.draft;
+        if (data.permissions) state.permissions = { ...state.permissions, ...data.permissions };
+        if (!state.preferencesLoaded) {
+          state.translationLanguage = data.preferences?.translationLanguage || 'English';
+          state.translationConnection = data.preferences?.translationConnection || '';
+          state.preferencesLoaded = true;
+        }
+        state.templates = Array.isArray(data.templates) ? data.templates : [];
+        if (!state.chatId) state.chatId = data.active?.id || '';
+        render();
+      })
+      .finally(() => {
+        refreshPromise = null;
+      });
+    return refreshPromise;
   }
 
   async function saveEntriesAsTemplate(entries: any[], suggestedName = '') {
@@ -639,21 +688,22 @@ export function setup(ctx: any) {
 
   root.addEventListener('input', (e) => {
     const el = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    if (el.tagName === 'SELECT') return;
     const d = state.draft;
     if (el.dataset.block && d) {
       let val: any = el.value;
       if (el.dataset.block === 'depth') val = Math.max(0, Number(val) || 0);
       if (el.dataset.block === 'marker' || el.dataset.block === 'categoryMode' || el.dataset.block === 'group') val = val || null;
       d.prompt_order[state.selected][el.dataset.block] = val;
-      persist();
+      persist(false, true);
     } else if (el.dataset.preset && d) {
       d[el.dataset.preset] = el.value;
-      persist();
+      persist(false, true);
     } else if (el.dataset.paramNum && d) {
       d.parameters = d.parameters || {};
       if (el.value === '') delete d.parameters[el.dataset.paramNum];
       else d.parameters[el.dataset.paramNum] = Number(el.value);
-      persist();
+      persist(false, true);
     } else if (el.dataset.varIndex !== undefined && d) {
       const b = d.prompt_order[state.selected];
       const idx = Number(el.dataset.varIndex);
@@ -668,8 +718,8 @@ export function setup(ctx: any) {
         else if (f === 'defaultValue' && v.type === 'multiselect') v[f] = el.value.split(',').map((s) => s.trim()).filter(Boolean);
         else v[f] = ['min', 'max', 'step', 'rows'].includes(f) ? Number(el.value) : el.value;
       }
-      b.variables[idx] = normalizeVariableDef(v);
-      persist();
+      b.variables[idx] = normalizeVariableDef(v, true);
+      persist(false, true);
     } else if (el.dataset.varRuntime && d) {
       const b = d.prompt_order[state.selected];
       if (!b) return;
@@ -677,7 +727,7 @@ export function setup(ctx: any) {
       d.metadata.promptVariables = d.metadata.promptVariables || {};
       d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
       d.metadata.promptVariables[b.id][el.dataset.varRuntime] = el.value;
-      persist();
+      persist(false, true);
     } else if (el.dataset.state === 'sourceTranslationName' && state.sourceTranslation) state.sourceTranslation.name = el.value;
     else if (el.dataset.state === 'translationName' && state.translation) state.translation.name = el.value;
     else if (el.dataset.state === 'sourceTranslationText' && state.sourceTranslation) state.sourceTranslation.content = el.value;
@@ -704,10 +754,24 @@ export function setup(ctx: any) {
 
   root.addEventListener('change', async (e) => {
     const el = e.target as HTMLInputElement | HTMLSelectElement;
+    if (el.tagName === 'SELECT' && el.dataset.state) {
+      const key = el.dataset.state;
+      state[key] = el.value;
+      if (['compareA', 'compareB', 'connectionId', 'chatId', 'generationType'].includes(key)) {
+        if (key === 'connectionId') scheduleTokenCount();
+        render();
+      }
+      return;
+    }
     if (el.tagName === 'SELECT' && el.dataset.block && state.draft) {
       let val: any = el.value;
       if (el.dataset.block === 'marker' || el.dataset.block === 'categoryMode') val = val || null;
-      state.draft.prompt_order[state.selected][el.dataset.block] = val;
+      const blk = state.draft.prompt_order[state.selected];
+      blk[el.dataset.block] = val;
+      if (el.dataset.block === 'marker') {
+        if (val === 'category' && !blk.categoryMode) blk.categoryMode = 'checkbox';
+        else if (val !== 'category') blk.categoryMode = null;
+      }
       persist();
       render();
       return;
@@ -1025,13 +1089,7 @@ export function setup(ctx: any) {
         state.showMacroPane = !state.showMacroPane;
         if (state.showMacroPane && b) await runMacroPreview(b);
       } else if (a === 'refresh-macro' && b) { await runMacroPreview(b); return; }
-      else if (a === 'add-current-to-basket' && b) {
-        await saveEntriesAsTemplate(
-          [{ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || 'Draft' }],
-          b.name || 'Block Template',
-        );
-        return;
-      } else if (a === 'add-variable' && b) {
+      else if (a === 'add-variable' && b) {
         b.variables = Array.isArray(b.variables) ? b.variables : [];
         const idx = b.variables.length + 1;
         b.variables.push({ name: `var_${idx}`, label: `Variable ${idx}`, description: '', type: 'text', defaultValue: '' });
@@ -1305,14 +1363,23 @@ export function setup(ctx: any) {
           root.removeAttribute('aria-busy');
         }
       } else if (a === 'profile') {
-        if (!state.chatId) throw new Error('Choose a chat first.');
-        const active = await request('active', { chatId: state.chatId });
-        if (active.preset_id !== d.id) throw new Error('The selected chat uses a different preset. Open that preset first.');
-        for (const block of d.prompt_order) if (Object.hasOwn(active.block_states, block.id)) block.enabled = active.block_states[block.id];
-        persist();
-        state.notice = `Applied active block states from ${active.source}.`;
+        const peState = ctx.ui?.presetEditor?.getState?.();
+        if (peState?.open && peState?.preset && peState.preset.id === d.id && Array.isArray(peState.preset.blocks)) {
+          const map = new Map(peState.preset.blocks.map((blk: any) => [blk.id, Boolean(blk.enabled)]));
+          for (const block of d.prompt_order) if (map.has(block.id)) block.enabled = map.get(block.id)!;
+          persist();
+          state.notice = 'Applied active block states from the open native Preset Editor.';
+        } else {
+          if (!state.chatId) throw new Error('Choose a chat first.');
+          const active = await request('active', { chatId: state.chatId, presetId: d.id, generationType: state.generationType });
+          if (active.preset_id && d.id && active.preset_id !== d.id) throw new Error('The selected chat uses a different preset. Open that preset first.');
+          for (const block of d.prompt_order) if (Object.hasOwn(active.block_states || {}, block.id)) block.enabled = active.block_states[block.id];
+          persist();
+          state.notice = `Applied active block states from ${active.source || 'profile'}.`;
+        }
       } else if (a === 'stop') {
         if (state.activeRun) await request('cancel', { runId: state.activeRun });
+        state.notice = 'Generation stopped.';
       } else if (a === 'dry') {
         if (!state.chatId) throw new Error('Choose a chat first.');
         state.busy = true;
@@ -1345,7 +1412,10 @@ export function setup(ctx: any) {
           pending.set(requestId, {
             resolve,
             reject,
-            onAssembled: (data: any) => { state.assembled = data; },
+            onAssembled: (data: any) => {
+              state.assembled = data;
+              render();
+            },
             onReasoning: (token: string) => {
               state.reasoning += token;
               const rbox = root.querySelector('.ps-reasoning-box');
@@ -1371,7 +1441,7 @@ export function setup(ctx: any) {
             customMessage: state.custom,
           });
         }).then((result: any) => {
-          if (a === 'run') {
+          if (a === 'run' && !result?.aborted) {
             state.lastUsage = result?.usage || null;
             if (result?.reasoning && !state.reasoning) state.reasoning = result.reasoning;
             state.runs.push({
@@ -1390,7 +1460,7 @@ export function setup(ctx: any) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'collect-blocks', 'save-template', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-current-to-basket'].includes(a)) {
+      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'stop', 'collect-blocks', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-checked-imports', 'delete-checked-blocks', 'delete-row', 'delete-block', 'fill-dummy-turns', 'continue-test-dialogue'].includes(a)) {
         state.notice = '';
       }
       render();
@@ -1410,10 +1480,6 @@ export function setup(ctx: any) {
   });
 
   render();
-  refresh().catch((err) => {
-    state.notice = err.message;
-    render();
-  });
 
   return () => {
     destroyed = true;
@@ -1423,6 +1489,11 @@ export function setup(ctx: any) {
     clearTimeout(tokenTimer);
     clearTimeout(longPressTimer);
     if (state.activeRun) request('cancel', { runId: state.activeRun }).catch(() => {});
+    for (const [, p] of pending) {
+      try { p.reject?.(new Error('Extension unloaded.')); } catch (_) {}
+    }
+    pending.clear();
+    tokenCache.clear();
     unsub();
     unsubActivate?.();
     unsubKb?.();

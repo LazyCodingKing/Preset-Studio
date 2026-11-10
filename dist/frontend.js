@@ -473,11 +473,12 @@ var freshDraft = () => ({
     { id: uid(), name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true, color: null, injectionTrigger: [], group: null }
   ]
 });
-function normalizeVariableDef(v) {
+function normalizeVariableDef(v, allowEmptyWhileEditing = false) {
   const type = v?.type === "boolean" ? "switch" : ["text", "textarea", "number", "slider", "select", "switch", "multiselect"].includes(v?.type) ? v.type : "text";
+  const cleanedName = String(v?.name ?? "").replace(/[^a-zA-Z0-9_]/g, "_");
   const base = {
-    name: String(v?.name || "var_1").replace(/[^a-zA-Z0-9_]/g, "_") || "var_1",
-    label: String(v?.label || v?.name || "Variable"),
+    name: allowEmptyWhileEditing ? cleanedName : cleanedName || "var_1",
+    label: allowEmptyWhileEditing ? String(v?.label ?? "") : String(v?.label || cleanedName || "Variable"),
     type
   };
   if (typeof v?.description === "string" && v.description)
@@ -548,7 +549,8 @@ function buildPresetVariableDiagnostics(blocks) {
   const refsByName = new Map;
   const defCountByBlock = new Map;
   const refCountByBlock = new Map;
-  const varRe = /\{\{\s*(?:var|promptVar|presetVar)\s*::\s*([a-zA-Z0-9_.-]+)/gi;
+  const varRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)|\.([a-zA-Z0-9_]+)|([a-zA-Z0-9_.-]+))/gi;
+  const explicitVarRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
   for (const blk of blocks || []) {
     const vars = Array.isArray(blk.variables) ? blk.variables : [];
     defCountByBlock.set(blk.id, vars.length);
@@ -562,8 +564,10 @@ function buildPresetVariableDiagnostics(blocks) {
     const text = blk.content || "";
     const blockRefSet = new Set;
     let m;
-    while ((m = varRe.exec(text)) !== null) {
-      const name = m[1];
+    while ((m = explicitVarRe.exec(text)) !== null) {
+      const name = m[1] || m[2];
+      if (!name)
+        continue;
       blockRefSet.add(name);
       const rList = refsByName.get(name) || [];
       if (!rList.some((x) => x.blockId === blk.id)) {
@@ -644,13 +648,12 @@ function sanitizeBlockForLoom(b) {
     isLocked: Boolean(b.isLocked),
     color: b.color ? String(b.color) : null,
     injectionTrigger: Array.isArray(b.injectionTrigger) ? b.injectionTrigger.map(String) : [],
-    ...Array.isArray(b.characterTagTrigger) ? { characterTagTrigger: b.characterTagTrigger.map(String) } : {},
     group: b.group ? String(b.group) : null
   };
   if (b.categoryMode === "radio" || b.categoryMode === "checkbox")
     cleanBlock.categoryMode = b.categoryMode;
   if (Array.isArray(b.variables))
-    cleanBlock.variables = b.variables.map(normalizeVariableDef);
+    cleanBlock.variables = b.variables.map((v) => normalizeVariableDef(v, false));
   return cleanBlock;
 }
 async function copyToClipboard(text) {
@@ -692,6 +695,7 @@ function exportJsonFile(filename, dataObj) {
 function closeModalRef(modalRef) {
   if (modalRef.current) {
     try {
+      modalRef.current.cleanup?.();
       modalRef.current.close?.();
       modalRef.current.remove?.();
       modalRef.current.dismiss?.();
@@ -820,7 +824,7 @@ function openFindReplaceDialog(root, modalRef, state, persist, render) {
     dialog.remove();
     returnFocus?.focus?.({ preventScroll: true });
   };
-  const updatePreview = () => {
+  const updatePreview = (selectAllMatches = false) => {
     const needle = findInput.value;
     const rep = replaceInput.value;
     matches = [];
@@ -831,7 +835,7 @@ function openFindReplaceDialog(root, modalRef, state, persist, render) {
         const parts = (blk.content || "").split(needle);
         if (parts.length > 1) {
           matches.push({ blk, count: parts.length - 1, parts });
-          if (!selectedIds.size)
+          if (selectAllMatches)
             selectedIds.add(blk.id);
         }
       }
@@ -847,9 +851,9 @@ function openFindReplaceDialog(root, modalRef, state, persist, render) {
   };
   findInput.addEventListener("input", () => {
     selectedIds.clear();
-    updatePreview();
+    updatePreview(true);
   });
-  replaceInput.addEventListener("input", updatePreview);
+  replaceInput.addEventListener("input", () => updatePreview(false));
   resultsEl.addEventListener("change", (ev) => {
     const cb = ev.target.closest("input[data-fr-id]");
     if (!cb)
@@ -858,7 +862,7 @@ function openFindReplaceDialog(root, modalRef, state, persist, render) {
       selectedIds.add(cb.dataset.frId);
     else
       selectedIds.delete(cb.dataset.frId);
-    updatePreview();
+    updatePreview(false);
   });
   dialog.addEventListener("cancel", (ev) => {
     ev.preventDefault();
@@ -1000,11 +1004,12 @@ function openBlockContextMenu(root, modalRef, state, index, x, y, callbacks) {
     <button type="button" class="ps-danger-btn" data-ctx-key="delete">\uD83D\uDDD1 Delete Block</button>
   `;
   const dismiss = () => {
+    document.removeEventListener("pointerdown", onOutside, true);
     if (modalRef.current === menu)
       modalRef.current = null;
     menu.remove();
-    document.removeEventListener("pointerdown", onOutside, true);
   };
+  menu.cleanup = dismiss;
   const onOutside = (ev) => {
     if (!menu.contains(ev.target))
       dismiss();
@@ -1108,14 +1113,14 @@ function renderArchitectTab(ctx, state) {
       }
     }
   }
-  return `<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[["all", "All"], ["enabled", "Active"], ["categories", "Categories"], ["markers", "Markers"]].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? "ps-primary" : ""}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join("")}<input style="width:160px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="open-find-replace" title="Find and replace text across all unlocked blocks">\uD83D\uDD0D Find & Replace</button><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm" data-action="quick-insert-template">\uD83D\uDCE6 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="enable-checked-blocks">✓ Enable (${state.selectedDraft.length})</button><button class="ps-btn-sm" data-action="disable-checked-blocks">○ Disable (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">\uD83D\uDDD1 Delete (${state.selectedDraft.length})</button>` : ""}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ""}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? "ps-has-detail" : ""} ${state.showMacroPane ? "ps-with-xray" : ""}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong>${categoryBlocks.length ? `<button class="ps-btn-sm" data-action="toggle-all-categories">${allCatsCollapsed ? "▾ Expand Categories" : "▸ Collapse Categories"}</button>` : '<span class="ps-muted">Drag ⠿ or ↑↓</span>'}</div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
+  return `<div class="ps-panel" style="padding:10px 14px"><div class="ps-between"><div class="ps-chips">${[["all", "All"], ["enabled", "Active"], ["categories", "Categories"], ["markers", "Markers"]].map(([id, label]) => `<button class="ps-btn-sm ${state.blockFilter === id ? "ps-primary" : ""}" data-action="filter-blocks" data-filter="${id}">${label}</button>`).join("")}<input style="width:160px;max-width:100%;min-height:32px;padding:4px 8px" placeholder="Filter blocks…" data-state="blockSearch" value="${esc(state.blockSearch)}"></div><div class="ps-actions"><button class="ps-btn-sm" data-action="open-find-replace" title="Find and replace text across all unlocked blocks">\uD83D\uDD0D Find & Replace</button><button class="ps-btn-sm" data-action="add-block">＋ Prompt</button><button class="ps-btn-sm" data-action="add-category">＋ Category</button><button class="ps-btn-sm" data-action="quick-insert-template">\uD83D\uDCE6 ＋ Add Template</button>${state.selectedDraft.length ? `<button class="ps-btn-sm" data-action="quick-template-from-selected">\uD83D\uDCE6 Save Checked (${state.selectedDraft.length}) as Template…</button><button class="ps-btn-sm" data-action="enable-checked-blocks">✓ Enable (${state.selectedDraft.length})</button><button class="ps-btn-sm" data-action="disable-checked-blocks">○ Disable (${state.selectedDraft.length})</button><button class="ps-btn-sm ps-danger-btn" data-action="delete-checked-blocks">\uD83D\uDDD1 Delete (${state.selectedDraft.length})</button>` : ""}${ctx.components?.mountLoomBlockEditor ? '<button class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ""}</div></div></div><div class="ps-columns ${state.mobileDetailOpen ? "ps-has-detail" : ""} ${state.showMacroPane ? "ps-with-xray" : ""}"><div class="ps-col-list ps-panel" data-scroll-id="prompt-order-list"><div class="ps-between" style="margin-bottom:8px"><strong>Prompt Order (${filteredBlocks.length}/${d.prompt_order.length})</strong>${categoryBlocks.length ? `<button class="ps-btn-sm" data-action="toggle-all-categories">${allCatsCollapsed ? "▾ Expand Categories" : "▸ Collapse Categories"}</button>` : '<span class="ps-muted">Drag ⠿ or ↑↓</span>'}</div><div class="ps-list">${filteredBlocks.map(({ block, index, isChild }) => {
     const tok = state.tokenCounts[block.id];
     const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
     const refCnt = varDiag.refCountByBlock.get(block.id) || 0;
     const isCat = block.marker === "category";
     const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
     return `<div class="ps-block ${isCat ? "ps-is-cat" : isChild ? "ps-is-child" : ""} ${!block.enabled ? "ps-is-off" : ""} ${index === state.selected ? "ps-active-row" : ""}" draggable="true" data-context-index="${index}"><span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}" title="${isCatCollapsed ? "Expand category" : "Collapse category"}">${isCatCollapsed ? "▸" : "▾"}</button>` : `<input type="checkbox" style="width:auto;min-height:18px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? "checked" : ""}>`}<button class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || "Untitled")}"><div class="ps-block-title-row">${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ""}${block.isLocked ? '<span title="Locked" style="font-size:0.75rem;flex:none">\uD83D\uDD12</span>' : ""}<span class="ps-block-title">${esc(block.name || "Untitled")}</span></div><div class="ps-block-sub"><span>${esc(block.marker || block.role)}</span>${block.content?.trim() && tok ? `<span data-token-id="${esc(block.id)}">· ${tok}t</span>` : `<span data-token-id="${esc(block.id)}"></span>`}${defCnt ? `<span class="ps-mini-badge ps-def" title="Defines ${defCnt} variable(s)">D${defCnt}</span>` : ""}${refCnt ? `<span class="ps-mini-badge ps-ref" title="References ${refCnt} variable(s)">V${refCnt}</span>` : ""}</div></button><div class="ps-row-actions"><button class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? "disabled" : ""} title="Move up">↑</button><button class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? "disabled" : ""} title="Move down">↓</button>${!isCat ? `<button class="ps-row-btn ${block.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? "On" : "Off"}</button>` : ""}<button class="ps-row-btn ps-danger-btn ps-row-step" data-action="delete-row" data-index="${index}" title="Delete block">\uD83D\uDDD1</button><button class="ps-row-btn" data-action="block-menu" data-index="${index}" title="More actions">⋯</button></div></div>`;
-  }).join("") || '<p class="ps-muted">No matching blocks.</p>'}</div></div><div class="ps-col-detail" data-scroll-id="inspector-detail">${!b ? '<div class="ps-panel"><p class="ps-muted">Select or add a block to inspect.</p></div>' : `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div class="ps-row"><button class="ps-btn-sm ps-mobile-back" data-action="close-mobile-detail">← Back</button><h3>${esc(b.name || "Untitled")}</h3><span class="ps-pill ps-pill-accent">${esc(b.marker || b.role)}</span><button class="ps-btn-sm ${b.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${state.selected}">${b.enabled ? "● Enabled (On)" : "○ Disabled (Off — Skipped in Test)"}</button></div><div class="ps-actions"><button class="ps-btn-sm" data-action="copy-active-block-content" title="Copy Prompt Content to Clipboard">\uD83D\uDCCB Copy Prompt</button><button class="ps-btn-sm ${b.isLocked ? "ps-primary" : ""}" data-action="toggle-lock">${b.isLocked ? "\uD83D\uDD12 Locked (Click to Unlock)" : "\uD83D\uDD13 Unlocked"}</button><button class="ps-btn-sm" data-action="view" data-view="variables">\uD83C\uDF9B Variables (${varCount})</button><button class="ps-btn-sm ${state.showMacroPane ? "ps-primary" : ""}" data-action="toggle-macro-pane">⚡ Macro Preview</button><button class="ps-btn-sm ps-primary" data-action="open-text-editor" ${b.isLocked ? "disabled" : ""}>⤢ Full-Screen Editor</button></div></div>${b.isLocked ? `<div class="ps-notice" style="margin-bottom:10px;border-left-color:var(--ps-warning)">\uD83D\uDD12 This block is locked against accidental text edits. Click <strong>\uD83D\uDD12 Locked (Click to Unlock)</strong> above to edit its fields, or use <strong>Delete Block</strong> below to remove it.</div>` : ""}<div class="ps-grid"><label>Block Name<input data-block="name" value="${esc(b.name)}" ${b.isLocked ? "disabled" : ""}></label><label>Role<select data-block="role" ${b.isLocked ? "disabled" : ""}>${["system", "user", "assistant", "user_append", "assistant_append"].map((x) => `<option value="${x}" ${b.role === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label>Position<select data-block="position" ${b.isLocked ? "disabled" : ""}>${[["pre_history", "Before Chat History (pre_history)"], ["post_history", "After Chat History (post_history)"], ["in_history", "At Depth in History (in_history)"]].map(([val, lbl]) => `<option value="${val}" ${b.position === val ? "selected" : ""}>${lbl}</option>`).join("")}</select></label><label>In-History Depth<div id="ps-depth-stepper-slot"><input data-block="depth" type="number" min="0" value="${esc(b.depth ?? 0)}" ${b.isLocked ? "disabled" : ""}></div></label><label>Structural Marker<select data-block="marker" ${b.isLocked ? "disabled" : ""}>${markerOptions.map((m) => `<option value="${esc(m.id)}" ${(b.marker || "") === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label><label>Category Selection Mode<select data-block="categoryMode" ${b.marker !== "category" || b.isLocked ? "disabled" : ""}><option value="">None</option><option value="checkbox" ${b.categoryMode === "checkbox" ? "selected" : ""}>Checkbox (Multi)</option><option value="radio" ${b.categoryMode === "radio" ? b.categoryMode === "radio" ? "selected" : "" : ""}>Radio (Single)</option></select></label><label>Block Group <span class="ps-muted">(Optional mutual-exclusion group ID)</span><input data-block="group" value="${esc(b.group || "")}" placeholder="e.g. style_group" ${b.isLocked ? "disabled" : ""}></label></div><div style="margin-top:10px"><label>Injection Triggers <span class="ps-muted">(Empty = active on all generation types)</span><div id="ps-triggers-slot"><div class="ps-chips">${TRIGGERS.map((tr) => `<button type="button" class="ps-btn-sm ${(b.injectionTrigger || []).includes(tr) ? "ps-primary" : ""}" data-action="toggle-trigger" data-trigger="${tr}" ${b.isLocked ? "disabled" : ""}>${tr}</button>`).join("")}</div></div></label></div><div class="ps-between" style="margin:10px 0"><div class="ps-row"><span class="ps-muted">Color Tag:</span><button class="ps-btn-sm" data-action="set-color" data-color="">None</button>${SWATCHES.map((c) => `<button class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join("")}</div>${translationButtons(state, "translate", b)}</div><div class="ps-card" style="margin-bottom:8px;padding:8px 10px"><div class="ps-between" style="gap:6px"><div class="ps-row" style="flex:1"><span class="ps-muted" style="font-weight:600">Insert Macro:</span><select style="width:auto;max-width:260px;min-height:30px;padding:3px 8px;font-size:0.82rem" data-state="quickMacroSnippet" ${b.isLocked ? "disabled" : ""}>${MACRO_CATALOG.map((m) => `<option value="${esc(m.snippet)}" ${state.quickMacroSnippet === m.snippet ? "selected" : ""}>${esc(m.group)}: ${esc(m.label)}</option>`).join("")}${presetVarNames.map((vn) => `<option value="{{var::${esc(vn)}}}">Preset Var: {{var::${esc(vn)}}}</option>`).join("")}</select><button type="button" class="ps-btn-sm ps-primary" data-action="insert-selected-macro" ${b.isLocked ? "disabled" : ""}>＋ Insert at Cursor</button></div><div class="ps-chips">${["{{char}}", "{{user}}", "{{persona}}", "{{if::...}}", "{{memories}}", "{{loomSovHand}}"].map((chip) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="${esc(chip === "{{if::...}}" ? `{{if::{{isGroupChat}}}}
+  }).join("") || '<p class="ps-muted">No matching blocks.</p>'}</div></div><div class="ps-col-detail" data-scroll-id="inspector-detail">${!b ? '<div class="ps-panel"><p class="ps-muted">Select or add a block to inspect.</p></div>' : `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div class="ps-row"><button class="ps-btn-sm ps-mobile-back" data-action="close-mobile-detail">← Back</button><h3>${esc(b.name || "Untitled")}</h3><span class="ps-pill ps-pill-accent">${esc(b.marker || b.role)}</span><button class="ps-btn-sm ${b.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${state.selected}">${b.enabled ? "● Enabled (On)" : "○ Disabled (Off — Skipped in Test)"}</button></div><div class="ps-actions"><button class="ps-btn-sm" data-action="copy-active-block-content" title="Copy Prompt Content to Clipboard">\uD83D\uDCCB Copy Prompt</button><button class="ps-btn-sm ${b.isLocked ? "ps-primary" : ""}" data-action="toggle-lock">${b.isLocked ? "\uD83D\uDD12 Locked (Click to Unlock)" : "\uD83D\uDD13 Unlocked"}</button><button class="ps-btn-sm" data-action="view" data-view="variables">\uD83C\uDF9B Variables (${varCount})</button><button class="ps-btn-sm ${state.showMacroPane ? "ps-primary" : ""}" data-action="toggle-macro-pane">⚡ Macro Preview</button><button class="ps-btn-sm ps-primary" data-action="open-text-editor" ${b.isLocked ? "disabled" : ""}>⤢ Full-Screen Editor</button></div></div>${b.isLocked ? `<div class="ps-notice" style="margin-bottom:10px;border-left-color:var(--ps-warning)">\uD83D\uDD12 This block is locked against accidental text edits. Click <strong>\uD83D\uDD12 Locked (Click to Unlock)</strong> above to edit its fields, or use <strong>Delete Block</strong> below to remove it.</div>` : ""}<div class="ps-grid"><label>Block Name<input data-block="name" value="${esc(b.name)}" ${b.isLocked ? "disabled" : ""}></label><label>Role<select data-block="role" ${b.isLocked ? "disabled" : ""}>${["system", "user", "assistant", "user_append", "assistant_append"].map((x) => `<option value="${x}" ${b.role === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label>Position<select data-block="position" ${b.isLocked ? "disabled" : ""}>${[["pre_history", "Before Chat History (pre_history)"], ["post_history", "After Chat History (post_history)"], ["in_history", "At Depth in History (in_history)"]].map(([val, lbl]) => `<option value="${val}" ${b.position === val ? "selected" : ""}>${lbl}</option>`).join("")}</select></label><label>In-History Depth<div id="ps-depth-stepper-slot"><input data-block="depth" type="number" min="0" value="${esc(b.depth ?? 0)}" ${b.isLocked ? "disabled" : ""}></div></label><label>Structural Marker<select data-block="marker" ${b.isLocked ? "disabled" : ""}>${markerOptions.map((m) => `<option value="${esc(m.id)}" ${(b.marker || "") === m.id ? "selected" : ""}>${esc(m.label)}</option>`).join("")}</select></label><label>Category Selection Mode<select data-block="categoryMode" ${b.marker !== "category" || b.isLocked ? "disabled" : ""}><option value="">None</option><option value="checkbox" ${b.categoryMode === "checkbox" ? "selected" : ""}>Checkbox (Multi)</option><option value="radio" ${b.categoryMode === "radio" ? "selected" : ""}>Radio (Single)</option></select></label><label>Block Group <span class="ps-muted">(Optional mutual-exclusion group ID)</span><input data-block="group" value="${esc(b.group || "")}" placeholder="e.g. style_group" ${b.isLocked ? "disabled" : ""}></label></div><div style="margin-top:10px"><label>Injection Triggers <span class="ps-muted">(Empty = active on all generation types)</span><div id="ps-triggers-slot"><div class="ps-chips">${TRIGGERS.map((tr) => `<button type="button" class="ps-btn-sm ${(b.injectionTrigger || []).includes(tr) ? "ps-primary" : ""}" data-action="toggle-trigger" data-trigger="${tr}" ${b.isLocked ? "disabled" : ""}>${tr}</button>`).join("")}</div></div></label></div><div class="ps-between" style="margin:10px 0"><div class="ps-row"><span class="ps-muted">Color Tag:</span><button class="ps-btn-sm" data-action="set-color" data-color="">None</button>${SWATCHES.map((c) => `<button class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join("")}</div>${translationButtons(state, "translate", b)}</div><div class="ps-card" style="margin-bottom:8px;padding:8px 10px"><div class="ps-between" style="gap:6px"><div class="ps-row" style="flex:1"><span class="ps-muted" style="font-weight:600">Insert Macro:</span><select style="width:auto;max-width:260px;min-height:30px;padding:3px 8px;font-size:0.82rem" data-state="quickMacroSnippet" ${b.isLocked ? "disabled" : ""}>${MACRO_CATALOG.map((m) => `<option value="${esc(m.snippet)}" ${state.quickMacroSnippet === m.snippet ? "selected" : ""}>${esc(m.group)}: ${esc(m.label)}</option>`).join("")}${presetVarNames.map((vn) => `<option value="{{var::${esc(vn)}}}">Preset Var: {{var::${esc(vn)}}}</option>`).join("")}</select><button type="button" class="ps-btn-sm ps-primary" data-action="insert-selected-macro" ${b.isLocked ? "disabled" : ""}>＋ Insert at Cursor</button></div><div class="ps-chips">${["{{char}}", "{{user}}", "{{persona}}", "{{if::...}}", "{{memories}}", "{{loomSovHand}}"].map((chip) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="${esc(chip === "{{if::...}}" ? `{{if::{{isGroupChat}}}}
 
 {{/if}}` : chip)}" ${b.isLocked ? "disabled" : ""}>${esc(chip)}</button>`).join("")}${presetVarNames.slice(0, 4).map((vn) => `<button type="button" class="ps-btn-sm ps-mono" data-action="insert-macro-chip" data-snippet="{{var::${esc(vn)}}}" ${b.isLocked ? "disabled" : ""}>{{var::${esc(vn)}}}</button>`).join("")}</div></div></div><label>Prompt Content <span class="ps-muted">Supports {{char}}, {{user}}, {{var::name}}, {{if::...}}</span><textarea class="ps-content" data-block="content" placeholder="${b.marker ? `Structural marker (${b.marker}) — leave empty unless overriding.` : "Write prompt instructions…"}" ${b.isLocked ? "disabled" : ""}>${esc(b.content)}</textarea></label>${state.translation?.blockId === b.id ? `<div class="ps-card" style="margin-top:8px"><strong>Translation Preview (${esc(state.translationLanguage)})</strong>${translationPreview(state.translation, "translation")}<div class="ps-actions" style="margin-top:8px"><button class="ps-primary ps-btn-sm" data-action="apply-translation">Apply Translation</button><button class="ps-btn-sm" data-action="discard-translation">Discard</button></div></div>` : ""}<div class="ps-between" style="margin-top:12px"><div class="ps-actions"><button class="ps-btn-sm ps-primary" data-action="save" ${state.busy ? "disabled" : ""}>\uD83D\uDCBE Save Block</button><button class="ps-btn-sm" data-action="up" ${state.selected === 0 ? "disabled" : ""}>↑ Up</button><button class="ps-btn-sm" data-action="down" ${state.selected >= d.prompt_order.length - 1 ? "disabled" : ""}>↓ Down</button><button class="ps-btn-sm" data-action="duplicate-block">Duplicate</button></div><button class="ps-btn-sm ps-danger-btn" data-action="delete-block">\uD83D\uDDD1 Delete Block</button></div></div>`}</div>${state.showMacroPane && b ? `<div class="ps-panel"><div class="ps-between"><h4>⚡ Live Macro Preview</h4><button class="ps-btn-sm" data-action="refresh-macro">↻ Resolve</button></div><p class="ps-muted" style="margin:4px 0 8px">Evaluated non-committing (commit: false) against ${state.chatId ? "selected chat" : "global context"}.</p>${macroData?.diagnostics?.length ? `<div class="ps-notice" style="border-left-color:var(--ps-warning)"><strong>${macroData.diagnostics.length} Macro Diagnostic(s):</strong><ul style="margin:4px 0;padding-left:18px">${macroData.diagnostics.map((dg) => `<li>${esc(dg.message)}</li>`).join("")}</ul></div>` : ""}<pre class="ps-result">${esc(state.macroBusy ? "Resolving macros…" : macroData ? macroData.text || "(Resolved to empty string)" : "Click Resolve to preview expanded macros.")}</pre></div>` : ""}</div>`;
 }
@@ -1250,8 +1255,9 @@ function readHostPresetEditorDraft(ctx) {
     return ensureUniqueBlockIds({
       id: fullState.preset.id,
       name: fullState.preset.name,
-      provider: "loom",
-      engine: "classic",
+      provider: fullState.preset.provider || "loom",
+      engine: fullState.preset.engine || "classic",
+      ...typeof fullState.preset.cache_revision === "number" ? { cache_revision: fullState.preset.cache_revision } : {},
       parameters: structuredClone(fullState.preset.parameters || {}),
       prompts: structuredClone(fullState.preset.prompts || {}),
       metadata: {
@@ -1313,26 +1319,20 @@ async function syncSaveWithNativePresetEditor(ctx, request, draftToSave, isCopy)
   });
 }
 function mountPresetEditorLauncher(ctx, state, setFull, hasFullMount, tab, scheduleTokenCount, render) {
+  let toolbarHandle = null;
   let toolbarRoot = null;
   let unsubPresetEditor = null;
-  document.querySelectorAll("[data-ps-launcher-root], [data-ps-launcher]").forEach((el) => {
-    try {
-      el.remove();
-    } catch (_) {}
-  });
-  document.querySelectorAll("button").forEach((btn) => {
-    if (btn.textContent?.includes("Open in Preset Studio") && !btn.closest(".ps-root")) {
-      const parent = btn.parentElement;
-      try {
-        btn.remove();
-        if (parent && parent.children.length === 0 && parent.tagName === "DIV")
-          parent.remove();
-      } catch (_) {}
-    }
-  });
   try {
-    if (ctx.ui?.mount) {
+    if (typeof ctx.ui?.registerPresetEditorToolbarItem === "function") {
+      toolbarHandle = ctx.ui.registerPresetEditorToolbarItem({
+        id: "preset-studio-launcher",
+        ariaLabel: "Open in Preset Studio"
+      });
+      toolbarRoot = toolbarHandle?.root ?? null;
+    } else if (typeof ctx.ui?.mount === "function") {
       toolbarRoot = ctx.ui.mount("preset_editor_toolbar");
+    }
+    if (toolbarRoot) {
       toolbarRoot.setAttribute("data-ps-launcher-root", "true");
       toolbarRoot.style.cssText = "display:flex;align-items:center;width:100%;padding:6px 14px;border-bottom:1px solid var(--lumiverse-border, rgba(255,255,255,0.08))";
       const launcher = document.createElement("button");
@@ -1377,18 +1377,19 @@ function mountPresetEditorLauncher(ctx, state, setFull, hasFullMount, tab, sched
   } catch (_) {}
   return () => {
     unsubPresetEditor?.();
-    if (toolbarRoot) {
+    if (toolbarHandle?.destroy) {
+      try {
+        toolbarHandle.destroy();
+      } catch (_) {}
+      toolbarHandle = null;
+      toolbarRoot = null;
+    } else if (toolbarRoot) {
       toolbarRoot.replaceChildren();
       try {
         toolbarRoot.remove();
       } catch (_) {}
       toolbarRoot = null;
     }
-    document.querySelectorAll("[data-ps-launcher-root], [data-ps-launcher]").forEach((el) => {
-      try {
-        el.remove();
-      } catch (_) {}
-    });
   };
 }
 function bindDragAndDropListeners(root, state, moveBlock, clearLongPress) {
@@ -1573,10 +1574,7 @@ function setup(ctx) {
     importValues: {},
     selectedImports: [],
     expandedImports: [],
-    basket: [],
-    templateName: "",
     templates: [],
-    quickTemplateIndex: "0",
     quickMacroSnippet: "{{char}}",
     translationLanguage: "English",
     translationConnection: "",
@@ -1587,11 +1585,14 @@ function setup(ctx) {
     batchTranslation: null
   };
   const pending = new Map;
+  const tokenCache = new Map;
   const mountedHandles = new Set;
   const modalRef = { current: null };
   let timer = null;
   let tokenTimer = null;
   let longPressTimer = null;
+  let refreshPromise = null;
+  let hasLoadedOnce = false;
   let destroyed = false;
   let saveChain = Promise.resolve();
   function destroyMounted() {
@@ -1655,12 +1656,18 @@ function setup(ctx) {
     if (msg.type === "backend-ready") {
       if (msg.permissions)
         state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      if (full || hasLoadedOnce)
+        refresh().catch(() => {});
+      else
+        render();
       return;
     }
     if (msg.type === "permissions" && msg.permissions) {
       state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      if (full || hasLoadedOnce)
+        refresh().catch(() => {});
+      else
+        render();
       return;
     }
     if (msg.type === "command") {
@@ -1676,6 +1683,7 @@ function setup(ctx) {
           setFull(true);
         else {
           tab.activate?.();
+          refresh().catch(() => {});
           render();
         }
       }
@@ -1722,22 +1730,47 @@ function setup(ctx) {
       if (destroyed || !state.draft?.prompt_order?.length)
         return;
       const blocks = state.draft.prompt_order;
-      const texts = blocks.map((b) => b.content || "");
-      try {
-        const res = await request("count-tokens", { texts, connectionId: state.connectionId });
-        if (destroyed || !res?.counts)
+      const connKey = state.connectionId || "default";
+      const missingIndices = [];
+      const missingTexts = [];
+      blocks.forEach((b, idx) => {
+        const text = b.content || "";
+        if (!text.trim())
           return;
+        const cacheKey = `${connKey}:${text}`;
+        if (!tokenCache.has(cacheKey)) {
+          missingIndices.push(idx);
+          missingTexts.push(text);
+        }
+      });
+      try {
+        if (missingTexts.length > 0) {
+          const res = await request("count-tokens", { texts: missingTexts, connectionId: state.connectionId });
+          if (destroyed || !res?.counts)
+            return;
+          if (tokenCache.size > 512)
+            tokenCache.clear();
+          missingIndices.forEach((blockIdx, i) => {
+            const text = blocks[blockIdx]?.content || "";
+            tokenCache.set(`${connKey}:${text}`, {
+              count: Number(res.counts[i]) || 0,
+              tokenizerName: res.tokenizerName || ""
+            });
+          });
+          if (res.tokenizerName)
+            state.tokenizerName = res.tokenizerName;
+        }
         const map = {};
         let sum = 0;
-        blocks.forEach((b, idx) => {
-          const c = Number(res.counts[idx]) || 0;
+        for (const b of blocks) {
+          const text = b.content || "";
+          const c = text.trim() ? tokenCache.get(`${connKey}:${text}`)?.count || 0 : 0;
           map[b.id] = c;
           if (b.enabled && b.marker !== "category")
             sum += c;
-        });
+        }
         state.tokenCounts = map;
         state.totalDraftTokens = sum;
-        state.tokenizerName = res.tokenizerName || "";
         const totalBadge = root.querySelector("[data-total-tokens]");
         if (totalBadge)
           totalBadge.textContent = `~${sum.toLocaleString()} block tokens`;
@@ -1749,12 +1782,21 @@ function setup(ctx) {
       } catch (_) {}
     }, 420);
   }
-  function persist(skipHistory = false) {
-    if (!skipHistory && state.draft)
+  function persist(skipHistory = false, deferHistory = false) {
+    if (!skipHistory && !deferHistory && state.draft) {
       pushHistory(state.draft);
-    state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
+      state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
+    } else if (deferHistory) {
+      state.dirty = true;
+    }
     clearTimeout(timer);
     timer = setTimeout(() => {
+      if (destroyed || !state.draft)
+        return;
+      if (!skipHistory && deferHistory) {
+        pushHistory(state.draft);
+      }
+      state.dirty = state.savedFingerprint ? computeDraftFingerprint(state.draft) !== state.savedFingerprint : true;
       const draft = structuredClone(state.draft);
       state.recovery = draft;
       saveChain = saveChain.catch(() => {}).then(() => request("draft", { draft })).catch((e) => {
@@ -2062,23 +2104,32 @@ function setup(ctx) {
   }
   const cleanupLauncher = mountPresetEditorLauncher(ctx, state, setFull, Boolean(mount), tab, scheduleTokenCount, render);
   bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
-  async function refresh() {
-    const data = await request("load");
-    state.presets = data.presets || [];
-    state.chats = data.chats || [];
-    state.connections = data.connections || [];
-    state.recovery = data.draft;
-    if (data.permissions)
-      state.permissions = { ...state.permissions, ...data.permissions };
-    if (!state.preferencesLoaded) {
-      state.translationLanguage = data.preferences?.translationLanguage || "English";
-      state.translationConnection = data.preferences?.translationConnection || "";
-      state.preferencesLoaded = true;
-    }
-    state.templates = Array.isArray(data.templates) ? data.templates : [];
-    if (!state.chatId)
-      state.chatId = data.active?.id || "";
-    render();
+  function refresh() {
+    if (refreshPromise)
+      return refreshPromise;
+    hasLoadedOnce = true;
+    refreshPromise = request("load").then((data) => {
+      if (destroyed)
+        return;
+      state.presets = data.presets || [];
+      state.chats = data.chats || [];
+      state.connections = data.connections || [];
+      state.recovery = data.draft;
+      if (data.permissions)
+        state.permissions = { ...state.permissions, ...data.permissions };
+      if (!state.preferencesLoaded) {
+        state.translationLanguage = data.preferences?.translationLanguage || "English";
+        state.translationConnection = data.preferences?.translationConnection || "";
+        state.preferencesLoaded = true;
+      }
+      state.templates = Array.isArray(data.templates) ? data.templates : [];
+      if (!state.chatId)
+        state.chatId = data.active?.id || "";
+      render();
+    }).finally(() => {
+      refreshPromise = null;
+    });
+    return refreshPromise;
   }
   async function saveEntriesAsTemplate(entries, suggestedName = "") {
     if (!entries.length)
@@ -2127,6 +2178,8 @@ function setup(ctx) {
   root.addEventListener("touchend", () => clearTimeout(longPressTimer), { passive: true });
   root.addEventListener("input", (e) => {
     const el = e.target;
+    if (el.tagName === "SELECT")
+      return;
     const d = state.draft;
     if (el.dataset.block && d) {
       let val = el.value;
@@ -2135,17 +2188,17 @@ function setup(ctx) {
       if (el.dataset.block === "marker" || el.dataset.block === "categoryMode" || el.dataset.block === "group")
         val = val || null;
       d.prompt_order[state.selected][el.dataset.block] = val;
-      persist();
+      persist(false, true);
     } else if (el.dataset.preset && d) {
       d[el.dataset.preset] = el.value;
-      persist();
+      persist(false, true);
     } else if (el.dataset.paramNum && d) {
       d.parameters = d.parameters || {};
       if (el.value === "")
         delete d.parameters[el.dataset.paramNum];
       else
         d.parameters[el.dataset.paramNum] = Number(el.value);
-      persist();
+      persist(false, true);
     } else if (el.dataset.varIndex !== undefined && d) {
       const b = d.prompt_order[state.selected];
       const idx = Number(el.dataset.varIndex);
@@ -2166,8 +2219,8 @@ function setup(ctx) {
         else
           v[f] = ["min", "max", "step", "rows"].includes(f) ? Number(el.value) : el.value;
       }
-      b.variables[idx] = normalizeVariableDef(v);
-      persist();
+      b.variables[idx] = normalizeVariableDef(v, true);
+      persist(false, true);
     } else if (el.dataset.varRuntime && d) {
       const b = d.prompt_order[state.selected];
       if (!b)
@@ -2176,7 +2229,7 @@ function setup(ctx) {
       d.metadata.promptVariables = d.metadata.promptVariables || {};
       d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
       d.metadata.promptVariables[b.id][el.dataset.varRuntime] = el.value;
-      persist();
+      persist(false, true);
     } else if (el.dataset.state === "sourceTranslationName" && state.sourceTranslation)
       state.sourceTranslation.name = el.value;
     else if (el.dataset.state === "translationName" && state.translation)
@@ -2207,11 +2260,28 @@ function setup(ctx) {
   });
   root.addEventListener("change", async (e) => {
     const el = e.target;
+    if (el.tagName === "SELECT" && el.dataset.state) {
+      const key = el.dataset.state;
+      state[key] = el.value;
+      if (["compareA", "compareB", "connectionId", "chatId", "generationType"].includes(key)) {
+        if (key === "connectionId")
+          scheduleTokenCount();
+        render();
+      }
+      return;
+    }
     if (el.tagName === "SELECT" && el.dataset.block && state.draft) {
       let val = el.value;
       if (el.dataset.block === "marker" || el.dataset.block === "categoryMode")
         val = val || null;
-      state.draft.prompt_order[state.selected][el.dataset.block] = val;
+      const blk = state.draft.prompt_order[state.selected];
+      blk[el.dataset.block] = val;
+      if (el.dataset.block === "marker") {
+        if (val === "category" && !blk.categoryMode)
+          blk.categoryMode = "checkbox";
+        else if (val !== "category")
+          blk.categoryMode = null;
+      }
       persist();
       render();
       return;
@@ -2564,9 +2634,6 @@ ${e.block.content || ""}`).join(`
       } else if (a === "refresh-macro" && b) {
         await runMacroPreview(b);
         return;
-      } else if (a === "add-current-to-basket" && b) {
-        await saveEntriesAsTemplate([{ block: structuredClone(b), values: structuredClone(d.metadata?.promptVariables?.[b.id] || {}), source: d.name || "Draft" }], b.name || "Block Template");
-        return;
       } else if (a === "add-variable" && b) {
         b.variables = Array.isArray(b.variables) ? b.variables : [];
         const idx = b.variables.length + 1;
@@ -2861,19 +2928,30 @@ ${e.block.content || ""}`).join(`
           root.removeAttribute("aria-busy");
         }
       } else if (a === "profile") {
-        if (!state.chatId)
-          throw new Error("Choose a chat first.");
-        const active = await request("active", { chatId: state.chatId });
-        if (active.preset_id !== d.id)
-          throw new Error("The selected chat uses a different preset. Open that preset first.");
-        for (const block of d.prompt_order)
-          if (Object.hasOwn(active.block_states, block.id))
-            block.enabled = active.block_states[block.id];
-        persist();
-        state.notice = `Applied active block states from ${active.source}.`;
+        const peState = ctx.ui?.presetEditor?.getState?.();
+        if (peState?.open && peState?.preset && peState.preset.id === d.id && Array.isArray(peState.preset.blocks)) {
+          const map = new Map(peState.preset.blocks.map((blk) => [blk.id, Boolean(blk.enabled)]));
+          for (const block of d.prompt_order)
+            if (map.has(block.id))
+              block.enabled = map.get(block.id);
+          persist();
+          state.notice = "Applied active block states from the open native Preset Editor.";
+        } else {
+          if (!state.chatId)
+            throw new Error("Choose a chat first.");
+          const active = await request("active", { chatId: state.chatId, presetId: d.id, generationType: state.generationType });
+          if (active.preset_id && d.id && active.preset_id !== d.id)
+            throw new Error("The selected chat uses a different preset. Open that preset first.");
+          for (const block of d.prompt_order)
+            if (Object.hasOwn(active.block_states || {}, block.id))
+              block.enabled = active.block_states[block.id];
+          persist();
+          state.notice = `Applied active block states from ${active.source || "profile"}.`;
+        }
       } else if (a === "stop") {
         if (state.activeRun)
           await request("cancel", { runId: state.activeRun });
+        state.notice = "Generation stopped.";
       } else if (a === "dry") {
         if (!state.chatId)
           throw new Error("Choose a chat first.");
@@ -2906,6 +2984,7 @@ ${e.block.content || ""}`).join(`
             reject,
             onAssembled: (data) => {
               state.assembled = data;
+              render();
             },
             onReasoning: (token) => {
               state.reasoning += token;
@@ -2934,7 +3013,7 @@ ${e.block.content || ""}`).join(`
             customMessage: state.custom
           });
         }).then((result) => {
-          if (a === "run") {
+          if (a === "run" && !result?.aborted) {
             state.lastUsage = result?.usage || null;
             if (result?.reasoning && !state.reasoning)
               state.reasoning = result.reasoning;
@@ -2954,7 +3033,7 @@ ${e.block.content || ""}`).join(`
         state.busy = false;
         state.activeRun = null;
       }
-      if (!["refresh", "save", "save-copy", "dry", "profile", "collect-blocks", "save-template", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-current-to-basket"].includes(a)) {
+      if (!["refresh", "save", "save-copy", "dry", "profile", "stop", "collect-blocks", "insert-template", "quick-insert-template", "quick-template-from-selected", "delete-template", "translate", "apply-translation", "save-preferences", "translate-source", "apply-source-translation", "translate-batch", "apply-batch", "import-block", "add-checked-imports", "delete-checked-blocks", "delete-row", "delete-block", "fill-dummy-turns", "continue-test-dialogue"].includes(a)) {
         state.notice = "";
       }
       render();
@@ -2972,10 +3051,6 @@ ${e.block.content || ""}`).join(`
     });
   });
   render();
-  refresh().catch((err) => {
-    state.notice = err.message;
-    render();
-  });
   return () => {
     destroyed = true;
     closeModalRef(modalRef);
@@ -2985,6 +3060,13 @@ ${e.block.content || ""}`).join(`
     clearTimeout(longPressTimer);
     if (state.activeRun)
       request("cancel", { runId: state.activeRun }).catch(() => {});
+    for (const [, p] of pending) {
+      try {
+        p.reject?.(new Error("Extension unloaded."));
+      } catch (_) {}
+    }
+    pending.clear();
+    tokenCache.clear();
     unsub();
     unsubActivate?.();
     unsubKb?.();

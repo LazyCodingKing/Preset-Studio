@@ -16,8 +16,11 @@ export function readHostPresetEditorDraft(ctx: any): any | null {
     return ensureUniqueBlockIds({
       id: fullState.preset.id,
       name: fullState.preset.name,
-      provider: 'loom',
-      engine: 'classic',
+      provider: fullState.preset.provider || 'loom',
+      engine: fullState.preset.engine || 'classic',
+      ...(typeof fullState.preset.cache_revision === 'number'
+        ? { cache_revision: fullState.preset.cache_revision }
+        : {}),
       parameters: structuredClone(fullState.preset.parameters || {}),
       prompts: structuredClone(fullState.preset.prompts || {}),
       metadata: {
@@ -92,28 +95,24 @@ export function mountPresetEditorLauncher(
   scheduleTokenCount: () => void,
   render: () => void,
 ): () => void {
+  let toolbarHandle: { root: HTMLElement; destroy?: () => void } | null = null;
   let toolbarRoot: HTMLElement | null = null;
   let unsubPresetEditor: (() => void) | null = null;
 
-  // 1. Immediately purge any duplicate or stale launchers from prior reloads
-  document.querySelectorAll('[data-ps-launcher-root], [data-ps-launcher]').forEach((el) => {
-    try { el.remove(); } catch (_) {}
-  });
-  document.querySelectorAll('button').forEach((btn) => {
-    if (btn.textContent?.includes('Open in Preset Studio') && !btn.closest('.ps-root')) {
-      const parent = btn.parentElement;
-      try {
-        btn.remove();
-        if (parent && parent.children.length === 0 && parent.tagName === 'DIV') parent.remove();
-      } catch (_) {}
-    }
-  });
-
   try {
-    if (ctx.ui?.mount) {
+    if (typeof ctx.ui?.registerPresetEditorToolbarItem === 'function') {
+      toolbarHandle = ctx.ui.registerPresetEditorToolbarItem({
+        id: 'preset-studio-launcher',
+        ariaLabel: 'Open in Preset Studio',
+      });
+      toolbarRoot = toolbarHandle?.root ?? null;
+    } else if (typeof ctx.ui?.mount === 'function') {
       toolbarRoot = ctx.ui.mount('preset_editor_toolbar');
-      toolbarRoot!.setAttribute('data-ps-launcher-root', 'true');
-      toolbarRoot!.style.cssText =
+    }
+
+    if (toolbarRoot) {
+      toolbarRoot.setAttribute('data-ps-launcher-root', 'true');
+      toolbarRoot.style.cssText =
         'display:flex;align-items:center;width:100%;padding:6px 14px;border-bottom:1px solid var(--lumiverse-border, rgba(255,255,255,0.08))';
       const launcher = document.createElement('button');
       launcher.type = 'button';
@@ -138,8 +137,9 @@ export function mountPresetEditorLauncher(
           render();
         }
       });
-      toolbarRoot!.replaceChildren(launcher);
+      toolbarRoot.replaceChildren(launcher);
     }
+
     if (ctx.ui?.presetEditor?.onChange) {
       unsubPresetEditor = ctx.ui.presetEditor.onChange((peState: any) => {
         if (!peState?.preset || state.dirty || state.busy) return;
@@ -157,14 +157,15 @@ export function mountPresetEditorLauncher(
 
   return () => {
     unsubPresetEditor?.();
-    if (toolbarRoot) {
+    if (toolbarHandle?.destroy) {
+      try { toolbarHandle.destroy(); } catch (_) {}
+      toolbarHandle = null;
+      toolbarRoot = null;
+    } else if (toolbarRoot) {
       toolbarRoot.replaceChildren();
       try { toolbarRoot.remove(); } catch (_) {}
       toolbarRoot = null;
     }
-    document.querySelectorAll('[data-ps-launcher-root], [data-ps-launcher]').forEach((el) => {
-      try { el.remove(); } catch (_) {}
-    });
   };
 }
 
