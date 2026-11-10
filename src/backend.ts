@@ -443,10 +443,16 @@ spindle.onFrontendMessage(async (msg, userId) => {
               }
               assembledData = {messages, breakdown, source: 'custom'};
             }
-            if (msg.customMessage?.trim()) {
-              const customTurn = msg.customMessage.trim();
-              messages.push({role: 'user', content: customTurn});
-              breakdown.push({type: 'block', name: 'Custom Test Turn (Studio)', role: 'user', content: customTurn});
+            const extraTurns = Array.isArray(msg.testTurns) && msg.testTurns.length
+              ? msg.testTurns.filter((t) => t && typeof t.content === 'string' && t.content.trim())
+              : msg.customMessage?.trim()
+                ? [{role: 'user', content: msg.customMessage.trim()}]
+                : [];
+            for (let ti = 0; ti < extraTurns.length; ti++) {
+              const turn = extraTurns[ti];
+              const r = ['system', 'user', 'assistant'].includes(turn.role) ? turn.role : 'user';
+              messages.push({role: r, content: turn.content.trim()});
+              breakdown.push({type: 'block', name: `Test Turn #${ti + 1} (${r})`, role: r, content: turn.content.trim()});
             }
             reply(userId, id, 'assembled', {data: {...assembledData, messages, breakdown, source: 'custom'}});
           } else {
@@ -460,10 +466,16 @@ spindle.onFrontendMessage(async (msg, userId) => {
             }, userId);
             messages = [...assembled.messages];
             breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
-            if (msg.customMessage?.trim()) {
-              const customTurn = msg.customMessage.trim();
-              messages.push({role: 'user', content: customTurn});
-              breakdown.push({type: 'block', name: 'Custom Test Turn (Studio)', role: 'user', content: customTurn});
+            const extraTurns = Array.isArray(msg.testTurns) && msg.testTurns.length
+              ? msg.testTurns.filter((t) => t && typeof t.content === 'string' && t.content.trim())
+              : msg.customMessage?.trim()
+                ? [{role: 'user', content: msg.customMessage.trim()}]
+                : [];
+            for (let ti = 0; ti < extraTurns.length; ti++) {
+              const turn = extraTurns[ti];
+              const r = ['system', 'user', 'assistant'].includes(turn.role) ? turn.role : 'user';
+              messages.push({role: r, content: turn.content.trim()});
+              breakdown.push({type: 'block', name: `Test Turn #${ti + 1} (${r})`, role: r, content: turn.content.trim()});
             }
             reply(userId, id, 'assembled', {data: {...assembled, messages, breakdown, source: 'draft'}});
           }

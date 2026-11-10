@@ -265,6 +265,29 @@ export function sanitizeBlockForLoom(b: any): any {
   return cleanBlock;
 }
 
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (_) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export function exportJsonFile(filename: string, dataObj: unknown): void {
   const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);

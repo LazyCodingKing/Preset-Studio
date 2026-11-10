@@ -8,6 +8,7 @@ import {
   ensureUniqueBlockIds,
   normalizeVariableDef,
   sanitizeBlockForLoom,
+  copyToClipboard,
   exportJsonFile,
 } from './studio-core.js';
 import {
@@ -92,6 +93,8 @@ export function setup(ctx: any) {
     testPromptSource: 'preset',
     testCustomPrompt: '',
     testCustomPromptIncludeHistory: true,
+    testTurnMode: 'single',
+    testTurns: [],
     runs: [],
     compareA: 0,
     compareB: 1,
@@ -679,7 +682,12 @@ export function setup(ctx: any) {
     else if (el.dataset.state === 'translationName' && state.translation) state.translation.name = el.value;
     else if (el.dataset.state === 'sourceTranslationText' && state.sourceTranslation) state.sourceTranslation.content = el.value;
     else if (el.dataset.state === 'translationText' && state.translation) state.translation.content = el.value;
-    else if (el.dataset.state) {
+    else if (el.dataset.turnIdx !== undefined && el.dataset.turnField === 'content') {
+      const idx = Number(el.dataset.turnIdx);
+      if (state.testTurns[idx]) {
+        state.testTurns[idx].content = el.value;
+      }
+    } else if (el.dataset.state) {
       const key = el.dataset.state;
       state[key] = el.value;
       if (['blockSearch', 'breakdownSearch', 'compareA', 'compareB'].includes(key)) {
@@ -723,6 +731,14 @@ export function setup(ctx: any) {
     if (el.dataset.customCheck === 'history') {
       state.testCustomPromptIncludeHistory = (el as HTMLInputElement).checked;
       render();
+      return;
+    }
+    if (el.dataset.turnIdx !== undefined && el.dataset.turnField === 'role') {
+      const idx = Number(el.dataset.turnIdx);
+      if (state.testTurns[idx]) {
+        state.testTurns[idx].role = el.value;
+        render();
+      }
       return;
     }
     if (el.dataset.varField === 'type') {
@@ -887,6 +903,120 @@ export function setup(ctx: any) {
           state.testCustomPrompt = res.text;
           render();
         }
+        return;
+      } else if (a === 'set-test-turn-mode') {
+        state.testTurnMode = el.dataset.mode || 'single';
+        render();
+        return;
+      } else if (a === 'add-test-turn') {
+        state.testTurns.push({ id: uid(), role: 'user', content: '' });
+        render();
+        return;
+      } else if (a === 'delete-test-turn') {
+        state.testTurns.splice(Number(el.dataset.turnIdx), 1);
+        render();
+        return;
+      } else if (a === 'move-turn-up' || a === 'move-turn-down') {
+        const idx = Number(el.dataset.turnIdx);
+        const target = idx + (a === 'move-turn-up' ? -1 : 1);
+        if (target >= 0 && target < state.testTurns.length) {
+          const [moved] = state.testTurns.splice(idx, 1);
+          state.testTurns.splice(target, 0, moved);
+          render();
+        }
+        return;
+      } else if (a === 'fill-dummy-turns') {
+        const mocks = [
+          { role: 'user', content: 'Hello! Are you ready for this adventure?' },
+          { role: 'assistant', content: 'Always ready. Where should we begin?' },
+          { role: 'user', content: 'Let us head toward the old ruins across the misty ridge.' },
+          { role: 'assistant', content: 'The air turns cold as the trail narrows. Watch your footing.' },
+          { role: 'user', content: 'I draw my lantern and scan the stone doorway ahead.' },
+        ];
+        state.testTurns.push(...mocks.map((m) => ({ id: uid(), ...m })));
+        state.notice = 'Appended 5 multi-turn conversation steps to stress-test your preset.';
+        render();
+        return;
+      } else if (a === 'undo-test-turn') {
+        if (state.testTurns.length) {
+          state.testTurns.pop();
+          render();
+        }
+        return;
+      } else if (a === 'clear-test-turns') {
+        state.testTurns = [];
+        render();
+        return;
+      } else if (a === 'continue-test-dialogue') {
+        const lastUser = state.testTurnMode === 'single' ? state.custom.trim() : '';
+        if (lastUser) state.testTurns.push({ id: uid(), role: 'user', content: lastUser });
+        if (state.result?.trim()) state.testTurns.push({ id: uid(), role: 'assistant', content: state.result.trim() });
+        state.testTurns.push({ id: uid(), role: 'user', content: '' });
+        state.testTurnMode = 'multi';
+        state.result = '';
+        state.reasoning = '';
+        state.custom = '';
+        state.notice = 'Added reply to conversation thread. Type your next response below!';
+        render();
+        setTimeout(() => {
+          const allTextareas = root.querySelectorAll<HTMLTextAreaElement>('textarea[data-turn-field="content"]');
+          allTextareas[allTextareas.length - 1]?.focus({ preventScroll: true });
+        }, 30);
+        return;
+      } else if (a === 'copy-active-block-content' && b) {
+        await copyToClipboard(b.content || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied prompt content of “${b.name}”` });
+        return;
+      } else if (a === 'copy-var-macro') {
+        await copyToClipboard(el.dataset.macro || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied macro: ${el.dataset.macro}` });
+        return;
+      } else if (a === 'copy-parameters-json' && d) {
+        await copyToClipboard(JSON.stringify(d.parameters || {}, null, 2));
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied sampler parameters JSON' });
+        return;
+      } else if (a === 'copy-source-content') {
+        const item = state.importBlocks[Number(el.dataset.index)];
+        if (item?.content) {
+          await copyToClipboard(item.content);
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied prompt of “${item.name || 'Block'}”` });
+        }
+        return;
+      } else if (a === 'copy-template-text') {
+        const tpl = state.templates[Number(el.dataset.index)];
+        if (tpl?.entries?.length) {
+          const joined = tpl.entries.map((e: any) => `### ${e.block.name || 'Block'}\n${e.block.content || ''}`).join('\n\n');
+          await copyToClipboard(joined);
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied all prompts in template “${tpl.name}”` });
+        }
+        return;
+      } else if (a === 'copy-custom-test-prompt') {
+        await copyToClipboard(state.testCustomPrompt || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied custom test prompt' });
+        return;
+      } else if (a === 'copy-custom-single-turn') {
+        await copyToClipboard(state.custom || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied custom test turn' });
+        return;
+      } else if (a === 'copy-turn-text') {
+        const turn = state.testTurns[Number(el.dataset.turnIdx)];
+        if (turn?.content) {
+          await copyToClipboard(turn.content);
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied Turn #${Number(el.dataset.turnIdx) + 1}` });
+        }
+        return;
+      } else if (a === 'copy-test-reasoning') {
+        await copyToClipboard(state.reasoning || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied reasoning transcript' });
+        return;
+      } else if (a === 'copy-test-reply') {
+        await copyToClipboard(state.result || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied test reply' });
+        return;
+      } else if (a === 'copy-xray-messages') {
+        const msgs = state.assembled?.messages || [];
+        await copyToClipboard(JSON.stringify(msgs, null, 2));
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied ${msgs.length} assembled messages JSON` });
         return;
       } else if (a === 'open-custom-editor') {
         const res = await request('text-editor', { title: 'Custom Test Message', value: state.custom, placeholder: 'Enter test user message…' });
@@ -1205,6 +1335,11 @@ export function setup(ctx: any) {
         const snapshot = structuredClone(d);
         const requestId = uid();
         state.activeRun = requestId;
+        const stagedTurns = state.testTurnMode === 'multi'
+          ? state.testTurns
+          : state.custom.trim()
+            ? [{ role: 'user', content: state.custom.trim() }]
+            : [];
         render();
         await new Promise((resolve, reject) => {
           pending.set(requestId, {
@@ -1232,6 +1367,7 @@ export function setup(ctx: any) {
             chatId: state.chatId,
             connectionId: state.connectionId,
             generationType: state.generationType,
+            testTurns: stagedTurns,
             customMessage: state.custom,
           });
         }).then((result: any) => {
