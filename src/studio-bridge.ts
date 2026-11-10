@@ -95,13 +95,29 @@ export function mountPresetEditorLauncher(
   let toolbarRoot: HTMLElement | null = null;
   let unsubPresetEditor: (() => void) | null = null;
 
+  // 1. Immediately purge any duplicate or stale launchers from prior reloads
+  document.querySelectorAll('[data-ps-launcher-root], [data-ps-launcher]').forEach((el) => {
+    try { el.remove(); } catch (_) {}
+  });
+  document.querySelectorAll('button').forEach((btn) => {
+    if (btn.textContent?.includes('Open in Preset Studio') && !btn.closest('.ps-root')) {
+      const parent = btn.parentElement;
+      try {
+        btn.remove();
+        if (parent && parent.children.length === 0 && parent.tagName === 'DIV') parent.remove();
+      } catch (_) {}
+    }
+  });
+
   try {
     if (ctx.ui?.mount) {
       toolbarRoot = ctx.ui.mount('preset_editor_toolbar');
+      toolbarRoot!.setAttribute('data-ps-launcher-root', 'true');
       toolbarRoot!.style.cssText =
         'display:flex;align-items:center;width:100%;padding:6px 14px;border-bottom:1px solid var(--lumiverse-border, rgba(255,255,255,0.08))';
       const launcher = document.createElement('button');
       launcher.type = 'button';
+      launcher.setAttribute('data-ps-launcher', 'true');
       launcher.style.cssText =
         'display:flex;align-items:center;justify-content:center;width:100%;gap:7px;min-height:36px;padding:0 12px;border:1px solid var(--lumiverse-border);border-radius:8px;background:var(--lumiverse-fill-subtle, rgba(255,255,255,0.04));color:var(--lumiverse-text);font:inherit;font-size:12px;font-weight:700;cursor:pointer';
       launcher.innerHTML = '<span>✳ Open in Preset Studio</span>';
@@ -143,8 +159,12 @@ export function mountPresetEditorLauncher(
     unsubPresetEditor?.();
     if (toolbarRoot) {
       toolbarRoot.replaceChildren();
-      toolbarRoot.removeAttribute('style');
+      try { toolbarRoot.remove(); } catch (_) {}
+      toolbarRoot = null;
     }
+    document.querySelectorAll('[data-ps-launcher-root], [data-ps-launcher]').forEach((el) => {
+      try { el.remove(); } catch (_) {}
+    });
   };
 }
 
