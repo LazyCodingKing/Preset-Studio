@@ -62,6 +62,121 @@ export const MARKERS = [
   { id: 'nsfw_prompt', label: 'NSFW / Auxiliary Prompt (nsfw_prompt)' },
 ];
 
+export interface VariableStarterExample {
+  id: string;
+  badge: string;
+  title: string;
+  summary: string;
+  variable: any;
+  promptSnippet: string;
+}
+
+export const VARIABLE_STARTER_EXAMPLES: VariableStarterExample[] = [
+  {
+    id: 'writing_tone',
+    badge: 'Dropdown',
+    title: '🎨 Writing Tone',
+    summary: 'User picks a short label (Warm, Dramatic, Clinical); full instructions inject into the prompt.',
+    variable: {
+      name: 'writing_tone',
+      label: 'Writing Tone',
+      type: 'select',
+      description: 'Choose the overall emotional register of the narration.',
+      defaultValue: 'warm',
+      options: [
+        { id: 'warm', label: 'Warm & Empathetic', value: 'Write with warmth, emotional attunement, and natural tenderness.' },
+        { id: 'dramatic', label: 'Dramatic & Cinematic', value: 'Use heightened tension, atmospheric lighting, and cinematic pacing.' },
+        { id: 'clinical', label: 'Crisp & Grounded', value: 'Keep prose grounded, observant, and concise without melodrama.' },
+      ],
+    },
+    promptSnippet: '{{var::writing_tone}}',
+  },
+  {
+    id: 'response_length',
+    badge: 'Slider',
+    title: '📏 Response Length',
+    summary: 'A touch slider from 1 to 6 paragraphs so users can control reply length.',
+    variable: {
+      name: 'response_length',
+      label: 'Target Paragraphs',
+      type: 'slider',
+      description: 'How many paragraphs each reply should aim for.',
+      min: 1,
+      max: 6,
+      step: 1,
+      defaultValue: 3,
+    },
+    promptSnippet: 'Keep your response around {{var::response_length}} paragraphs long.',
+  },
+  {
+    id: 'strict_canon',
+    badge: 'On/Off Switch',
+    title: '🛡️ Strict Canon Toggle',
+    summary: 'An On/Off switch (1 or 0) that turns a prompt rule on or off using {{if::...}}.',
+    variable: {
+      name: 'strict_canon',
+      label: 'Strict Canon Mode',
+      type: 'switch',
+      description: 'When enabled, enforces strict adherence to character lore and canon.',
+      defaultValue: 1,
+    },
+    promptSnippet: '{{if::{{var::strict_canon}}}}\nStrictly adhere to established canon and character lore. Do not invent contradictory backstory.\n{{/if}}',
+  },
+  {
+    id: 'style_addons',
+    badge: 'Multi-select',
+    title: '🧩 Style Checklist',
+    summary: 'Lets users check multiple writing rules that combine automatically.',
+    variable: {
+      name: 'style_addons',
+      label: 'Active Style Rules',
+      type: 'multiselect',
+      description: 'Select any combination of prose enhancements.',
+      separator: '\n',
+      defaultValue: ['sensory', 'dialogue'],
+      options: [
+        { id: 'sensory', label: 'Vivid Sensory Detail', value: '- Ground every scene in sound, texture, and lighting.' },
+        { id: 'dialogue', label: 'Natural Dialogue', value: '- Keep dialogue sharp, subtextual, and true to character voice.' },
+        { id: 'thoughts', label: 'Inner Monologue', value: '- Weave unspoken internal thoughts in italics.' },
+      ],
+    },
+    promptSnippet: '{{var::style_addons}}',
+  },
+  {
+    id: 'custom_focus',
+    badge: 'Text Box',
+    title: '✍️ Scene Focus Note',
+    summary: 'A simple text field where users can type a custom focus or theme.',
+    variable: {
+      name: 'scene_focus',
+      label: 'Scene Focus',
+      type: 'text',
+      description: 'Optional theme or detail to emphasize in the story.',
+      defaultValue: 'slow-burn character chemistry',
+    },
+    promptSnippet: 'Emphasize {{var::scene_focus}} throughout the scene.',
+  },
+];
+
+export const AUTHORS_NOTE_PRESETS = [
+  {
+    label: '✨ Vivid & Slow',
+    content: '[Style: vivid sensory descriptions, grounded atmosphere, slow and deliberate pacing.]',
+  },
+  {
+    label: '⚡ Raise Tension',
+    content: '[Increase dramatic tension. Something feels subtly off in the environment.]',
+  },
+  {
+    label: '💭 Inner Thoughts',
+    content: '[Include {{char}}\'s unspoken internal thoughts and emotional reactions in italics.]',
+  },
+  {
+    label: '💬 Dialogue Focus',
+    content: '[Focus on natural back-and-forth dialogue and subtle body language over long exposition.]',
+  },
+];
+
 export const esc = (x: unknown): string =>
   String(x ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] || c));
 
@@ -132,6 +247,247 @@ export function normalizeVariableDef(v: any, allowEmptyWhileEditing = false): an
   return base;
 }
 
+export function resolveSingleVariableRenderedValue(v: any, rawSelection: any): { rendered: string; selectedKeys: Set<string> } {
+  const active = rawSelection !== undefined && rawSelection !== '' ? rawSelection : v.defaultValue;
+  const selectedKeys = new Set<string>();
+
+  if (v.type === 'switch' || v.type === 'boolean') {
+    const isOn = active === 1 || active === '1' || active === true || active === 'true';
+    if (isOn) selectedKeys.add('1');
+    return { rendered: isOn ? '1' : '0', selectedKeys };
+  }
+  if (v.type === 'select') {
+    const opts = Array.isArray(v.options) ? v.options : [];
+    const key = String(active ?? '');
+    const found = opts.find((o: any) => o.id === key || o.label === key) || opts[0];
+    if (found) {
+      selectedKeys.add(String(found.id));
+      return { rendered: String(found.value ?? ''), selectedKeys };
+    }
+    return { rendered: key, selectedKeys };
+  }
+  if (v.type === 'multiselect') {
+    const opts = Array.isArray(v.options) ? v.options : [];
+    const chosenList = Array.isArray(active)
+      ? active.map(String)
+      : typeof active === 'string' && active.trim()
+        ? active.split(',').map((s) => s.trim())
+        : [];
+    for (const k of chosenList) selectedKeys.add(k);
+    // Emit in declared option order per user-presets.md Doc 7
+    const pieces = opts
+      .filter((o: any) => selectedKeys.has(String(o.id)))
+      .map((o: any) => String(o.value ?? ''))
+      .filter(Boolean);
+    const sep = typeof v.separator === 'string' ? v.separator : '\n\n';
+    return { rendered: pieces.join(sep), selectedKeys };
+  }
+  return { rendered: String(active ?? ''), selectedKeys };
+}
+
+export function resolveBlockVariablesPreview(block: any, savedBlockVars: Record<string, any> = {}): string {
+  if (!block) return '';
+  const vars: any[] = Array.isArray(block.variables) ? block.variables : [];
+  const varMap = new Map<string, { def: any; rendered: string; defaultRendered: string; selectedKeys: Set<string> }>();
+
+  for (const v of vars) {
+    if (!v?.name) continue;
+    const { rendered, selectedKeys } = resolveSingleVariableRenderedValue(v, savedBlockVars[v.name]);
+    const { rendered: defaultRendered } = resolveSingleVariableRenderedValue(v, undefined);
+    varMap.set(v.name, { def: v, rendered, defaultRendered, selectedKeys });
+  }
+
+  let text = String(block.content || '');
+  if (!text.trim() && vars.length > 0) {
+    text = vars.map((v) => `{{var::${v.name}}}`).join('\n\n');
+  }
+
+  // 1. Resolve {{var::name::ison::keyA,keyB}}
+  text = text.replace(/\{\{\s*(?:var|promptVar|presetVar)::([a-zA-Z0-9_.-]+)::ison::([^}]*)\}\}/gi, (_m, name, keysRaw) => {
+    const entry = varMap.get(name);
+    if (!entry) return 'false';
+    const keys = String(keysRaw || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (!keys.length) return 'true';
+    return keys.every((k) => entry.selectedKeys.has(k)) ? 'true' : 'false';
+  });
+
+  // 2. Resolve {{varDefault::name}} / {{hasVar::name}}
+  text = text.replace(/\{\{\s*(?:varDefault|promptVarDefault|presetVarDefault)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi, (_m, name) => {
+    return varMap.get(name)?.defaultRendered ?? '';
+  });
+  text = text.replace(/\{\{\s*(?:hasVar|hasPromptVar|hasPresetVar)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi, (_m, name) => {
+    return varMap.has(name) ? 'true' : 'false';
+  });
+
+  // 3. Resolve {{var::name}}, {{getvar::name}}, {{.name}}
+  text = text.replace(/\{\{\s*(?:(?:var|promptVar|presetVar|getvar)(?:::|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+))\s*\}\}/gi, (full, n1, n2) => {
+    const name = n1 || n2;
+    if (!varMap.has(name)) return full;
+    return varMap.get(name)!.rendered;
+  });
+
+  // 4. Evaluate simple {{if::condition}}...{{else}}...{{/if}} blocks driven by variable values
+  const isTruthy = (cond: string): boolean => {
+    let c = cond.trim();
+    let negate = false;
+    if (c.startsWith('!')) {
+      negate = true;
+      c = c.slice(1).trim();
+    }
+    if (c.startsWith('.') && varMap.has(c.slice(1))) {
+      c = varMap.get(c.slice(1))!.rendered;
+    }
+    const falsy = !c || ['0', 'false', 'null', 'undefined', 'no', 'off'].includes(c.toLowerCase());
+    return negate ? falsy : !falsy;
+  };
+
+  text = text.replace(/\{\{\s*if(?:::|\s+)([^{}]+?)\}\}([\s\S]*?)\{\{\s*\/if\s*\}\}/gi, (_m, cond, body) => {
+    const parts = String(body).split(/\{\{\s*else\s*\}\}/i);
+    return isTruthy(cond) ? parts[0] : (parts[1] ?? '');
+  });
+
+  return text.trim();
+}
+
+const UNSAFE_HTML_TAGS = new Set(['SCRIPT', 'IFRAME', 'FRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE', 'META', 'LINK']);
+
+function sanitizeHtmlFragment(rawHtml: string): DocumentFragment {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(`<body>${rawHtml}</body>`, 'text/html');
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
+  const toRemove: Element[] = [];
+  let node = walker.nextNode() as Element | null;
+  while (node) {
+    if (UNSAFE_HTML_TAGS.has(node.tagName)) {
+      toRemove.push(node);
+    } else {
+      for (const attr of Array.from(node.attributes)) {
+        const name = attr.name.toLowerCase();
+        const val = attr.value.trim().toLowerCase();
+        if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && val.startsWith('javascript:'))) {
+          node.removeAttribute(attr.name);
+        }
+      }
+    }
+    node = walker.nextNode() as Element | null;
+  }
+  for (const el of toRemove) el.remove();
+  const frag = document.createDocumentFragment();
+  while (doc.body.firstChild) {
+    frag.appendChild(doc.body.firstChild);
+  }
+  return frag;
+}
+
+function formatInlineProse(escapedText: string): string {
+  let out = escapedText;
+  // Inline code
+  out = out.replace(/`([^`\n]+)`/g, '<code class="ps-inline-code">$1</code>');
+  // Bold **text**
+  out = out.replace(/\*\*([^*]+)\*\*/g, '<strong class="ps-prose-bold">$1</strong>');
+  // Italic *text*
+  out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em class="ps-prose-italic">*$2*</em>');
+  // Quoted dialogue "..." or “...”
+  out = out.replace(/(&quot;[^&\n]+?&quot;|“[^”\n]+?”)/g, '<span class="ps-prose-dialogue">$1</span>');
+  return out;
+}
+
+function renderMarkdownAndHtmlWithPlaceholders(rawText: string): { html: string; islands: string[] } {
+  const islands: string[] = [];
+  let working = rawText;
+
+  // Extract block-level elements containing <style> or standalone <style> blocks into Shadow DOM islands
+  // per dev-frontend-api.md Doc 6 (HTML Islands)
+  if (/<style\b/i.test(working)) {
+    const idx = islands.length;
+    islands.push(working);
+    return { html: `<div class="ps-html-island-host" data-island-index="${idx}"></div>`, islands };
+  }
+
+  // Preserve fenced code blocks
+  const codeBlocks: string[] = [];
+  working = working.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const cIdx = codeBlocks.length;
+    codeBlocks.push(`<pre class="ps-code-block"${lang ? ` data-lang="${esc(lang)}"` : ''}><code>${esc(code)}</code></pre>`);
+    return `\u0000CODEBLOCK_${cIdx}\u0000`;
+  });
+
+  // Preserve raw HTML tags while formatting prose text segments
+  const htmlTokens: string[] = [];
+  working = working.replace(/<\/?[a-zA-Z][^>]*>/g, (tag) => {
+    const tIdx = htmlTokens.length;
+    htmlTokens.push(tag);
+    return `\u0000HTMLTAG_${tIdx}\u0000`;
+  });
+
+  const paragraphs = working.split(/\n{2,}/);
+  const formattedParas = paragraphs.map((para) => {
+    const trimmed = para.trim();
+    if (!trimmed) return '';
+    const escaped = esc(trimmed);
+    const withInline = formatInlineProse(escaped).replace(/\n/g, '<br>');
+    // If paragraph starts with a block-level HTML token, don't wrap in <p>
+    if (/^\u0000HTMLTAG_\d+\u0000/.test(trimmed) || /^\u0000CODEBLOCK_\d+\u0000$/.test(trimmed)) {
+      return withInline;
+    }
+    return `<p>${withInline}</p>`;
+  });
+
+  let finalHtml = formattedParas.filter(Boolean).join('\n');
+  finalHtml = finalHtml.replace(/\u0000HTMLTAG_(\d+)\u0000/g, (_m, i) => htmlTokens[Number(i)] || '');
+  finalHtml = finalHtml.replace(/\u0000CODEBLOCK_(\d+)\u0000/g, (_m, i) => codeBlocks[Number(i)] || '');
+
+  return { html: finalHtml, islands };
+}
+
+export function renderChatPreviewInto(container: HTMLElement, rawText: string, asRawText = false): void {
+  if (!rawText) {
+    container.innerHTML =
+      '<div class="ps-muted" style="padding:18px 4px;text-align:center">Click <strong>▶ Generate Reply</strong> to see how your preset responds in a live chat bubble (including HTML, CSS, Markdown, and dialogue styling).</div>';
+    return;
+  }
+  if (asRawText) {
+    const pre = document.createElement('pre');
+    pre.className = 'ps-result';
+    pre.style.margin = '0';
+    pre.textContent = rawText;
+    container.replaceChildren(pre);
+    return;
+  }
+
+  const { html, islands } = renderMarkdownAndHtmlWithPlaceholders(rawText);
+  const frag = sanitizeHtmlFragment(html);
+  const wrap = document.createElement('div');
+  wrap.className = 'ps-chat-prose';
+  wrap.appendChild(frag);
+
+  // Hydrate any Shadow DOM HTML Islands so <style> blocks are scoped safely
+  wrap.querySelectorAll<HTMLElement>('.ps-html-island-host[data-island-index]').forEach((hostEl) => {
+    const idx = Number(hostEl.dataset.islandIndex);
+    const islandSource = islands[idx];
+    if (!islandSource) return;
+    const shadow = hostEl.shadowRoot || hostEl.attachShadow({ mode: 'open' });
+    const baseReset = document.createElement('style');
+    baseReset.textContent = `
+      :host {
+        display: block;
+        color: var(--lumiverse-text, #f2f0f7);
+        font-family: var(--lumiverse-font-family, inherit);
+        line-height: 1.55;
+        overflow-x: auto;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+    `;
+    const islandFrag = sanitizeHtmlFragment(islandSource);
+    shadow.replaceChildren(baseReset, islandFrag);
+  });
+
+  container.replaceChildren(wrap);
+}
+
 export function computeDraftFingerprint(d: any): string {
   if (!d) return '';
   return JSON.stringify({
@@ -160,8 +516,8 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
   const refsByName = new Map<string, Array<{ blockId: string; blockName: string }>>();
   const defCountByBlock = new Map<string, number>();
   const refCountByBlock = new Map<string, number>();
-  const varRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)|\.([a-zA-Z0-9_]+)|([a-zA-Z0-9_.-]+))/gi;
-  const explicitVarRe = /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
+  const explicitVarRe =
+    /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
 
   for (const blk of blocks || []) {
     const vars = Array.isArray(blk.variables) ? blk.variables : [];
@@ -185,7 +541,6 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
         refsByName.set(name, rList);
       }
     }
-    void varRe;
     refCountByBlock.set(blk.id, blockRefSet.size);
   }
 
@@ -201,7 +556,6 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
     if (!refsByName.has(name)) unused.push({ name, defs });
   }
 
-  // Generic local {{setvar}} / {{getvar}} topology across all blocks in the preset
   const allReadLocalVars = new Set<string>();
   const setVarsByBlock = new Map<string, string[]>();
   const getvarRe = /\{\{\s*(?:getvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
@@ -242,7 +596,7 @@ export function cloneBlocksForHost(blocks: any[]): any[] {
     categoryMode: block.categoryMode === 'radio' || block.categoryMode === 'checkbox' ? block.categoryMode : null,
     ...(Array.isArray(block.variables)
       ? {
-          variables: block.variables.map(normalizeVariableDef),
+          variables: block.variables.map((v: any) => normalizeVariableDef(v, false)),
         }
       : {}),
   }));
@@ -259,13 +613,17 @@ export function sanitizeBlockForLoom(b: any): any {
     depth: Math.max(0, Number(b.depth) || 0),
     marker: b.marker ? String(b.marker) : null,
     isLocked: Boolean(b.isLocked),
-    color: b.color ? String(b.color) : null,
+    color: blockColor(b),
     injectionTrigger: Array.isArray(b.injectionTrigger) ? b.injectionTrigger.map(String) : [],
     group: b.group ? String(b.group) : null,
   };
   if (b.categoryMode === 'radio' || b.categoryMode === 'checkbox') cleanBlock.categoryMode = b.categoryMode;
   if (Array.isArray(b.variables)) cleanBlock.variables = b.variables.map((v: any) => normalizeVariableDef(v, false));
   return cleanBlock;
+}
+
+function blockColor(b: any): string | null {
+  return b.color ? String(b.color) : null;
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {

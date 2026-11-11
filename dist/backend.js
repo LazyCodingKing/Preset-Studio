@@ -23,7 +23,15 @@ async function changeTemplates(userId, mutate) {
 }
 var supportsSessionRouting = () => (spindle.host?.capabilities?.["frontend-session-routing-v1"] ?? 0) >= 1;
 var reply = (userId, requestId, type, data = {}, frontendSessionId) => spindle.sendToFrontend({ type, requestId, ...data }, userId, frontendSessionId && supportsSessionRouting() ? { frontendSessionId } : undefined);
-var clean = (p) => ({ name: p.name, provider: p.provider || "loom", engine: p.engine || "classic", parameters: p.parameters || {}, prompt_order: p.prompt_order || [], prompts: p.prompts || {}, metadata: p.metadata || {} });
+var clean = (p) => ({
+  name: p.name,
+  provider: p.provider || "loom",
+  engine: p.engine || "classic",
+  parameters: p.parameters || {},
+  prompt_order: p.prompt_order || [],
+  prompts: p.prompts || {},
+  metadata: p.metadata || {}
+});
 function protectMacros(text) {
   const tokens = [];
   let out = "";
@@ -50,7 +58,7 @@ function protectMacros(text) {
     }
     if (depth)
       throw new Error("The block has an unclosed macro. Fix it before translating.");
-    let marker = `ZXQMACRO${tokens.length}QXZ`;
+    const marker = `ZXQMACRO${tokens.length}QXZ`;
     if (text.includes(marker))
       throw new Error("The block contains a reserved translation marker.");
     tokens.push({ marker, original: text.slice(start, cursor) });
@@ -60,8 +68,9 @@ function protectMacros(text) {
 }
 function restoreMacros(text, tokens) {
   for (const { marker, original } of tokens) {
-    if (text.split(marker).length !== 2)
+    if (text.split(marker).length !== 2) {
       throw new Error("The translation changed a protected macro marker. Try again or use a different model.");
+    }
     text = text.replace(marker, original);
   }
   return text;
@@ -80,13 +89,15 @@ async function translateOneField(text, language, connectionId, userId) {
       { role: "user", content: JSON.stringify({ target_language: language, text: protectedText.text }) }
     ]
   });
-  if (typeof result?.content !== "string" || !result.content.trim())
+  if (typeof result?.content !== "string" || !result.content.trim()) {
     throw new Error("The model returned an empty translation.");
+  }
   if (["length", "max_tokens", "max_output_tokens", "MAX_TOKENS"].includes(result.finish_reason)) {
     throw new Error("The model stopped before completing the translation. Increase the connection output limit or translate a shorter block.");
   }
-  if (result.tool_calls?.length)
+  if (result.tool_calls?.length) {
     throw new Error("The model returned a tool call instead of a translation. Try another connection.");
+  }
   return restoreMacros(result.content, protectedText.tokens);
 }
 async function translatePackedChunk(items, language, connectionId, userId) {
@@ -147,12 +158,124 @@ async function translatePackedChunk(items, language, connectionId, userId) {
     return new Map(parallel);
   }
 }
+async function injectAuthorsNote(messages, breakdown, authorsNote, chatId, userId) {
+  if (!authorsNote || !authorsNote.enabled)
+    return;
+  const rawContent = typeof authorsNote.content === "string" ? authorsNote.content.trim() : "";
+  if (!rawContent)
+    return;
+  let resolvedContent = rawContent;
+  try {
+    const resolved = await spindle.macros.resolve(rawContent, {
+      ...chatId ? { chatId: String(chatId) } : {},
+      commit: false,
+      userId
+    });
+    if (typeof resolved?.text === "string")
+      resolvedContent = resolved.text;
+  } catch (_) {}
+  if (!resolvedContent.trim())
+    return;
+  const role = ["system", "user", "assistant"].includes(authorsNote.role) ? authorsNote.role : "system";
+  const rawDepth = Number(authorsNote.depth);
+  const depth = Number.isFinite(rawDepth) ? Math.max(0, Math.min(100, Math.floor(rawDepth))) : 4;
+  const insertIdx = Math.max(0, messages.length - depth);
+  messages.splice(insertIdx, 0, { role, content: resolvedContent });
+  breakdown.push({
+    type: "authors_note",
+    name: `Author's Note (Depth ${depth})`,
+    role,
+    content: resolvedContent
+  });
+}
+async function applyDisplayRegexIfPermitted(content, chatId, userId) {
+  if (!content || !spindle.permissions.has("regex_scripts"))
+    return content;
+  try {
+    let characterId;
+    if (chatId && spindle.permissions.has("chats")) {
+      const chat = await spindle.chats.get(chatId, userId).catch(() => null);
+      if (chat?.character_id)
+        characterId = chat.character_id;
+    }
+    const scripts = await spindle.regex_scripts.getActive({
+      target: "display",
+      ...characterId ? { characterId } : {},
+      ...chatId ? { chatId } : {},
+      ...userId ? { userId } : {}
+    });
+    if (!Array.isArray(scripts) || !scripts.length)
+      return content;
+    let current = content;
+    for (const script of scripts) {
+      if (script.disabled)
+        continue;
+      if (Array.isArray(script.placement) && script.placement.length > 0 && !script.placement.includes("ai_output")) {
+        continue;
+      }
+      try {
+        let findPattern = script.find_regex;
+        if (script.substitute_macros && script.substitute_macros !== "none") {
+          const res = await spindle.macros.resolve(findPattern, {
+            ...chatId ? { chatId } : {},
+            ...characterId ? { characterId } : {},
+            commit: false,
+            userId
+          });
+          if (res?.text) {
+            findPattern = script.substitute_macros === "escaped" ? res.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : res.text;
+          }
+        }
+        const flags = typeof script.flags === "string" ? script.flags : "g";
+        const regex = new RegExp(findPattern, flags);
+        let replacement = script.replace_string ?? "";
+        current = current.replace(regex, (...args) => {
+          let out = replacement;
+          if (Array.isArray(script.trim_strings) && script.trim_strings.length > 0) {
+            for (const trimStr of script.trim_strings) {
+              if (trimStr)
+                out = out.split(trimStr).join("");
+            }
+          }
+          const matchStr = String(args[0] ?? "");
+          const namedGroups = args.length > 0 && typeof args[args.length - 1] === "object" && args[args.length - 1] !== null ? args[args.length - 1] : null;
+          out = out.replace(/\$(&|\d{1,2}|<([^>]+)>)/g, (full, token, groupName) => {
+            if (token === "&")
+              return matchStr;
+            if (groupName && namedGroups && groupName in namedGroups)
+              return String(namedGroups[groupName] ?? "");
+            const idx = Number(token);
+            if (Number.isInteger(idx) && idx >= 1 && idx < args.length - 2) {
+              return String(args[idx] ?? "");
+            }
+            return full;
+          });
+          return out;
+        });
+        if (script.substitute_macros === "after" && current.includes("{{")) {
+          const afterRes = await spindle.macros.resolve(current, {
+            ...chatId ? { chatId } : {},
+            ...characterId ? { characterId } : {},
+            commit: false,
+            userId
+          });
+          if (typeof afterRes?.text === "string")
+            current = afterRes.text;
+        }
+      } catch (_) {}
+    }
+    return current;
+  } catch (_) {
+    return content;
+  }
+}
 function getPermissionSnapshot() {
   return {
     presets: spindle.permissions.has("presets"),
     chats: spindle.permissions.has("chats"),
     generation: spindle.permissions.has("generation"),
-    app_manipulation: spindle.permissions.has("app_manipulation")
+    app_manipulation: spindle.permissions.has("app_manipulation"),
+    regex_scripts: spindle.permissions.has("regex_scripts")
   };
 }
 spindle.permissions.onChanged((detail) => {
@@ -216,18 +339,29 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         const translationLanguage = typeof msg.translationLanguage === "string" ? msg.translationLanguage.trim().slice(0, 80) : "English";
         const translationConnection = typeof msg.translationConnection === "string" ? msg.translationConnection.trim().slice(0, 120) : "";
         await spindle.userStorage.setJson("preferences.json", { translationLanguage, translationConnection }, { userId });
-        spindle.toast.success("Studio settings saved", { title: "Preset Studio", ...userId ? { userId } : {} });
+        spindle.toast.success("Studio settings saved", {
+          title: "Preset Studio",
+          ...userId ? { userId } : {}
+        });
         data = true;
         break;
       }
       case "template-save": {
         const t = msg.template;
-        if (!t || typeof t.id !== "string" || typeof t.name !== "string" || !t.name.trim() || !Array.isArray(t.entries) || !t.entries.length)
+        if (!t || typeof t.id !== "string" || typeof t.name !== "string" || !t.name.trim() || !Array.isArray(t.entries) || !t.entries.length) {
           throw new Error("Name the template and select at least one block.");
-        if (t.entries.some((e) => !e || !e.block || typeof e.block !== "object"))
+        }
+        if (t.entries.some((e) => !e || !e.block || typeof e.block !== "object")) {
           throw new Error("Invalid template block.");
-        data = await changeTemplates(userId, (items) => [...items, { id: t.id, name: t.name.trim().slice(0, 120), entries: t.entries }]);
-        spindle.toast.success(`Saved template "${t.name.trim().slice(0, 60)}"`, { title: "Template Library", ...userId ? { userId } : {} });
+        }
+        data = await changeTemplates(userId, (items) => [
+          ...items,
+          { id: t.id, name: t.name.trim().slice(0, 120), entries: t.entries }
+        ]);
+        spindle.toast.success(`Saved template "${t.name.trim().slice(0, 60)}"`, {
+          title: "Template Library",
+          ...userId ? { userId } : {}
+        });
         break;
       }
       case "template-delete": {
@@ -242,8 +376,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "active": {
-        if (!spindle.permissions.has("presets"))
+        if (!spindle.permissions.has("presets")) {
           throw new Error('Enable the "presets" permission to inspect active block states.');
+        }
         if (typeof spindle.presets.getActive === "function") {
           data = await spindle.presets.getActive(msg.chatId, userId);
           break;
@@ -251,7 +386,11 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         if (!spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to resolve active profile states via dry run.');
         }
-        const dryRes = await spindle.generate.dryRun({ chatId: msg.chatId, ...msg.presetId ? { presetId: msg.presetId } : {}, generationType: msg.generationType || "normal" }, userId);
+        const dryRes = await spindle.generate.dryRun({
+          chatId: msg.chatId,
+          ...msg.presetId ? { presetId: msg.presetId } : {},
+          generationType: msg.generationType || "normal"
+        }, userId);
         const activeIds = new Set((dryRes.breakdown || []).filter((b) => b.blockId).map((b) => String(b.blockId)));
         const targetPreset = msg.presetId ? await spindle.presets.get(msg.presetId, userId) : null;
         const block_states = {};
@@ -291,7 +430,10 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
             const existing = await spindle.presets.get(msg.preset.id, userId);
             if (!existing) {
               data = await spindle.presets.create(input, userId);
-              spindle.toast.success(`Saved "${data.name}"`, { title: "Preset Studio", ...userId ? { userId } : {} });
+              spindle.toast.success(`Saved "${data.name}"`, {
+                title: "Preset Studio",
+                ...userId ? { userId } : {}
+              });
               break;
             }
             expectedRev = existing.cache_revision;
@@ -311,8 +453,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
       case "macro-preview": {
         if (typeof msg.template !== "string")
           throw new Error("Template text is required.");
-        if (msg.template.length > 1e5)
+        if (msg.template.length > 1e5) {
           throw new Error("Template exceeds maximum preview length (100,000 characters).");
+        }
         data = await spindle.macros.resolve(msg.template, {
           ...msg.chatId ? { chatId: String(msg.chatId) } : {},
           ...msg.characterId ? { characterId: String(msg.characterId) } : {},
@@ -365,8 +508,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "translate": {
-        if (!spindle.permissions.has("generation"))
+        if (!spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to translate blocks.');
+        }
         if (typeof msg.text !== "string" || !msg.text.trim())
           throw new Error("This prompt block is empty.");
         const language = typeof msg.language === "string" ? msg.language.trim() : "";
@@ -377,8 +521,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "translate-batch": {
-        if (!spindle.permissions.has("generation"))
+        if (!spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to translate blocks.');
+        }
         const language = typeof msg.language === "string" ? msg.language.trim() : "";
         if (!language || language.length > 80)
           throw new Error("Enter a target language.");
@@ -447,9 +592,15 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "dry": {
-        if (!spindle.permissions.has("generation"))
+        if (!spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to run a dry run.');
-        const dryRes = await spindle.generate.dryRun({ chatId: msg.chatId, ...msg.connectionId ? { connectionId: msg.connectionId } : {}, ...msg.presetId ? { presetId: msg.presetId } : {}, generationType: msg.generationType || "normal" }, userId);
+        }
+        const dryRes = await spindle.generate.dryRun({
+          chatId: msg.chatId,
+          ...msg.connectionId ? { connectionId: msg.connectionId } : {},
+          ...msg.presetId ? { presetId: msg.presetId } : {},
+          generationType: msg.generationType || "normal"
+        }, userId);
         data = { ...dryRes, source: "saved" };
         break;
       }
@@ -462,8 +613,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
       }
       case "preview":
       case "run": {
-        if (!spindle.permissions.has("generation"))
+        if (!spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to preview or generate test replies.');
+        }
         const isCustomSource = msg.promptSource === "custom";
         if (!isCustomSource && !msg.chatId)
           throw new Error("Select a chat for context.");
@@ -488,16 +640,18 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
                   depth: 0,
                   marker: null
                 },
-                ...msg.includeChatHistory ? [{
-                  id: "test_custom_chat_history",
-                  name: "Chat History",
-                  content: "",
-                  role: "system",
-                  enabled: true,
-                  position: "pre_history",
-                  depth: 0,
-                  marker: "chat_history"
-                }] : []
+                ...msg.includeChatHistory ? [
+                  {
+                    id: "test_custom_chat_history",
+                    name: "Chat History",
+                    content: "",
+                    role: "system",
+                    enabled: true,
+                    position: "pre_history",
+                    depth: 0,
+                    marker: "chat_history"
+                  }
+                ] : []
               ];
               const assembled = await spindle.assemble({
                 chatId: msg.chatId,
@@ -513,18 +667,15 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
             } else {
               if (customText.trim()) {
                 messages.push({ role: "system", content: customText.trim() });
-                breakdown.push({ type: "block", name: "Custom Prompt", role: "system", content: customText.trim() });
+                breakdown.push({
+                  type: "block",
+                  name: "Custom Prompt",
+                  role: "system",
+                  content: customText.trim()
+                });
               }
               assembledData = { messages, breakdown, source: "custom" };
             }
-            const extraTurns = Array.isArray(msg.testTurns) && msg.testTurns.length ? msg.testTurns.filter((t) => t && typeof t.content === "string" && t.content.trim()) : msg.customMessage?.trim() ? [{ role: "user", content: msg.customMessage.trim() }] : [];
-            for (let ti = 0;ti < extraTurns.length; ti++) {
-              const turn = extraTurns[ti];
-              const r = ["system", "user", "assistant"].includes(turn.role) ? turn.role : "user";
-              messages.push({ role: r, content: turn.content.trim() });
-              breakdown.push({ type: "block", name: `Test Turn #${ti + 1} (${r})`, role: r, content: turn.content.trim() });
-            }
-            reply(userId, id, "assembled", { data: { ...assembledData, messages, breakdown, source: "custom" } }, frontendSessionId);
           } else {
             const assembled = await spindle.assemble({
               chatId: msg.chatId,
@@ -534,31 +685,54 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
               promptVariables: msg.preset?.metadata?.promptVariables || {},
               signal: controller.signal
             }, userId);
+            assembledData = assembled;
             messages = [...assembled.messages];
             breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
-            const extraTurns = Array.isArray(msg.testTurns) && msg.testTurns.length ? msg.testTurns.filter((t) => t && typeof t.content === "string" && t.content.trim()) : msg.customMessage?.trim() ? [{ role: "user", content: msg.customMessage.trim() }] : [];
-            for (let ti = 0;ti < extraTurns.length; ti++) {
-              const turn = extraTurns[ti];
-              const r = ["system", "user", "assistant"].includes(turn.role) ? turn.role : "user";
-              messages.push({ role: r, content: turn.content.trim() });
-              breakdown.push({ type: "block", name: `Test Turn #${ti + 1} (${r})`, role: r, content: turn.content.trim() });
-            }
-            reply(userId, id, "assembled", { data: { ...assembled, messages, breakdown, source: "draft" } }, frontendSessionId);
           }
+          const extraTurns = Array.isArray(msg.testTurns) && msg.testTurns.length ? msg.testTurns.filter((t) => t && typeof t.content === "string" && t.content.trim()) : msg.customMessage?.trim() ? [{ role: "user", content: msg.customMessage.trim() }] : [];
+          for (let ti = 0;ti < extraTurns.length; ti++) {
+            const turn = extraTurns[ti];
+            const r = ["system", "user", "assistant"].includes(turn.role) ? turn.role : "user";
+            messages.push({ role: r, content: turn.content.trim() });
+            breakdown.push({
+              type: "block",
+              name: `Test Turn #${ti + 1} (${r})`,
+              role: r,
+              content: turn.content.trim()
+            });
+          }
+          await injectAuthorsNote(messages, breakdown, msg.authorsNote, msg.chatId, userId);
+          reply(userId, id, "assembled", { data: { ...assembledData, messages, breakdown, source: isCustomSource ? "custom" : "draft" } }, frontendSessionId);
           if (msg.action === "run") {
             if (!messages.length)
               throw new Error("No prompt content or messages to generate a reply from.");
-            const args = { messages, parameters: msg.preset?.parameters || {}, ...msg.connectionId ? { connection_id: msg.connectionId } : {}, ...userId ? { userId } : {}, signal: controller.signal };
+            const args = {
+              messages,
+              parameters: msg.preset?.parameters || {},
+              ...msg.connectionId ? { connection_id: msg.connectionId } : {},
+              ...userId ? { userId } : {},
+              signal: controller.signal
+            };
             for await (const chunk of spindle.generate.quietStream(args)) {
               if (chunk.type === "token")
                 reply(userId, id, "token", { token: chunk.token }, frontendSessionId);
-              else if (chunk.type === "reasoning")
+              else if (chunk.type === "reasoning") {
                 reply(userId, id, "reasoning", { token: chunk.token }, frontendSessionId);
-              else if (chunk.type === "done")
-                data = { content: chunk.content, reasoning: chunk.reasoning, usage: chunk.usage, finish_reason: chunk.finish_reason };
+              } else if (chunk.type === "done") {
+                const rawReply = chunk.content || "";
+                const displayContent = await applyDisplayRegexIfPermitted(rawReply, msg.chatId, userId);
+                data = {
+                  content: rawReply,
+                  displayContent,
+                  reasoning: chunk.reasoning,
+                  usage: chunk.usage,
+                  finish_reason: chunk.finish_reason
+                };
+              }
             }
-          } else
+          } else {
             data = true;
+          }
         } finally {
           runs.delete(key);
         }

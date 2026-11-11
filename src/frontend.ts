@@ -1,3 +1,4 @@
+import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { STUDIO_BASE_CSS, STUDIO_POLISH_CSS } from './studio-styles.js';
 import {
   esc,
@@ -8,8 +9,12 @@ import {
   ensureUniqueBlockIds,
   normalizeVariableDef,
   sanitizeBlockForLoom,
+  resolveBlockVariablesPreview,
+  renderChatPreviewInto,
   copyToClipboard,
   exportJsonFile,
+  VARIABLE_STARTER_EXAMPLES,
+  AUTHORS_NOTE_PRESETS,
 } from './studio-core.js';
 import {
   closeModalRef,
@@ -34,7 +39,7 @@ import {
   bindDragAndDropListeners,
 } from './studio-bridge.js';
 
-export function setup(ctx: any) {
+export function setup(ctx: SpindleFrontendContext) {
   const tab = ctx.ui.registerDrawerTab({
     id: 'studio',
     title: 'Preset Studio',
@@ -64,7 +69,7 @@ export function setup(ctx: any) {
     presets: [],
     chats: [],
     connections: [],
-    permissions: { presets: true, chats: true, generation: true, app_manipulation: true },
+    permissions: { presets: true, chats: true, generation: true, app_manipulation: true, regex_scripts: false },
     draft: null,
     recovery: null,
     selected: 0,
@@ -88,6 +93,7 @@ export function setup(ctx: any) {
     generationType: 'normal',
     custom: '',
     result: '',
+    displayResult: '',
     reasoning: '',
     lastUsage: null,
     testPromptSource: 'preset',
@@ -95,13 +101,20 @@ export function setup(ctx: any) {
     testCustomPromptIncludeHistory: true,
     testTurnMode: 'single',
     testTurns: [],
+    authorsNote: {
+      enabled: false,
+      content: '',
+      depth: 4,
+      role: 'system',
+    },
+    testReplyViewMode: 'chat',
     runs: [],
     compareA: 0,
     compareB: 1,
     assembled: null,
     breakdownFilter: 'all',
     breakdownSearch: '',
-    xrayExpanded: true,
+    xrayExpanded: false,
     busy: false,
     notice: '',
     activeRun: null,
@@ -136,7 +149,9 @@ export function setup(ctx: any) {
 
   function destroyMounted() {
     for (const h of mountedHandles) {
-      try { h.destroy?.(); } catch (_) {}
+      try {
+        h.destroy?.();
+      } catch (_) {}
     }
     mountedHandles.clear();
   }
@@ -191,14 +206,8 @@ export function setup(ctx: any) {
 
   const unsub = ctx.onBackendMessage((msg: any) => {
     if (!msg) return;
-    if (msg.type === 'backend-ready') {
+    if (msg.type === 'backend-ready' || msg.type === 'permissions') {
       if (msg.permissions) state.permissions = { ...state.permissions, ...msg.permissions };
-      if (full || hasLoadedOnce) refresh().catch(() => {});
-      else render();
-      return;
-    }
-    if (msg.type === 'permissions' && msg.permissions) {
-      state.permissions = { ...state.permissions, ...msg.permissions };
       if (full || hasLoadedOnce) refresh().catch(() => {});
       else render();
       return;
@@ -220,10 +229,22 @@ export function setup(ctx: any) {
     }
     const p = pending.get(msg.requestId);
     if (!p) return;
-    if (msg.type === 'token') { p.onToken?.(msg.token); return; }
-    if (msg.type === 'reasoning') { p.onReasoning?.(msg.token); return; }
-    if (msg.type === 'progress') { p.onProgress?.(msg); return; }
-    if (msg.type === 'assembled') { p.onAssembled?.(msg.data); return; }
+    if (msg.type === 'token') {
+      p.onToken?.(msg.token);
+      return;
+    }
+    if (msg.type === 'reasoning') {
+      p.onReasoning?.(msg.token);
+      return;
+    }
+    if (msg.type === 'progress') {
+      p.onProgress?.(msg);
+      return;
+    }
+    if (msg.type === 'assembled') {
+      p.onAssembled?.(msg.data);
+      return;
+    }
     if (msg.type === 'result' || msg.type === 'error') {
       pending.delete(msg.requestId);
       msg.type === 'error' ? p.reject(new Error(msg.error)) : p.resolve(msg.data);
@@ -427,7 +448,12 @@ export function setup(ctx: any) {
       if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.prompt_order)) {
         throw new Error('JSON file is not a valid preset (missing prompt_order array).');
       }
-      if (state.dirty && !(await askConfirm(root, modalRef, 'Replace Draft?', 'Replace your current unsaved draft with the imported JSON preset?', 'warning', 'Replace'))) return;
+      if (
+        state.dirty &&
+        !(await askConfirm(root, modalRef, 'Replace Draft?', 'Replace your current unsaved draft with the imported preset?', 'warning', 'Replace'))
+      ) {
+        return;
+      }
       delete parsed.id;
       state.draft = ensureUniqueBlockIds({
         name: String(parsed.name || files[0].name.replace(/\.json$/i, '') || 'Imported Preset'),
@@ -443,7 +469,11 @@ export function setup(ctx: any) {
       persist();
       await request('toast', { kind: 'success', message: `Imported preset "${state.draft.name}"` });
     } else {
-      const entries = Array.isArray(parsed?.entries) ? parsed.entries : Array.isArray(parsed) ? parsed.map((b) => ({ block: b, source: 'Imported' })) : null;
+      const entries = Array.isArray(parsed?.entries)
+        ? parsed.entries
+        : Array.isArray(parsed)
+          ? parsed.map((b) => ({ block: b, source: 'Imported' }))
+          : null;
       if (!entries?.length) throw new Error('JSON file does not contain template entries.');
       const name = String(parsed.name || files[0].name.replace(/\.json$/i, '') || 'Imported Template');
       state.templates = await request('template-save', { template: { id: uid(), name, entries } });
@@ -462,7 +492,10 @@ export function setup(ctx: any) {
     d.prompt_order.splice(index, 1);
     state.selectedDraft = state.selectedDraft.filter((id: string) => id !== removedId);
     if (d.metadata?.promptVariables) delete d.metadata.promptVariables[removedId];
-    state.selected = Math.max(0, Math.min(state.selected >= index ? state.selected - (state.selected > index ? 1 : 0) : state.selected, d.prompt_order.length - 1));
+    state.selected = Math.max(
+      0,
+      Math.min(state.selected >= index ? state.selected - (state.selected > index ? 1 : 0) : state.selected, d.prompt_order.length - 1),
+    );
     state.notice = `Deleted “${b.name || 'Untitled'}”.`;
     persist();
     render();
@@ -504,8 +537,14 @@ export function setup(ctx: any) {
     const result: any = { original };
     await Promise.all(
       fields.map(async (field) => {
-        if (!original[field].trim()) throw new Error(field === 'name' ? 'This block has no title to translate.' : 'This block has no prompt text to translate.');
-        const translated = await request('translate', { text: original[field], language: state.translationLanguage, connectionId: state.translationConnection });
+        if (!original[field].trim()) {
+          throw new Error(field === 'name' ? 'This block has no title to translate.' : 'This block has no prompt text to translate.');
+        }
+        const translated = await request('translate', {
+          text: original[field],
+          language: state.translationLanguage,
+          connectionId: state.translationConnection,
+        });
         result[field] = translated.content;
       }),
     );
@@ -513,16 +552,31 @@ export function setup(ctx: any) {
   }
 
   function applyTranslatedFields(block: any, t: any) {
-    if ((t.name !== undefined && block.name !== t.original.name) || (t.content !== undefined && block.content !== t.original.content)) {
+    if (
+      (t.name !== undefined && block.name !== t.original.name) ||
+      (t.content !== undefined && block.content !== t.original.content)
+    ) {
       throw new Error('The original block changed. Translate it again.');
     }
     if (t.name !== undefined) block.name = t.name;
     if (t.content !== undefined) block.content = t.content;
   }
 
+  function updateLiveVariablesPreview() {
+    const d = state.draft;
+    const b = d?.prompt_order?.[state.selected];
+    const outBox = root.querySelector<HTMLElement>('#ps-var-preview-output-slot');
+    if (!outBox || !b) return;
+    const savedBlockVars = d.metadata?.promptVariables?.[b.id] || {};
+    const text = resolveBlockVariablesPreview(b, savedBlockVars);
+    outBox.textContent = text || '(Block content is empty)';
+  }
+
   function mountInteractiveWidgets() {
     const d = state.draft;
     if (!d || !ctx.components) return;
+
+    // 1. Native Loom editor mount (if opted into)
     if (state.view === 'blocks' && state.editorMode === 'native') {
       const slot = root.querySelector<HTMLElement>('#ps-native-loom-slot');
       if (slot && ctx.components.mountLoomBlockEditor) {
@@ -543,10 +597,12 @@ export function setup(ctx: any) {
         );
       }
     }
+
+    // 2. Sampler sliders
     if (state.view === 'settings' && ctx.components.mountRangeSlider) {
       const specs = [
-        { key: 'temperature', label: 'Temperature', min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
-        { key: 'top_p', label: 'Top-P (Nucleus)', min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
+        { key: 'temperature', label: 'Temperature (Randomness)', min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
+        { key: 'top_p', label: 'Top-P (Nucleus Sampling)', min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
         { key: 'min_p', label: 'Min-P', min: 0, max: 1, step: 0.01, def: 0, decimals: 2 },
         { key: 'frequency_penalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
         { key: 'presence_penalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
@@ -573,6 +629,144 @@ export function setup(ctx: any) {
         );
       }
     }
+
+    // 3. Tab 02 Live Interactive Preview Controls
+    if (state.view === 'variables') {
+      const b = d.prompt_order?.[state.selected];
+      const controlsSlot = root.querySelector<HTMLElement>('#ps-var-preview-controls-slot');
+      if (controlsSlot && b && Array.isArray(b.variables) && b.variables.length > 0) {
+        controlsSlot.innerHTML = '';
+        d.metadata = d.metadata || {};
+        d.metadata.promptVariables = d.metadata.promptVariables || {};
+        d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
+        const savedVars = d.metadata.promptVariables[b.id];
+
+        for (const v of b.variables) {
+          if (!v?.name) continue;
+          const currentVal = savedVars[v.name] !== undefined ? savedVars[v.name] : v.defaultValue;
+          const row = document.createElement('div');
+          row.style.cssText = 'display:grid;gap:4px;';
+          controlsSlot.appendChild(row);
+
+          if (v.type === 'switch' || v.type === 'boolean') {
+            trackMount(() =>
+              ctx.components.mountSwitch(row, {
+                checked: currentVal === 1 || currentVal === '1' || currentVal === true || currentVal === 'true',
+                size: 'md',
+                ariaLabel: v.label || v.name,
+                onChange: (checked: boolean) => {
+                  savedVars[v.name] = checked ? 1 : 0;
+                  persist();
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+            const lbl = document.createElement('span');
+            lbl.textContent = ` ${v.label || v.name}`;
+            lbl.style.cssText = 'font-size:0.86rem;font-weight:600;margin-top:2px;';
+            row.appendChild(lbl);
+          } else if (v.type === 'slider') {
+            trackMount(() =>
+              ctx.components.mountRangeSlider(row, {
+                label: v.label || v.name,
+                hint: v.description || '',
+                min: Number.isFinite(Number(v.min)) ? Number(v.min) : 0,
+                max: Number.isFinite(Number(v.max)) ? Number(v.max) : 100,
+                step: Number.isFinite(Number(v.step)) ? Number(v.step) : 1,
+                value: Number.isFinite(Number(currentVal)) ? Number(currentVal) : Number(v.min || 0),
+                onCommit: (val: number) => {
+                  savedVars[v.name] = val;
+                  persist();
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+          } else if (v.type === 'select') {
+            const rawOpts = Array.isArray(v.options) ? v.options : [];
+            const selectOptionsList = rawOpts.map((o: any) => ({
+              value: String(o.id ?? o.label ?? ''),
+              label: String(o.label || o.id || 'Option'),
+            }));
+            const labelEl = document.createElement('span');
+            labelEl.textContent = v.label || v.name;
+            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            row.appendChild(labelEl);
+            trackMount(() =>
+              ctx.components.mountSelect(row, {
+                value: String(currentVal ?? selectOptionsList[0]?.value ?? ''),
+                options: selectOptionsList,
+                placeholder: 'Choose option…',
+                onChange: (val: string) => {
+                  savedVars[v.name] = val;
+                  persist();
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+          } else if (v.type === 'multiselect') {
+            const rawOpts = Array.isArray(v.options) ? v.options : [];
+            const multiOptionsList = rawOpts.map((o: any) => ({
+              value: String(o.id ?? o.label ?? ''),
+              label: String(o.label || o.id || 'Option'),
+            }));
+            const labelEl = document.createElement('span');
+            labelEl.textContent = v.label || v.name;
+            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            row.appendChild(labelEl);
+            const chosenList = Array.isArray(currentVal)
+              ? currentVal.map(String)
+              : typeof currentVal === 'string' && currentVal.trim()
+                ? currentVal.split(',').map((s: string) => s.trim())
+                : [];
+            trackMount(() =>
+              ctx.components.mountMultiSelect(row, {
+                value: chosenList,
+                options: multiOptionsList,
+                placeholder: 'Select items…',
+                onChange: (vals: string[]) => {
+                  savedVars[v.name] = vals;
+                  persist();
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+          } else if (v.type === 'textarea') {
+            const labelEl = document.createElement('span');
+            labelEl.textContent = v.label || v.name;
+            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            row.appendChild(labelEl);
+            trackMount(() =>
+              ctx.components.mountTextArea(row, {
+                value: String(currentVal ?? ''),
+                rows: Number(v.rows || 3),
+                placeholder: v.description || 'Type value…',
+                onChange: (val: string) => {
+                  savedVars[v.name] = val;
+                  persist(false, true);
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+          } else {
+            const labelEl = document.createElement('span');
+            labelEl.textContent = v.label || v.name;
+            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            row.appendChild(labelEl);
+            trackMount(() =>
+              ctx.components.mountTextInput(row, {
+                value: String(currentVal ?? ''),
+                placeholder: v.description || 'Type value…',
+                onChange: (val: string) => {
+                  savedVars[v.name] = val;
+                  persist(false, true);
+                  updateLiveVariablesPreview();
+                },
+              }),
+            );
+          }
+        }
+      }
+    }
   }
 
   function render() {
@@ -589,15 +783,86 @@ export function setup(ctx: any) {
 
     destroyMounted();
     const d = state.draft;
-    root.innerHTML = `<div class="ps-shell"><header class="ps-masthead"><div class="ps-brand"><div class="ps-mark" aria-hidden="true">✳</div><div><div class="ps-kicker">Lumiverse Prompt IDE</div><h2>Preset Studio ${d ? `· <span style="color:var(--ps-accent)">${esc(d.name)}</span>` : ''}</h2></div></div><div class="ps-actions">${d ? `<span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} block tokens</span><button class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶ Undo</button><button class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>` : ''}${full ? '<button data-action="close-window">✕ Exit Full Window</button>' : '<button class="ps-primary" data-action="full-window">⤢ Full Window</button>'}<button class="ps-btn-sm" data-action="refresh">↻ Refresh</button></div></header>${state.notice ? `<div class="ps-notice" role="status">${esc(state.notice)}</div>` : ''}<section class="ps-panel ps-between" aria-label="Preset library"><div class="ps-row" style="flex:1"><label style="max-width:340px">Preset Library<select data-action="open"><option value="">Choose an existing preset…</option>${selectOptions(state.presets, d?.id, (x: any) => x.name)}</select></label><button data-action="new">＋ New</button><button data-action="restore" ${state.recovery ? '' : 'disabled'}>Recover Draft</button><button data-action="import-preset-json">📥 Import JSON</button>${d ? '<button data-action="export-preset-json">📤 Export JSON</button>' : ''}</div>${d ? `<div class="ps-actions"><span class="ps-pill ${state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.dirty ? '● Unsaved draft' : '✓ Saved'}</span><button data-action="save-copy" ${state.busy ? 'disabled' : ''}>Save Copy</button><button class="ps-primary" data-action="save" ${state.busy ? 'disabled' : ''}>${d.id ? 'Save Changes' : 'Create Preset'}</button></div>` : ''}</section>${d ? `<nav class="ps-tabs" aria-label="Studio tabs">${[
-      ['blocks', '01', 'Prompt Architect'],
-      ['variables', '02', 'Variables & Inputs'],
-      ['settings', '03', 'Samplers & Behavior'],
-      ['remix', '04', 'Remix & Templates'],
-      ['test', '05', 'Test Lab & X-Ray'],
-      ['studio-settings', '06', 'Translation & Studio'],
-    ].map(([id, step, label]) => `<button data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join('')}</nav>${state.view === 'blocks' ? renderArchitectTab(ctx, state) : state.view === 'variables' ? renderVariablesTab(state) : state.view === 'settings' ? renderSamplersTab(state) : state.view === 'remix' ? renderRemixTab(state) : state.view === 'test' ? renderTestTab(state) : renderStudioSettingsTab(state)}` : '<div class="ps-panel" style="text-align:center;padding:36px 16px"><h3>Welcome to Preset Studio</h3><p class="ps-muted" style="margin:8px 0 16px">Open an existing preset from the dropdown above, import a JSON preset, or start a fresh Loom preset.</p><button class="ps-primary" data-action="new">＋ Create New Preset</button></div>'}</div>`;
+    root.innerHTML = `
+      <div class="ps-shell">
+        <header class="ps-masthead">
+          <div class="ps-brand">
+            <div class="ps-mark" aria-hidden="true">✳</div>
+            <div>
+              <div class="ps-kicker">Lumiverse Prompt IDE</div>
+              <h2>Preset Studio ${d ? `· <span style="color:var(--ps-accent)">${esc(d.name)}</span>` : ''}</h2>
+            </div>
+          </div>
+          <div class="ps-actions">
+            ${d ? `
+              <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} block tokens</span>
+              <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶ Undo</button>
+              <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+            ` : ''}
+            ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full Window</button>' : '<button type="button" class="ps-btn-sm ps-primary" data-action="full-window">⤢ Full Window</button>'}
+            <button type="button" class="ps-btn-sm" data-action="refresh">↻ Refresh</button>
+          </div>
+        </header>
+
+        ${state.notice ? `<div class="ps-notice" role="status">${esc(state.notice)}</div>` : ''}
+
+        <!-- Clean, Direct Top Action Bar -->
+        <section class="ps-panel ps-between" aria-label="Preset library">
+          <div class="ps-row" style="flex:1">
+            <label style="max-width:320px">
+              <select data-action="open">
+                <option value="">Choose an existing preset…</option>
+                ${selectOptions(state.presets, d?.id, (x: any) => x.name)}
+              </select>
+            </label>
+            <button type="button" class="ps-btn-sm" data-action="new">＋ New</button>
+            <button type="button" class="ps-btn-sm" data-action="import-preset-json">📥 Import JSON</button>
+            ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json">📤 Export JSON</button>' : ''}
+            ${state.recovery ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
+          </div>
+
+          ${d ? `
+            <div class="ps-actions">
+              <span class="ps-pill ${state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.dirty ? '● Unsaved' : '✓ Saved'}</span>
+              <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.busy ? 'disabled' : ''}>Save Copy</button>
+              <button type="button" class="ps-primary" style="min-height:36px;padding:6px 16px" data-action="save" ${state.busy ? 'disabled' : ''}>${d.id ? 'Save Changes' : 'Create Preset'}</button>
+            </div>
+          ` : ''}
+        </section>
+
+        ${d ? `
+          <nav class="ps-tabs" aria-label="Studio tabs">
+            ${[
+              ['blocks', '01', 'Prompts'],
+              ['variables', '02', 'Variables & Inputs'],
+              ['settings', '03', 'Settings & Samplers'],
+              ['remix', '04', 'Templates & Mixer'],
+              ['test', '05', 'Test Lab'],
+              ['studio-settings', '06', 'Translate & Tools'],
+            ].map(([id, step, label]) => `<button type="button" data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join('')}
+          </nav>
+
+          ${state.view === 'blocks' ? renderArchitectTab(ctx, state) : state.view === 'variables' ? renderVariablesTab(state) : state.view === 'settings' ? renderSamplersTab(state) : state.view === 'remix' ? renderRemixTab(state) : state.view === 'test' ? renderTestTab(state) : renderStudioSettingsTab(state)}
+        ` : `
+          <div class="ps-panel" style="text-align:center;padding:36px 16px">
+            <h3>Welcome to Preset Studio</h3>
+            <p class="ps-muted" style="margin:8px 0 16px">Open an existing preset from the dropdown above, import a JSON preset, or start fresh.</p>
+            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+          </div>
+        `}
+      </div>
+    `;
+
     mountInteractiveWidgets();
+
+    // If Test Lab is open, hydrate the chat reply bubble with rich Markdown/HTML
+    if (state.view === 'test') {
+      const bubbleEl = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
+      if (bubbleEl) {
+        const textToRender = state.displayResult || state.result;
+        renderChatPreviewInto(bubbleEl, textToRender, state.testReplyViewMode === 'raw');
+      }
+    }
 
     openDetailsIds.forEach((id) => {
       const det = root.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
@@ -704,6 +969,10 @@ export function setup(ctx: any) {
       if (el.value === '') delete d.parameters[el.dataset.paramNum];
       else d.parameters[el.dataset.paramNum] = Number(el.value);
       persist(false, true);
+    } else if (el.dataset.authorsNote) {
+      const field = el.dataset.authorsNote;
+      if (field === 'depth') state.authorsNote.depth = Math.max(0, Number(el.value) || 0);
+      else if (field === 'content') state.authorsNote.content = el.value;
     } else if (el.dataset.varIndex !== undefined && d) {
       const b = d.prompt_order[state.selected];
       const idx = Number(el.dataset.varIndex);
@@ -720,6 +989,7 @@ export function setup(ctx: any) {
       }
       b.variables[idx] = normalizeVariableDef(v, true);
       persist(false, true);
+      updateLiveVariablesPreview();
     } else if (el.dataset.varRuntime && d) {
       const b = d.prompt_order[state.selected];
       if (!b) return;
@@ -728,6 +998,7 @@ export function setup(ctx: any) {
       d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
       d.metadata.promptVariables[b.id][el.dataset.varRuntime] = el.value;
       persist(false, true);
+      updateLiveVariablesPreview();
     } else if (el.dataset.state === 'sourceTranslationName' && state.sourceTranslation) state.sourceTranslation.name = el.value;
     else if (el.dataset.state === 'translationName' && state.translation) state.translation.name = el.value;
     else if (el.dataset.state === 'sourceTranslationText' && state.sourceTranslation) state.sourceTranslation.content = el.value;
@@ -761,6 +1032,10 @@ export function setup(ctx: any) {
         if (key === 'connectionId') scheduleTokenCount();
         render();
       }
+      return;
+    }
+    if (el.dataset.authorsNote === 'role') {
+      state.authorsNote.role = el.value;
       return;
     }
     if (el.tagName === 'SELECT' && el.dataset.block && state.draft) {
@@ -953,20 +1228,67 @@ export function setup(ctx: any) {
         insertTextAtPromptCursor(el.dataset.snippet || '');
         return;
       } else if (a === 'open-text-editor' && b) { await openFullTextEditorForBlock(b); return; }
-      else if (a === 'set-test-prompt-source') {
-        state.testPromptSource = el.dataset.source || 'preset';
+      else if (a === 'apply-starter-variable' && b) {
+        const starterId = el.dataset.starterId;
+        const ex = VARIABLE_STARTER_EXAMPLES.find((s) => s.id === starterId);
+        if (ex) {
+          b.variables = Array.isArray(b.variables) ? b.variables : [];
+          const newVar = structuredClone(ex.variable);
+          let uniqueName = newVar.name;
+          let counter = 1;
+          while (b.variables.some((v: any) => v.name === uniqueName)) {
+            uniqueName = `${newVar.name}_${++counter}`;
+          }
+          newVar.name = uniqueName;
+          newVar.label = `${newVar.label}${counter > 1 ? ` ${counter}` : ''}`;
+          b.variables.push(newVar);
+          const snippetToInsert = ex.promptSnippet.replace(new RegExp(`\\b${ex.variable.name}\\b`, 'g'), uniqueName);
+          const curContent = b.content || '';
+          b.content = curContent.trim() ? `${curContent.trim()}\n\n${snippetToInsert}` : snippetToInsert;
+          persist();
+          state.notice = `Added variable “${newVar.label}” ({{var::${uniqueName}}}) to block.`;
+        }
+      } else if (a === 'insert-var-into-prompt' && b) {
+        const varName = el.dataset.varName;
+        if (varName) {
+          insertTextAtPromptCursor(`{{var::${varName}}}`);
+          state.notice = `Inserted {{var::${varName}}} into block content.`;
+        }
+        return;
+      } else if (a === 'reset-block-variables' && b) {
+        if (d.metadata?.promptVariables?.[b.id]) {
+          delete d.metadata.promptVariables[b.id];
+          persist();
+          render();
+          state.notice = 'Reset active variable values on this block to defaults.';
+        }
+        return;
+      } else if (a === 'copy-var-preview-output') {
+        const savedBlockVars = d?.metadata?.promptVariables?.[b?.id] || {};
+        const text = resolveBlockVariablesPreview(b, savedBlockVars);
+        await copyToClipboard(text);
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied resolved block text' });
+        return;
+      } else if (a === 'toggle-authors-note') {
+        state.authorsNote.enabled = !state.authorsNote.enabled;
         render();
         return;
-      } else if (a === 'open-test-custom-prompt-editor') {
-        const res = await request('text-editor', {
-          title: 'Custom Test Prompt',
-          value: state.testCustomPrompt,
-          placeholder: 'Type or paste custom system prompt / instructions to test…',
-        });
-        if (res && !res.cancelled && typeof res.text === 'string') {
-          state.testCustomPrompt = res.text;
+      } else if (a === 'set-authors-note-preset') {
+        const pIdx = Number(el.dataset.presetIdx);
+        const preset = AUTHORS_NOTE_PRESETS[pIdx];
+        if (preset) {
+          state.authorsNote.content = preset.content;
+          state.authorsNote.enabled = true;
           render();
         }
+        return;
+      } else if (a === 'set-reply-view-mode') {
+        state.testReplyViewMode = el.dataset.mode || 'chat';
+        render();
+        return;
+      } else if (a === 'change-test-prompt-source') {
+        state.testPromptSource = (el as any).value || 'preset';
+        render();
         return;
       } else if (a === 'set-test-turn-mode') {
         state.testTurnMode = el.dataset.mode || 'single';
@@ -980,14 +1302,9 @@ export function setup(ctx: any) {
         state.testTurns.splice(Number(el.dataset.turnIdx), 1);
         render();
         return;
-      } else if (a === 'move-turn-up' || a === 'move-turn-down') {
-        const idx = Number(el.dataset.turnIdx);
-        const target = idx + (a === 'move-turn-up' ? -1 : 1);
-        if (target >= 0 && target < state.testTurns.length) {
-          const [moved] = state.testTurns.splice(idx, 1);
-          state.testTurns.splice(target, 0, moved);
-          render();
-        }
+      } else if (a === 'clear-test-turns') {
+        state.testTurns = [];
+        render();
         return;
       } else if (a === 'fill-dummy-turns') {
         const mocks = [
@@ -998,17 +1315,7 @@ export function setup(ctx: any) {
           { role: 'user', content: 'I draw my lantern and scan the stone doorway ahead.' },
         ];
         state.testTurns.push(...mocks.map((m) => ({ id: uid(), ...m })));
-        state.notice = 'Appended 5 multi-turn conversation steps to stress-test your preset.';
-        render();
-        return;
-      } else if (a === 'undo-test-turn') {
-        if (state.testTurns.length) {
-          state.testTurns.pop();
-          render();
-        }
-        return;
-      } else if (a === 'clear-test-turns') {
-        state.testTurns = [];
+        state.notice = 'Appended 5 multi-turn conversation steps to test your preset.';
         render();
         return;
       } else if (a === 'continue-test-dialogue') {
@@ -1018,6 +1325,7 @@ export function setup(ctx: any) {
         state.testTurns.push({ id: uid(), role: 'user', content: '' });
         state.testTurnMode = 'multi';
         state.result = '';
+        state.displayResult = '';
         state.reasoning = '';
         state.custom = '';
         state.notice = 'Added reply to conversation thread. Type your next response below!';
@@ -1049,24 +1357,9 @@ export function setup(ctx: any) {
       } else if (a === 'copy-template-text') {
         const tpl = state.templates[Number(el.dataset.index)];
         if (tpl?.entries?.length) {
-          const joined = tpl.entries.map((e: any) => `### ${e.block.name || 'Block'}\n${e.block.content || ''}`).join('\n\n');
+          const joined = tpl.entries.map((ent: any) => `### ${ent.block.name || 'Block'}\n${ent.block.content || ''}`).join('\n\n');
           await copyToClipboard(joined);
           await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied all prompts in template “${tpl.name}”` });
-        }
-        return;
-      } else if (a === 'copy-custom-test-prompt') {
-        await copyToClipboard(state.testCustomPrompt || '');
-        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied custom test prompt' });
-        return;
-      } else if (a === 'copy-custom-single-turn') {
-        await copyToClipboard(state.custom || '');
-        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied custom test turn' });
-        return;
-      } else if (a === 'copy-turn-text') {
-        const turn = state.testTurns[Number(el.dataset.turnIdx)];
-        if (turn?.content) {
-          await copyToClipboard(turn.content);
-          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied Turn #${Number(el.dataset.turnIdx) + 1}` });
         }
         return;
       } else if (a === 'copy-test-reasoning') {
@@ -1082,14 +1375,13 @@ export function setup(ctx: any) {
         await copyToClipboard(JSON.stringify(msgs, null, 2));
         await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied ${msgs.length} assembled messages JSON` });
         return;
-      } else if (a === 'open-custom-editor') {
-        const res = await request('text-editor', { title: 'Custom Test Message', value: state.custom, placeholder: 'Enter test user message…' });
-        if (res && !res.cancelled && typeof res.text === 'string') state.custom = res.text;
       } else if (a === 'toggle-macro-pane') {
         state.showMacroPane = !state.showMacroPane;
         if (state.showMacroPane && b) await runMacroPreview(b);
-      } else if (a === 'refresh-macro' && b) { await runMacroPreview(b); return; }
-      else if (a === 'add-variable' && b) {
+      } else if (a === 'refresh-macro' && b) {
+        await runMacroPreview(b);
+        return;
+      } else if (a === 'add-variable' && b) {
         b.variables = Array.isArray(b.variables) ? b.variables : [];
         const idx = b.variables.length + 1;
         b.variables.push({ name: `var_${idx}`, label: `Variable ${idx}`, description: '', type: 'text', defaultValue: '' });
@@ -1199,7 +1491,10 @@ export function setup(ctx: any) {
         persist();
       } else if (a === 'save-preferences') {
         if (!state.translationLanguage.trim()) throw new Error('Enter a translation language.');
-        await request('preferences', { translationLanguage: state.translationLanguage.trim(), translationConnection: state.translationConnection });
+        await request('preferences', {
+          translationLanguage: state.translationLanguage.trim(),
+          translationConnection: state.translationConnection,
+        });
         state.notice = 'Studio settings saved.';
       } else if (a === 'translate-batch') {
         const target = el.dataset.target!;
@@ -1207,7 +1502,9 @@ export function setup(ctx: any) {
         const scope = el.dataset.scope!;
         const list = target === 'source' ? state.importBlocks : d.prompt_order;
         const owner = target === 'source' ? state.importPreset : d;
-        const chosen = list.filter((block: any, i: number) => group === 'all' || (target === 'source' ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)));
+        const chosen = list.filter(
+          (block: any, i: number) => group === 'all' || (target === 'source' ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)),
+        );
         if (!chosen.length) throw new Error('Select at least one block to translate.');
         const snapshots = chosen.map((block: any) => ({ id: block.id, name: block.name || '', content: block.content || '' }));
         state.batchTranslation = null;
@@ -1324,7 +1621,7 @@ export function setup(ctx: any) {
         const toRemove = new Set(state.selectedDraft);
         d.prompt_order = d.prompt_order.filter((blk: any) => !toRemove.has(blk.id));
         if (d.metadata?.promptVariables) {
-          for (const id of toRemove) delete d.metadata.promptVariables[id as string];
+          for (const bid of toRemove) delete d.metadata.promptVariables[bid as string];
         }
         state.selectedDraft = [];
         state.selected = Math.max(0, Math.min(state.selected, d.prompt_order.length - 1));
@@ -1384,7 +1681,12 @@ export function setup(ctx: any) {
         if (!state.chatId) throw new Error('Choose a chat first.');
         state.busy = true;
         render();
-        const result = await request('dry', { chatId: state.chatId, connectionId: state.connectionId, presetId: d.id, generationType: state.generationType });
+        const result = await request('dry', {
+          chatId: state.chatId,
+          connectionId: state.connectionId,
+          presetId: d.id,
+          generationType: state.generationType,
+        });
         state.assembled = result;
         state.notice = 'Saved-preset dry run complete.';
         state.busy = false;
@@ -1396,6 +1698,7 @@ export function setup(ctx: any) {
         }
         state.busy = true;
         state.result = '';
+        state.displayResult = '';
         state.reasoning = '';
         state.lastUsage = null;
         state.assembled = null;
@@ -1412,8 +1715,8 @@ export function setup(ctx: any) {
           pending.set(requestId, {
             resolve,
             reject,
-            onAssembled: (data: any) => {
-              state.assembled = data;
+            onAssembled: (assembledPayload: any) => {
+              state.assembled = assembledPayload;
               render();
             },
             onReasoning: (token: string) => {
@@ -1423,8 +1726,10 @@ export function setup(ctx: any) {
             },
             onToken: (token: string) => {
               state.result += token;
-              const box = root.querySelector('.ps-reply-box');
-              if (box) box.textContent = state.result;
+              const bubble = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
+              if (bubble) {
+                renderChatPreviewInto(bubble, state.result, state.testReplyViewMode === 'raw');
+              }
             },
           });
           ctx.sendToBackend({
@@ -1439,15 +1744,18 @@ export function setup(ctx: any) {
             generationType: state.generationType,
             testTurns: stagedTurns,
             customMessage: state.custom,
+            authorsNote: state.authorsNote,
           });
         }).then((result: any) => {
           if (a === 'run' && !result?.aborted) {
             state.lastUsage = result?.usage || null;
             if (result?.reasoning && !state.reasoning) state.reasoning = result.reasoning;
+            state.result = result?.content || state.result;
+            state.displayResult = result?.displayContent || state.result;
             state.runs.push({
               time: new Date().toLocaleTimeString(),
               connection: state.connections.find((c: any) => c.id === state.connectionId)?.name || 'Active connection',
-              content: result?.content || state.result,
+              content: state.result,
               reasoning: state.reasoning,
               snapshot,
             });
@@ -1460,7 +1768,40 @@ export function setup(ctx: any) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (!['refresh', 'save', 'save-copy', 'dry', 'profile', 'stop', 'collect-blocks', 'insert-template', 'quick-insert-template', 'quick-template-from-selected', 'delete-template', 'translate', 'apply-translation', 'save-preferences', 'translate-source', 'apply-source-translation', 'translate-batch', 'apply-batch', 'import-block', 'add-checked-imports', 'delete-checked-blocks', 'delete-row', 'delete-block', 'fill-dummy-turns', 'continue-test-dialogue'].includes(a)) {
+      if (
+        ![
+          'refresh',
+          'save',
+          'save-copy',
+          'dry',
+          'profile',
+          'stop',
+          'collect-blocks',
+          'insert-template',
+          'quick-insert-template',
+          'quick-template-from-selected',
+          'delete-template',
+          'translate',
+          'apply-translation',
+          'save-preferences',
+          'translate-source',
+          'apply-source-translation',
+          'translate-batch',
+          'apply-batch',
+          'import-block',
+          'add-checked-imports',
+          'delete-checked-blocks',
+          'delete-row',
+          'delete-block',
+          'fill-dummy-turns',
+          'continue-test-dialogue',
+          'apply-starter-variable',
+          'toggle-authors-note',
+          'set-authors-note-preset',
+          'set-reply-view-mode',
+          'reset-block-variables',
+        ].includes(a)
+      ) {
         state.notice = '';
       }
       render();
@@ -1490,7 +1831,9 @@ export function setup(ctx: any) {
     clearTimeout(longPressTimer);
     if (state.activeRun) request('cancel', { runId: state.activeRun }).catch(() => {});
     for (const [, p] of pending) {
-      try { p.reject?.(new Error('Extension unloaded.')); } catch (_) {}
+      try {
+        p.reject?.(new Error('Extension unloaded.'));
+      } catch (_) {}
     }
     pending.clear();
     tokenCache.clear();
