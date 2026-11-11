@@ -1286,6 +1286,25 @@ export function setup(ctx: SpindleFrontendContext) {
         state.testReplyViewMode = el.dataset.mode || 'chat';
         render();
         return;
+      } else if (a === 'set-test-prompt-source') {
+        state.testPromptSource = el.dataset.source || 'preset';
+        render();
+        return;
+      } else if (a === 'copy-custom-test-prompt') {
+        await copyToClipboard(state.testCustomPrompt || '');
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: 'Copied custom prompt text' });
+        return;
+      } else if (a === 'open-test-custom-prompt-editor') {
+        const res = await request('text-editor', {
+          title: 'Custom Test Prompt',
+          value: state.testCustomPrompt || '',
+          placeholder: 'Type or paste custom system prompt / instructions to test…',
+        });
+        if (res && !res.cancelled && typeof res.text === 'string') {
+          state.testCustomPrompt = res.text;
+          render();
+        }
+        return;
       } else if (a === 'change-test-prompt-source') {
         state.testPromptSource = (el as any).value || 'preset';
         render();
@@ -1799,6 +1818,7 @@ export function setup(ctx: SpindleFrontendContext) {
           'toggle-authors-note',
           'set-authors-note-preset',
           'set-reply-view-mode',
+          'set-test-prompt-source',
           'reset-block-variables',
         ].includes(a)
       ) {

@@ -2258,19 +2258,51 @@ function renderTestTab(state) {
   const isChatView = (state.testReplyViewMode || "chat") === "chat";
   return `
     <div class="ps-test-columns">
-      <!-- Left Column: Streamlined 3-Step Test Setup -->
+      <!-- Left Column: Streamlined Test Setup -->
       <div class="ps-test-col-ctrl">
         <div class="ps-panel" style="margin-top:0">
-          <!-- Step 1: Chat & Connection -->
+          
+          <!-- Prominent Test Prompt Source Toggle -->
+          <div class="ps-card" style="margin-bottom:12px;background:var(--ps-surface)">
+            <div class="ps-between">
+              <div>
+                <strong style="font-size:0.88rem">Prompt Source</strong>
+                <p class="ps-muted" style="font-size:0.75rem;margin-top:2px">Test Tab 01 preset blocks or a custom prompt.</p>
+              </div>
+              <div class="ps-chips">
+                <button type="button" class="ps-btn-sm ${!isCustomPromptMode ? "ps-primary" : ""}" data-action="set-test-prompt-source" data-source="preset">\uD83D\uDCCB Preset Blocks</button>
+                <button type="button" class="ps-btn-sm ${isCustomPromptMode ? "ps-primary" : ""}" data-action="set-test-prompt-source" data-source="custom">✍️ Custom Prompt</button>
+              </div>
+            </div>
+
+            ${isCustomPromptMode ? `
+              <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--ps-border)">
+                <div class="ps-between" style="margin-bottom:6px">
+                  <span class="ps-muted" style="font-size:0.8rem">Custom prompt (Tab 01 bypassed):</span>
+                  <div class="ps-row">
+                    <button type="button" class="ps-btn-sm" data-action="copy-custom-test-prompt" title="Copy prompt">\uD83D\uDCCB</button>
+                    <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer">
+                      <input type="checkbox" style="width:auto;min-height:16px" data-custom-check="history" ${state.testCustomPromptIncludeHistory ? "checked" : ""}>
+                      <span>Include Chat History</span>
+                    </label>
+                    <button type="button" class="ps-btn-sm" data-action="open-test-custom-prompt-editor">⤢ Editor</button>
+                  </div>
+                </div>
+                <textarea data-state="testCustomPrompt" class="ps-content" style="min-height:110px" placeholder="Type or paste custom system prompt / instructions to test (supports {{macros}})...">${esc(state.testCustomPrompt)}</textarea>
+              </div>
+            ` : ""}
+          </div>
+
+          <!-- Step 1: Context & Connection -->
           <div style="margin-bottom:12px">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
               <span class="ps-step-badge">1</span>
               <strong>Choose Context & Connection</strong>
             </div>
             <div class="ps-grid">
-              <label>Context Chat <span class="ps-muted">(Character & history context)</span>
+              <label>Context Chat <span class="ps-muted">${isCustomPromptMode ? "(Optional)" : "(Character & history)"}</span>
                 <select data-state="chatId">
-                  <option value="">Choose a chat…</option>
+                  <option value="">${isCustomPromptMode ? "None (Standalone prompt)" : "Choose a chat…"}</option>
                   ${selectOptions(state.chats, state.chatId, (x) => x.name || x.id)}
                 </select>
               </label>
@@ -2331,37 +2363,43 @@ function renderTestTab(state) {
             `}
           </div>
 
-          <!-- Step 3: Author's Note Card -->
-          <div class="ps-card" style="margin-bottom:12px;border-left:3px solid var(--ps-accent)">
-            <div class="ps-between" style="margin-bottom:6px">
+          <!-- Step 3: Author's Note as Collapsible Drawer -->
+          <details class="ps-collapsible" data-details-id="authors-note-collapsible" ${an.enabled ? "open" : ""} style="margin-bottom:12px;border-left:3px solid var(--ps-accent)">
+            <summary>
               <div style="display:flex;align-items:center;gap:6px">
                 <span class="ps-step-badge">3</span>
                 <strong>\uD83D\uDCDD Author's Note</strong>
+                ${an.enabled ? '<span class="ps-pill ps-pill-ok">Active</span>' : '<span class="ps-pill">Optional</span>'}
               </div>
-              <button type="button" class="ps-btn-sm ${an.enabled ? "ps-toggle-on" : ""}" data-action="toggle-authors-note">${an.enabled ? "● Active" : "○ Off"}</button>
-            </div>
-            <p class="ps-muted" style="font-size:0.78rem;margin-bottom:6px">Whisper instructions directly into the conversation context at a specific depth.</p>
+              <div class="ps-row">
+                <button type="button" class="ps-btn-sm ${an.enabled ? "ps-toggle-on" : ""}" data-action="toggle-authors-note">${an.enabled ? "● Active" : "○ Off"}</button>
+              </div>
+            </summary>
 
-            <div class="ps-chips" style="margin-bottom:8px">
-              <span class="ps-muted" style="font-size:0.75rem">Presets:</span>
-              ${AUTHORS_NOTE_PRESETS.map((p, pIdx) => `<button type="button" class="ps-btn-sm" data-action="set-authors-note-preset" data-preset-idx="${pIdx}">${esc(p.label)}</button>`).join("")}
-            </div>
+            <div style="margin-top:8px">
+              <p class="ps-muted" style="font-size:0.78rem;margin-bottom:6px">Whisper instructions directly into the conversation context at a specific depth.</p>
 
-            <textarea data-authors-note="content" style="min-height:60px;font-size:0.86rem" placeholder="[Style: vivid descriptions, slow pacing] (supports {{macros}})">${esc(an.content)}</textarea>
+              <div class="ps-chips" style="margin-bottom:8px">
+                <span class="ps-muted" style="font-size:0.75rem">Presets:</span>
+                ${AUTHORS_NOTE_PRESETS.map((p, pIdx) => `<button type="button" class="ps-btn-sm" data-action="set-authors-note-preset" data-preset-idx="${pIdx}">${esc(p.label)}</button>`).join("")}
+              </div>
 
-            <div class="ps-grid" style="margin-top:8px">
-              <label>Depth from latest message (default 4)
-                <input type="number" min="0" max="40" data-authors-note="depth" value="${esc(an.depth ?? 4)}">
-              </label>
-              <label>Message Role
-                <select data-authors-note="role">
-                  <option value="system" ${an.role === "system" ? "selected" : ""}>System</option>
-                  <option value="user" ${an.role === "user" ? "selected" : ""}>User</option>
-                  <option value="assistant" ${an.role === "assistant" ? "selected" : ""}>Assistant</option>
-                </select>
-              </label>
+              <textarea data-authors-note="content" style="min-height:60px;font-size:0.86rem" placeholder="[Style: vivid descriptions, slow pacing] (supports {{macros}})">${esc(an.content)}</textarea>
+
+              <div class="ps-grid" style="margin-top:8px">
+                <label>Depth from latest message (default 4)
+                  <input type="number" min="0" max="40" data-authors-note="depth" value="${esc(an.depth ?? 4)}">
+                </label>
+                <label>Message Role
+                  <select data-authors-note="role">
+                    <option value="system" ${an.role === "system" ? "selected" : ""}>System</option>
+                    <option value="user" ${an.role === "user" ? "selected" : ""}>User</option>
+                    <option value="assistant" ${an.role === "assistant" ? "selected" : ""}>Assistant</option>
+                  </select>
+                </label>
+              </div>
             </div>
-          </div>
+          </details>
 
           <!-- Main Generation Action Bar -->
           <div class="ps-between" style="margin-top:14px;gap:8px">
@@ -2376,7 +2414,7 @@ function renderTestTab(state) {
           <details class="ps-collapsible" data-details-id="advanced-test-options">
             <summary>
               <span>⚙️ Advanced Test Options</span>
-              <span class="ps-muted">Generation type, custom prompt override</span>
+              <span class="ps-muted">Trigger type, dry run, profile sync</span>
             </summary>
             <div class="ps-grid" style="margin-top:10px">
               <label>Generation Trigger
@@ -2384,26 +2422,7 @@ function renderTestTab(state) {
                   ${["normal", "continue", "regenerate", "swipe", "impersonate"].map((x) => `<option ${state.generationType === x ? "selected" : ""}>${x}</option>`).join("")}
                 </select>
               </label>
-              <label>Test Prompt Source
-                <select data-state="testPromptSource" data-action="change-test-prompt-source">
-                  <option value="preset" ${!isCustomPromptMode ? "selected" : ""}>Preset Blocks (Tab 01)</option>
-                  <option value="custom" ${isCustomPromptMode ? "selected" : ""}>Custom Text Override</option>
-                </select>
-              </label>
             </div>
-
-            ${isCustomPromptMode ? `
-              <div style="margin-top:10px">
-                <div class="ps-between" style="margin-bottom:4px">
-                  <span class="ps-muted">Custom System Prompt (bypasses Tab 01 blocks):</span>
-                  <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem">
-                    <input type="checkbox" style="width:auto;min-height:16px" data-custom-check="history" ${state.testCustomPromptIncludeHistory ? "checked" : ""}>
-                    <span>Include Chat History</span>
-                  </label>
-                </div>
-                <textarea data-state="testCustomPrompt" class="ps-content" style="min-height:100px" placeholder="Write custom prompt instructions to test…">${esc(state.testCustomPrompt)}</textarea>
-              </div>
-            ` : ""}
 
             <div class="ps-actions" style="margin-top:10px">
               <button type="button" class="ps-btn-sm" data-action="profile">Sync States from Active Chat</button>
@@ -4061,6 +4080,25 @@ ${snippetToInsert}` : snippetToInsert;
         state.testReplyViewMode = el.dataset.mode || "chat";
         render();
         return;
+      } else if (a === "set-test-prompt-source") {
+        state.testPromptSource = el.dataset.source || "preset";
+        render();
+        return;
+      } else if (a === "copy-custom-test-prompt") {
+        await copyToClipboard(state.testCustomPrompt || "");
+        await request("toast", { kind: "success", title: "Preset Studio", message: "Copied custom prompt text" });
+        return;
+      } else if (a === "open-test-custom-prompt-editor") {
+        const res = await request("text-editor", {
+          title: "Custom Test Prompt",
+          value: state.testCustomPrompt || "",
+          placeholder: "Type or paste custom system prompt / instructions to test…"
+        });
+        if (res && !res.cancelled && typeof res.text === "string") {
+          state.testCustomPrompt = res.text;
+          render();
+        }
+        return;
       } else if (a === "change-test-prompt-source") {
         state.testPromptSource = el.value || "preset";
         render();
@@ -4604,6 +4642,7 @@ ${ent.block.content || ""}`).join(`
         "toggle-authors-note",
         "set-authors-note-preset",
         "set-reply-view-mode",
+        "set-test-prompt-source",
         "reset-block-variables"
       ].includes(a)) {
         state.notice = "";
