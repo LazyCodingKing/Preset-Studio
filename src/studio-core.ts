@@ -579,27 +579,7 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
 }
 
 export function cloneBlocksForHost(blocks: any[]): any[] {
-  return (blocks || []).map((block) => ({
-    id: String(block.id || uid()),
-    name: String(block.name ?? ''),
-    content: String(block.content ?? ''),
-    role: ['system', 'user', 'assistant', 'user_append', 'assistant_append'].includes(block.role) ? block.role : 'system',
-    enabled: Boolean(block.enabled),
-    position: ['pre_history', 'post_history', 'in_history'].includes(block.position) ? block.position : 'pre_history',
-    depth: Math.max(0, Number(block.depth) || 0),
-    marker: block.marker ? String(block.marker) : null,
-    isLocked: Boolean(block.isLocked),
-    color: block.color ? String(block.color) : null,
-    injectionTrigger: Array.isArray(block.injectionTrigger) ? [...block.injectionTrigger] : [],
-    ...(Array.isArray(block.characterTagTrigger) ? { characterTagTrigger: [...block.characterTagTrigger] } : {}),
-    group: block.group ? String(block.group) : null,
-    categoryMode: block.categoryMode === 'radio' || block.categoryMode === 'checkbox' ? block.categoryMode : null,
-    ...(Array.isArray(block.variables)
-      ? {
-          variables: block.variables.map((v: any) => normalizeVariableDef(v, false)),
-        }
-      : {}),
-  }));
+  return (blocks || []).map((block) => sanitizeBlockForLoom(block));
 }
 
 export function sanitizeBlockForLoom(b: any): any {

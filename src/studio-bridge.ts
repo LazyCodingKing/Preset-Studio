@@ -41,22 +41,13 @@ export async function syncSaveWithNativePresetEditor(
   isCopy: boolean,
 ): Promise<any> {
   const pe = ctx.ui?.presetEditor;
+  // If the native preset editor is actively open in the UI for this preset, sync into it first
   if (!isCopy && draftToSave.id && pe?.getState && pe?.updatePreset) {
-    let peState = pe.getState();
-    if (!peState?.open) {
-      await request('open-native-presets-tab').catch(() => {});
-      for (let attempt = 0; attempt < 12; attempt++) {
-        await new Promise((r) => setTimeout(r, 35));
-        peState = pe.getState();
-        if (peState?.open && peState?.preset) break;
-      }
-    }
-    if (peState?.open && peState?.preset && peState.preset.id === draftToSave.id) {
-      const cleanBlocks = cloneBlocksForHost(draftToSave.prompt_order || []);
-      let applied = false;
-      pe.updatePreset((latest: any) => {
-        applied = true;
-        return {
+    try {
+      const peState = pe.getState();
+      if (peState?.open && peState?.preset && peState.preset.id === draftToSave.id) {
+        const cleanBlocks = cloneBlocksForHost(draftToSave.prompt_order || []);
+        pe.updatePreset((latest: any) => ({
           ...latest,
           name: draftToSave.name || latest.name,
           blocks: cleanBlocks,
@@ -66,20 +57,15 @@ export async function syncSaveWithNativePresetEditor(
             ...structuredClone(latest.metadata || {}),
             ...structuredClone(draftToSave.metadata || {}),
           },
-        };
-      });
-      if (applied) {
-        if (typeof pe.flush === 'function') await pe.flush();
-        const freshSaved = await request('get', { id: draftToSave.id });
-        await request('toast', {
-          kind: 'success',
-          title: 'Preset Studio',
-          message: `Applied "${draftToSave.name}" live to Lumiverse`,
-        });
-        return freshSaved || { ...draftToSave, prompt_order: cleanBlocks };
+        }));
+        if (typeof pe.flush === 'function') {
+          await pe.flush();
+        }
       }
-    }
+    } catch (_) {}
   }
+
+  // Authoritative database persistence via Spindle Presets API
   return await request('save', {
     preset: { ...draftToSave, prompt_order: cloneBlocksForHost(draftToSave.prompt_order || []) },
     copy: isCopy,

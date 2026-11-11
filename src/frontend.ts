@@ -191,9 +191,6 @@ export function setup(ctx: SpindleFrontendContext) {
       mount.setVisible(true);
       root.classList.add('ps-full');
       if (!state.presets.length) refresh().catch(() => {});
-      if (!ctx.ui?.presetEditor?.getState?.()?.open) {
-        request('open-native-presets-tab').catch(() => {});
-      }
     } else {
       tab.root.appendChild(root);
       mount?.setVisible(false);
@@ -1664,16 +1661,20 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'save' || a === 'save-copy') {
         root.inert = true;
         root.setAttribute('aria-busy', 'true');
+        const activeIdx = state.selected;
         try {
           const saved = ensureUniqueBlockIds(await syncSaveWithNativePresetEditor(ctx, request, d, a === 'save-copy'));
           state.draft = saved;
+          state.selected = Math.min(activeIdx, Math.max(0, (saved.prompt_order || []).length - 1));
           state.savedFingerprint = computeDraftFingerprint(saved);
           state.dirty = false;
           clearTimeout(timer);
           await saveChain;
           await request('draft', { draft: saved });
           await refresh();
-          state.notice = saved.provider === 'loom' ? 'Saved and applied live to Lumiverse (no page refresh needed).' : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
+          state.notice = saved.provider === 'loom'
+            ? `Saved "${saved.name}" live to Lumiverse.`
+            : `Saved "${saved.name}".`;
         } finally {
           root.inert = false;
           root.removeAttribute('aria-busy');

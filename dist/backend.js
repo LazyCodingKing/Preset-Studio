@@ -23,14 +23,40 @@ async function changeTemplates(userId, mutate) {
 }
 var supportsSessionRouting = () => (spindle.host?.capabilities?.["frontend-session-routing-v1"] ?? 0) >= 1;
 var reply = (userId, requestId, type, data = {}, frontendSessionId) => spindle.sendToFrontend({ type, requestId, ...data }, userId, frontendSessionId && supportsSessionRouting() ? { frontendSessionId } : undefined);
+var uid = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "b_" + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+function sanitizeBlockForBackend(b) {
+  const cleanBlock = {
+    id: String(b?.id || uid()),
+    name: String(b?.name ?? ""),
+    content: String(b?.content ?? ""),
+    role: ["system", "user", "assistant", "user_append", "assistant_append"].includes(b?.role) ? b.role : "system",
+    enabled: Boolean(b?.enabled),
+    position: ["pre_history", "post_history", "in_history"].includes(b?.position) ? b.position : "pre_history",
+    depth: Math.max(0, Number(b?.depth) || 0),
+    marker: b?.marker ? String(b.marker) : null,
+    isLocked: Boolean(b?.isLocked),
+    color: b?.color ? String(b.color) : null,
+    injectionTrigger: Array.isArray(b?.injectionTrigger) ? b.injectionTrigger.map(String) : [],
+    group: b?.group ? String(b.group) : null
+  };
+  if (cleanBlock.marker === "category") {
+    cleanBlock.categoryMode = b?.categoryMode === "radio" || b?.categoryMode === "checkbox" ? b.categoryMode : "checkbox";
+  } else {
+    cleanBlock.categoryMode = null;
+  }
+  if (Array.isArray(b?.variables)) {
+    cleanBlock.variables = b.variables;
+  }
+  return cleanBlock;
+}
 var clean = (p) => ({
-  name: p.name,
-  provider: p.provider || "loom",
-  engine: p.engine || "classic",
-  parameters: p.parameters || {},
-  prompt_order: p.prompt_order || [],
-  prompts: p.prompts || {},
-  metadata: p.metadata || {}
+  name: String(p?.name || "").trim(),
+  provider: p?.provider || "loom",
+  engine: p?.engine || "classic",
+  parameters: p?.parameters || {},
+  prompt_order: Array.isArray(p?.prompt_order) ? p.prompt_order.map(sanitizeBlockForBackend) : [],
+  prompts: p?.prompts || {},
+  metadata: p?.metadata || {}
 });
 function protectMacros(text) {
   const tokens = [];
@@ -407,40 +433,27 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         await spindle.userStorage.setJson("draft.json", msg.draft, { userId });
         data = true;
         break;
-      case "open-native-presets-tab": {
-        try {
-          const tabs = await spindle.ui.getDrawerTabs({ userId });
-          const target = tabs.find((t) => t.source === "builtin" && (t.id === "presets" || t.id === "loom"));
-          await spindle.ui.openDrawerTab(target ? target.id : "presets", { userId });
-        } catch (_) {}
-        data = true;
-        break;
-      }
       case "save": {
-        if (!spindle.permissions.has("presets"))
-          throw new Error('Enable the "presets" permission to save presets.');
+        if (!spindle.permissions.has("presets")) {
+          throw new Error('Enable the "presets" permission in Settings -> Extensions to save presets.');
+        }
         const input = clean(msg.preset);
         if (!input.name.trim())
-          throw new Error("Give the preset a name.");
+          throw new Error("Please give the preset a name before saving.");
+        let savedPreset;
         if (msg.copy || !msg.preset.id) {
-          data = await spindle.presets.create(input, userId);
+          savedPreset = await spindle.presets.create(input, userId);
         } else {
-          let expectedRev = msg.preset.cache_revision;
-          if (typeof expectedRev !== "number") {
-            const existing = await spindle.presets.get(msg.preset.id, userId);
-            if (!existing) {
-              data = await spindle.presets.create(input, userId);
-              spindle.toast.success(`Saved "${data.name}"`, {
-                title: "Preset Studio",
-                ...userId ? { userId } : {}
-              });
-              break;
-            }
-            expectedRev = existing.cache_revision;
+          const existing = await spindle.presets.get(msg.preset.id, userId).catch(() => null);
+          if (!existing) {
+            savedPreset = await spindle.presets.create(input, userId);
+          } else {
+            const currentRev = typeof existing.cache_revision === "number" ? existing.cache_revision : typeof msg.preset.cache_revision === "number" ? msg.preset.cache_revision : 0;
+            savedPreset = await spindle.presets.update(msg.preset.id, { ...input, expected_cache_revision: currentRev }, userId);
           }
-          data = await spindle.presets.update(msg.preset.id, { ...input, expected_cache_revision: expectedRev }, userId);
         }
-        spindle.toast.success(`Saved "${data.name}"`, { title: "Preset Studio", ...userId ? { userId } : {} });
+        spindle.toast.success(`Saved "${savedPreset.name}"`, { title: "Preset Studio", ...userId ? { userId } : {} });
+        data = savedPreset;
         break;
       }
       case "text-editor": {

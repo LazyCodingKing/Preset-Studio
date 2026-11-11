@@ -37,14 +37,45 @@ const reply = (
     frontendSessionId && supportsSessionRouting() ? ({ frontendSessionId } as any) : undefined,
   );
 
+const uid = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : 'b_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
+
+function sanitizeBlockForBackend(b: any) {
+  const cleanBlock: any = {
+    id: String(b?.id || uid()),
+    name: String(b?.name ?? ''),
+    content: String(b?.content ?? ''),
+    role: ['system', 'user', 'assistant', 'user_append', 'assistant_append'].includes(b?.role) ? b.role : 'system',
+    enabled: Boolean(b?.enabled),
+    position: ['pre_history', 'post_history', 'in_history'].includes(b?.position) ? b.position : 'pre_history',
+    depth: Math.max(0, Number(b?.depth) || 0),
+    marker: b?.marker ? String(b.marker) : null,
+    isLocked: Boolean(b?.isLocked),
+    color: b?.color ? String(b.color) : null,
+    injectionTrigger: Array.isArray(b?.injectionTrigger) ? b.injectionTrigger.map(String) : [],
+    group: b?.group ? String(b.group) : null,
+  };
+  if (cleanBlock.marker === 'category') {
+    cleanBlock.categoryMode = b?.categoryMode === 'radio' || b?.categoryMode === 'checkbox' ? b.categoryMode : 'checkbox';
+  } else {
+    cleanBlock.categoryMode = null;
+  }
+  if (Array.isArray(b?.variables)) {
+    cleanBlock.variables = b.variables;
+  }
+  return cleanBlock;
+}
+
 const clean = (p: any) => ({
-  name: p.name,
-  provider: p.provider || 'loom',
-  engine: p.engine || 'classic',
-  parameters: p.parameters || {},
-  prompt_order: p.prompt_order || [],
-  prompts: p.prompts || {},
-  metadata: p.metadata || {},
+  name: String(p?.name || '').trim(),
+  provider: p?.provider || 'loom',
+  engine: p?.engine || 'classic',
+  parameters: p?.parameters || {},
+  prompt_order: Array.isArray(p?.prompt_order) ? p.prompt_order.map(sanitizeBlockForBackend) : [],
+  prompts: p?.prompts || {},
+  metadata: p?.metadata || {},
 });
 
 // Replace balanced Lumiverse macros before translation, including nested macros.
@@ -476,42 +507,36 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
         await spindle.userStorage.setJson('draft.json', msg.draft, { userId });
         data = true;
         break;
-      case 'open-native-presets-tab': {
-        try {
-          const tabs = await spindle.ui.getDrawerTabs({ userId });
-          const target = tabs.find((t) => t.source === 'builtin' && (t.id === 'presets' || t.id === 'loom'));
-          await spindle.ui.openDrawerTab(target ? target.id : 'presets', { userId });
-        } catch (_) {}
-        data = true;
-        break;
-      }
       case 'save': {
-        if (!spindle.permissions.has('presets')) throw new Error('Enable the "presets" permission to save presets.');
-        const input = clean(msg.preset);
-        if (!input.name.trim()) throw new Error('Give the preset a name.');
-        if (msg.copy || !msg.preset.id) {
-          data = await (spindle.presets.create as any)(input, userId);
-        } else {
-          let expectedRev = msg.preset.cache_revision;
-          if (typeof expectedRev !== 'number') {
-            const existing = await (spindle.presets.get as any)(msg.preset.id, userId);
-            if (!existing) {
-              data = await (spindle.presets.create as any)(input, userId);
-              spindle.toast.success(`Saved "${data.name}"`, {
-                title: 'Preset Studio',
-                ...(userId ? { userId } : {}),
-              } as any);
-              break;
-            }
-            expectedRev = existing.cache_revision;
-          }
-          data = await (spindle.presets.update as any)(
-            msg.preset.id,
-            { ...input, expected_cache_revision: expectedRev },
-            userId,
-          );
+        if (!spindle.permissions.has('presets')) {
+          throw new Error('Enable the "presets" permission in Settings -> Extensions to save presets.');
         }
-        spindle.toast.success(`Saved "${data.name}"`, { title: 'Preset Studio', ...(userId ? { userId } : {}) } as any);
+        const input = clean(msg.preset);
+        if (!input.name.trim()) throw new Error('Please give the preset a name before saving.');
+
+        let savedPreset: any;
+        if (msg.copy || !msg.preset.id) {
+          savedPreset = await (spindle.presets.create as any)(input, userId);
+        } else {
+          // Authoritatively fetch the current database row to avoid stale expected_cache_revision rejections
+          const existing = await (spindle.presets.get as any)(msg.preset.id, userId).catch(() => null);
+          if (!existing) {
+            savedPreset = await (spindle.presets.create as any)(input, userId);
+          } else {
+            const currentRev = typeof existing.cache_revision === 'number'
+              ? existing.cache_revision
+              : typeof msg.preset.cache_revision === 'number'
+                ? msg.preset.cache_revision
+                : 0;
+            savedPreset = await (spindle.presets.update as any)(
+              msg.preset.id,
+              { ...input, expected_cache_revision: currentRev },
+              userId,
+            );
+          }
+        }
+        spindle.toast.success(`Saved "${savedPreset.name}"`, { title: 'Preset Studio', ...(userId ? { userId } : {}) } as any);
+        data = savedPreset;
         break;
       }
       case 'text-editor': {

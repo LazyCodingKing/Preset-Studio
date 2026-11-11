@@ -1056,25 +1056,7 @@ function buildPresetVariableDiagnostics(blocks) {
   return { defCountByBlock, refCountByBlock, missing, duplicates, unused, setVarsByBlock, allReadLocalVars };
 }
 function cloneBlocksForHost(blocks) {
-  return (blocks || []).map((block) => ({
-    id: String(block.id || uid()),
-    name: String(block.name ?? ""),
-    content: String(block.content ?? ""),
-    role: ["system", "user", "assistant", "user_append", "assistant_append"].includes(block.role) ? block.role : "system",
-    enabled: Boolean(block.enabled),
-    position: ["pre_history", "post_history", "in_history"].includes(block.position) ? block.position : "pre_history",
-    depth: Math.max(0, Number(block.depth) || 0),
-    marker: block.marker ? String(block.marker) : null,
-    isLocked: Boolean(block.isLocked),
-    color: block.color ? String(block.color) : null,
-    injectionTrigger: Array.isArray(block.injectionTrigger) ? [...block.injectionTrigger] : [],
-    ...Array.isArray(block.characterTagTrigger) ? { characterTagTrigger: [...block.characterTagTrigger] } : {},
-    group: block.group ? String(block.group) : null,
-    categoryMode: block.categoryMode === "radio" || block.categoryMode === "checkbox" ? block.categoryMode : null,
-    ...Array.isArray(block.variables) ? {
-      variables: block.variables.map((v) => normalizeVariableDef(v, false))
-    } : {}
-  }));
+  return (blocks || []).map((block) => sanitizeBlockForLoom(block));
 }
 function sanitizeBlockForLoom(b) {
   const cleanBlock = {
@@ -2589,22 +2571,11 @@ function readHostPresetEditorDraft(ctx) {
 async function syncSaveWithNativePresetEditor(ctx, request, draftToSave, isCopy) {
   const pe = ctx.ui?.presetEditor;
   if (!isCopy && draftToSave.id && pe?.getState && pe?.updatePreset) {
-    let peState = pe.getState();
-    if (!peState?.open) {
-      await request("open-native-presets-tab").catch(() => {});
-      for (let attempt = 0;attempt < 12; attempt++) {
-        await new Promise((r) => setTimeout(r, 35));
-        peState = pe.getState();
-        if (peState?.open && peState?.preset)
-          break;
-      }
-    }
-    if (peState?.open && peState?.preset && peState.preset.id === draftToSave.id) {
-      const cleanBlocks = cloneBlocksForHost(draftToSave.prompt_order || []);
-      let applied = false;
-      pe.updatePreset((latest) => {
-        applied = true;
-        return {
+    try {
+      const peState = pe.getState();
+      if (peState?.open && peState?.preset && peState.preset.id === draftToSave.id) {
+        const cleanBlocks = cloneBlocksForHost(draftToSave.prompt_order || []);
+        pe.updatePreset((latest) => ({
           ...latest,
           name: draftToSave.name || latest.name,
           blocks: cleanBlocks,
@@ -2614,20 +2585,12 @@ async function syncSaveWithNativePresetEditor(ctx, request, draftToSave, isCopy)
             ...structuredClone(latest.metadata || {}),
             ...structuredClone(draftToSave.metadata || {})
           }
-        };
-      });
-      if (applied) {
-        if (typeof pe.flush === "function")
+        }));
+        if (typeof pe.flush === "function") {
           await pe.flush();
-        const freshSaved = await request("get", { id: draftToSave.id });
-        await request("toast", {
-          kind: "success",
-          title: "Preset Studio",
-          message: `Applied "${draftToSave.name}" live to Lumiverse`
-        });
-        return freshSaved || { ...draftToSave, prompt_order: cleanBlocks };
+        }
       }
-    }
+    } catch (_) {}
   }
   return await request("save", {
     preset: { ...draftToSave, prompt_order: cloneBlocksForHost(draftToSave.prompt_order || []) },
@@ -2961,9 +2924,6 @@ function setup(ctx) {
       root.classList.add("ps-full");
       if (!state.presets.length)
         refresh().catch(() => {});
-      if (!ctx.ui?.presetEditor?.getState?.()?.open) {
-        request("open-native-presets-tab").catch(() => {});
-      }
     } else {
       tab.root.appendChild(root);
       mount?.setVisible(false);
@@ -4482,16 +4442,18 @@ ${ent.block.content || ""}`).join(`
       } else if (a === "save" || a === "save-copy") {
         root.inert = true;
         root.setAttribute("aria-busy", "true");
+        const activeIdx = state.selected;
         try {
           const saved = ensureUniqueBlockIds(await syncSaveWithNativePresetEditor(ctx, request, d, a === "save-copy"));
           state.draft = saved;
+          state.selected = Math.min(activeIdx, Math.max(0, (saved.prompt_order || []).length - 1));
           state.savedFingerprint = computeDraftFingerprint(saved);
           state.dirty = false;
           clearTimeout(timer);
           await saveChain;
           await request("draft", { draft: saved });
           await refresh();
-          state.notice = saved.provider === "loom" ? "Saved and applied live to Lumiverse (no page refresh needed)." : 'Saved. Set Provider to "loom" to list this preset in the native Loom Presets tab.';
+          state.notice = saved.provider === "loom" ? `Saved "${saved.name}" live to Lumiverse.` : `Saved "${saved.name}".`;
         } finally {
           root.inert = false;
           root.removeAttribute("aria-busy");
