@@ -169,7 +169,7 @@ export const AUTHORS_NOTE_PRESETS = [
   },
   {
     label: '💭 Inner Thoughts',
-    content: '[Include {{char}}\'s unspoken internal thoughts and emotional reactions in italics.]',
+    content: "[Include {{char}}'s unspoken internal thoughts and emotional reactions in italics.]",
   },
   {
     label: '💬 Dialogue Focus',
@@ -274,7 +274,6 @@ export function resolveSingleVariableRenderedValue(v: any, rawSelection: any): {
         ? active.split(',').map((s) => s.trim())
         : [];
     for (const k of chosenList) selectedKeys.add(k);
-    // Emit in declared option order per user-presets.md Doc 7
     const pieces = opts
       .filter((o: any) => selectedKeys.has(String(o.id)))
       .map((o: any) => String(o.value ?? ''))
@@ -302,7 +301,6 @@ export function resolveBlockVariablesPreview(block: any, savedBlockVars: Record<
     text = vars.map((v) => `{{var::${v.name}}}`).join('\n\n');
   }
 
-  // 1. Resolve {{var::name::ison::keyA,keyB}}
   text = text.replace(/\{\{\s*(?:var|promptVar|presetVar)::([a-zA-Z0-9_.-]+)::ison::([^}]*)\}\}/gi, (_m, name, keysRaw) => {
     const entry = varMap.get(name);
     if (!entry) return 'false';
@@ -314,7 +312,6 @@ export function resolveBlockVariablesPreview(block: any, savedBlockVars: Record<
     return keys.every((k) => entry.selectedKeys.has(k)) ? 'true' : 'false';
   });
 
-  // 2. Resolve {{varDefault::name}} / {{hasVar::name}}
   text = text.replace(/\{\{\s*(?:varDefault|promptVarDefault|presetVarDefault)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi, (_m, name) => {
     return varMap.get(name)?.defaultRendered ?? '';
   });
@@ -322,14 +319,12 @@ export function resolveBlockVariablesPreview(block: any, savedBlockVars: Record<
     return varMap.has(name) ? 'true' : 'false';
   });
 
-  // 3. Resolve {{var::name}}, {{getvar::name}}, {{.name}}
   text = text.replace(/\{\{\s*(?:(?:var|promptVar|presetVar|getvar)(?:::|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+))\s*\}\}/gi, (full, n1, n2) => {
     const name = n1 || n2;
     if (!varMap.has(name)) return full;
     return varMap.get(name)!.rendered;
   });
 
-  // 4. Evaluate simple {{if::condition}}...{{else}}...{{/if}} blocks driven by variable values
   const isTruthy = (cond: string): boolean => {
     let c = cond.trim();
     let negate = false;
@@ -384,13 +379,9 @@ function sanitizeHtmlFragment(rawHtml: string): DocumentFragment {
 
 function formatInlineProse(escapedText: string): string {
   let out = escapedText;
-  // Inline code
   out = out.replace(/`([^`\n]+)`/g, '<code class="ps-inline-code">$1</code>');
-  // Bold **text**
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong class="ps-prose-bold">$1</strong>');
-  // Italic *text*
   out = out.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em class="ps-prose-italic">*$2*</em>');
-  // Quoted dialogue "..." or “...”
   out = out.replace(/(&quot;[^&\n]+?&quot;|“[^”\n]+?”)/g, '<span class="ps-prose-dialogue">$1</span>');
   return out;
 }
@@ -399,15 +390,12 @@ function renderMarkdownAndHtmlWithPlaceholders(rawText: string): { html: string;
   const islands: string[] = [];
   let working = rawText;
 
-  // Extract block-level elements containing <style> or standalone <style> blocks into Shadow DOM islands
-  // per dev-frontend-api.md Doc 6 (HTML Islands)
   if (/<style\b/i.test(working)) {
     const idx = islands.length;
     islands.push(working);
     return { html: `<div class="ps-html-island-host" data-island-index="${idx}"></div>`, islands };
   }
 
-  // Preserve fenced code blocks
   const codeBlocks: string[] = [];
   working = working.replace(/```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g, (_m, lang, code) => {
     const cIdx = codeBlocks.length;
@@ -415,7 +403,6 @@ function renderMarkdownAndHtmlWithPlaceholders(rawText: string): { html: string;
     return `\u0000CODEBLOCK_${cIdx}\u0000`;
   });
 
-  // Preserve raw HTML tags while formatting prose text segments
   const htmlTokens: string[] = [];
   working = working.replace(/<\/?[a-zA-Z][^>]*>/g, (tag) => {
     const tIdx = htmlTokens.length;
@@ -429,7 +416,6 @@ function renderMarkdownAndHtmlWithPlaceholders(rawText: string): { html: string;
     if (!trimmed) return '';
     const escaped = esc(trimmed);
     const withInline = formatInlineProse(escaped).replace(/\n/g, '<br>');
-    // If paragraph starts with a block-level HTML token, don't wrap in <p>
     if (/^\u0000HTMLTAG_\d+\u0000/.test(trimmed) || /^\u0000CODEBLOCK_\d+\u0000$/.test(trimmed)) {
       return withInline;
     }
@@ -446,7 +432,7 @@ function renderMarkdownAndHtmlWithPlaceholders(rawText: string): { html: string;
 export function renderChatPreviewInto(container: HTMLElement, rawText: string, asRawText = false): void {
   if (!rawText) {
     container.innerHTML =
-      '<div class="ps-muted" style="padding:18px 4px;text-align:center">Click <strong>▶ Generate Reply</strong> to see how your preset responds in a live chat bubble (including HTML, CSS, Markdown, and dialogue styling).</div>';
+      '<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">💬</div><strong>Ready to Test</strong><p class="ps-muted" style="margin-top:4px">Pick a Context Chat on the left and click <strong>▶ Generate Reply</strong> to preview your preset in a live chat bubble.</p></div>';
     return;
   }
   if (asRawText) {
@@ -464,7 +450,6 @@ export function renderChatPreviewInto(container: HTMLElement, rawText: string, a
   wrap.className = 'ps-chat-prose';
   wrap.appendChild(frag);
 
-  // Hydrate any Shadow DOM HTML Islands so <style> blocks are scoped safely
   wrap.querySelectorAll<HTMLElement>('.ps-html-island-host[data-island-index]').forEach((hostEl) => {
     const idx = Number(hostEl.dataset.islandIndex);
     const islandSource = islands[idx];
@@ -511,14 +496,32 @@ export function ensureUniqueBlockIds(d: any): any {
   return d;
 }
 
+/**
+ * Accurately diagnoses Prompt Variables (`{{var::name}}`, `{{promptVar::name}}`, `{{presetVar::name}}`)
+ * without falsely flagging local scratchpad variables (`{{setvar::m_roll::...}}` / `{{getvar::m_roll}}` / `{{.m_roll}}`).
+ */
 export function buildPresetVariableDiagnostics(blocks: any[]) {
   const defsByName = new Map<string, Array<{ blockId: string; blockName: string; def: any }>>();
   const refsByName = new Map<string, Array<{ blockId: string; blockName: string }>>();
   const defCountByBlock = new Map<string, number>();
   const refCountByBlock = new Map<string, number>();
-  const explicitVarRe =
-    /\{\{\s*(?:(?:var|promptVar|presetVar|getvar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
 
+  // 1. Collect all local scratchpad variables written via setvar / addvar / incvar / decvar / .var = / let / foreach
+  const writtenLocalVars = new Set<string>(['item', 'msg']);
+  const localWriteRe =
+    /\{\{\s*(?:(?:setvar|addvar|incvar|decvar|setvarkey|addvarkey|counter|toggle)(?:::|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*(?:[+-]?=|\+\+|--)|(?:let|withVar|scope)(?:::|\s+)([a-zA-Z0-9_.-]+))/gi;
+
+  for (const blk of blocks || []) {
+    const text = typeof blk?.content === 'string' ? blk.content : '';
+    if (!text) continue;
+    let wm: RegExpExecArray | null;
+    while ((wm = localWriteRe.exec(text)) !== null) {
+      const k = wm[1] || wm[2] || wm[3];
+      if (k) writtenLocalVars.add(k);
+    }
+  }
+
+  // 2. Collect Prompt Variable definitions on each block
   for (const blk of blocks || []) {
     const vars = Array.isArray(blk.variables) ? blk.variables : [];
     defCountByBlock.set(blk.id, vars.length);
@@ -528,12 +531,22 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
       list.push({ blockId: blk.id, blockName: blk.name || 'Untitled', def: v });
       defsByName.set(v.name, list);
     }
+  }
+
+  // 3. Collect explicit Prompt Variable references ({{var::...}}, {{promptVar::...}}, {{presetVar::...}})
+  // plus {{getvar::x}} / {{.x}} ONLY if x is a defined Prompt Variable on the preset
+  const explicitPromptVarRe =
+    /\{\{\s*(?:var|promptVar|presetVar|hasPromptVar|hasPresetVar|varDefault|promptVarDefault|presetVarDefault)(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)/gi;
+  const generalLocalReadRe = /\{\{\s*(?:getvar(?:\s*::\s*|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+)\s*\}\})/gi;
+
+  for (const blk of blocks || []) {
     const text = blk.content || '';
     const blockRefSet = new Set<string>();
     let m: RegExpExecArray | null;
-    while ((m = explicitVarRe.exec(text)) !== null) {
-      const name = m[1] || m[2];
-      if (!name) continue;
+
+    while ((m = explicitPromptVarRe.exec(text)) !== null) {
+      const name = m[1];
+      if (!name || writtenLocalVars.has(name)) continue;
       blockRefSet.add(name);
       const rList = refsByName.get(name) || [];
       if (!rList.some((x) => x.blockId === blk.id)) {
@@ -541,6 +554,21 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
         refsByName.set(name, rList);
       }
     }
+
+    while ((m = generalLocalReadRe.exec(text)) !== null) {
+      const name = m[1] || m[2];
+      if (!name) continue;
+      // Only count getvar/.var as a Prompt Variable reference if it matches a defined Prompt Variable
+      if (defsByName.has(name)) {
+        blockRefSet.add(name);
+        const rList = refsByName.get(name) || [];
+        if (!rList.some((x) => x.blockId === blk.id)) {
+          rList.push({ blockId: blk.id, blockName: blk.name || 'Untitled' });
+          refsByName.set(name, rList);
+        }
+      }
+    }
+
     refCountByBlock.set(blk.id, blockRefSet.size);
   }
 
@@ -549,33 +577,16 @@ export function buildPresetVariableDiagnostics(blocks: any[]) {
   const unused: Array<{ name: string; defs: Array<{ blockId: string; blockName: string; def: any }> }> = [];
 
   for (const [name, refs] of refsByName.entries()) {
-    if (!defsByName.has(name)) missing.push({ name, refs });
+    if (!defsByName.has(name) && !writtenLocalVars.has(name)) {
+      missing.push({ name, refs });
+    }
   }
   for (const [name, defs] of defsByName.entries()) {
     if (defs.length > 1) duplicates.push({ name, defs });
     if (!refsByName.has(name)) unused.push({ name, defs });
   }
 
-  const allReadLocalVars = new Set<string>();
-  const setVarsByBlock = new Map<string, string[]>();
-  const getvarRe = /\{\{\s*(?:getvar|var)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi;
-  const dotReadRe = /\{\{\s*\.([a-zA-Z0-9_]+)\s*\}\}/g;
-  const setvarRe = /\{\{\s*setvar(?:::|\s+)([a-zA-Z0-9_.-]+)(?:::|\s*\}\})/gi;
-
-  for (const blk of blocks || []) {
-    const text = typeof blk?.content === 'string' ? blk.content : '';
-    if (!text) continue;
-    let m: RegExpExecArray | null;
-    while ((m = getvarRe.exec(text)) !== null) allReadLocalVars.add(m[1]);
-    while ((m = dotReadRe.exec(text)) !== null) allReadLocalVars.add(m[1]);
-    const written: string[] = [];
-    while ((m = setvarRe.exec(text)) !== null) {
-      if (!written.includes(m[1])) written.push(m[1]);
-    }
-    if (written.length) setVarsByBlock.set(blk.id, written);
-  }
-
-  return { defCountByBlock, refCountByBlock, missing, duplicates, unused, setVarsByBlock, allReadLocalVars };
+  return { defCountByBlock, refCountByBlock, missing, duplicates, unused };
 }
 
 export function cloneBlocksForHost(blocks: any[]): any[] {

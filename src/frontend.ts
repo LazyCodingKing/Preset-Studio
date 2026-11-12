@@ -28,10 +28,8 @@ import {
 import {
   renderArchitectTab,
   renderVariablesTab,
-  renderSamplersTab,
-  renderRemixTab,
+  renderRemixAndTranslateTab,
   renderTestTab,
-  renderStudioSettingsTab,
 } from './studio-views.js';
 import {
   syncSaveWithNativePresetEditor,
@@ -74,6 +72,8 @@ export function setup(ctx: SpindleFrontendContext) {
     recovery: null,
     selected: 0,
     view: 'blocks',
+    remixSubTab: 'mixer',
+    testOutputTab: 'reply',
     editorMode: 'studio',
     blockFilter: 'all',
     blockSearch: '',
@@ -114,7 +114,6 @@ export function setup(ctx: SpindleFrontendContext) {
     assembled: null,
     breakdownFilter: 'all',
     breakdownSearch: '',
-    xrayExpanded: false,
     busy: false,
     notice: '',
     activeRun: null,
@@ -143,7 +142,6 @@ export function setup(ctx: SpindleFrontendContext) {
   let tokenTimer: any = null;
   let longPressTimer: any = null;
   let refreshPromise: Promise<void> | null = null;
-  let hasLoadedOnce = false;
   let destroyed = false;
   let saveChain = Promise.resolve();
 
@@ -190,7 +188,7 @@ export function setup(ctx: SpindleFrontendContext) {
       mount.root.appendChild(root);
       mount.setVisible(true);
       root.classList.add('ps-full');
-      if (!state.presets.length) refresh().catch(() => {});
+      refresh().catch(() => {});
     } else {
       tab.root.appendChild(root);
       mount?.setVisible(false);
@@ -205,8 +203,12 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!msg) return;
     if (msg.type === 'backend-ready' || msg.type === 'permissions') {
       if (msg.permissions) state.permissions = { ...state.permissions, ...msg.permissions };
-      if (full || hasLoadedOnce) refresh().catch(() => {});
-      else render();
+      refresh().catch(() => {});
+      return;
+    }
+    if (msg.type === 'host-sync') {
+      if (msg.chatId) state.chatId = msg.chatId;
+      refresh().catch(() => {});
       return;
     }
     if (msg.type === 'command') {
@@ -276,6 +278,20 @@ export function setup(ctx: SpindleFrontendContext) {
         }
       });
 
+      // Immediate char/4 heuristic so badge never stays at ~0 if backend is busy
+      let fallbackSum = 0;
+      for (const b of blocks) {
+        const text = b.content || '';
+        if (text.trim() && b.enabled && b.marker !== 'category') {
+          fallbackSum += tokenCache.get(`${connKey}:${text}`)?.count || Math.max(1, Math.ceil(text.length / 4));
+        }
+      }
+      if (state.totalDraftTokens === 0 && fallbackSum > 0) {
+        state.totalDraftTokens = fallbackSum;
+        const totalBadge = root.querySelector('[data-total-tokens]');
+        if (totalBadge) totalBadge.textContent = `~${fallbackSum.toLocaleString()} tokens`;
+      }
+
       try {
         if (missingTexts.length > 0) {
           const res = await request('count-tokens', { texts: missingTexts, connectionId: state.connectionId });
@@ -284,7 +300,7 @@ export function setup(ctx: SpindleFrontendContext) {
           missingIndices.forEach((blockIdx, i) => {
             const text = blocks[blockIdx]?.content || '';
             tokenCache.set(`${connKey}:${text}`, {
-              count: Number(res.counts[i]) || 0,
+              count: Number(res.counts[i]) || Math.max(1, Math.ceil(text.length / 4)),
               tokenizerName: res.tokenizerName || '',
             });
           });
@@ -295,20 +311,20 @@ export function setup(ctx: SpindleFrontendContext) {
         let sum = 0;
         for (const b of blocks) {
           const text = b.content || '';
-          const c = text.trim() ? tokenCache.get(`${connKey}:${text}`)?.count || 0 : 0;
+          const c = text.trim() ? tokenCache.get(`${connKey}:${text}`)?.count || Math.max(1, Math.ceil(text.length / 4)) : 0;
           map[b.id] = c;
           if (b.enabled && b.marker !== 'category') sum += c;
         }
         state.tokenCounts = map;
         state.totalDraftTokens = sum;
         const totalBadge = root.querySelector('[data-total-tokens]');
-        if (totalBadge) totalBadge.textContent = `~${sum.toLocaleString()} block tokens`;
+        if (totalBadge) totalBadge.textContent = `~${sum.toLocaleString()} tokens`;
         blocks.forEach((b: any) => {
           const pill = root.querySelector(`[data-token-id="${CSS.escape(b.id)}"]`);
           if (pill) pill.textContent = b.content?.trim() && map[b.id] ? `· ${map[b.id]}t` : '';
         });
       } catch (_) {}
-    }, 420);
+    }, 240);
   }
 
   function persist(skipHistory = false, deferHistory = false) {
@@ -334,7 +350,7 @@ export function setup(ctx: SpindleFrontendContext) {
           state.notice = 'Could not recover draft: ' + e.message;
           render();
         });
-    }, 450);
+    }, 420);
     scheduleTokenCount();
   }
 
@@ -359,11 +375,16 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape' && full) {
-      if (root.querySelector('dialog[open]')) return;
-      e.stopPropagation();
-      setFull(false);
-      return;
+    if (e.key === 'Escape') {
+      if (modalRef.current || root.querySelector('dialog[open]')) {
+        closeModalRef(modalRef);
+        return;
+      }
+      if (full) {
+        e.stopPropagation();
+        setFull(false);
+        return;
+      }
     }
     if (!root.contains(document.activeElement)) return;
     const tag = (document.activeElement as HTMLElement)?.tagName;
@@ -573,7 +594,6 @@ export function setup(ctx: SpindleFrontendContext) {
     const d = state.draft;
     if (!d || !ctx.components) return;
 
-    // 1. Native Loom editor mount (if opted into)
     if (state.view === 'blocks' && state.editorMode === 'native') {
       const slot = root.querySelector<HTMLElement>('#ps-native-loom-slot');
       if (slot && ctx.components.mountLoomBlockEditor) {
@@ -595,8 +615,8 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }
 
-    // 2. Sampler sliders
-    if (state.view === 'settings' && ctx.components.mountRangeSlider) {
+    // Mount Sampler Sliders inside Tab 01's Inline Samplers Drawer
+    if (state.view === 'blocks' && ctx.components.mountRangeSlider) {
       const specs = [
         { key: 'temperature', label: 'Temperature (Randomness)', min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: 'top_p', label: 'Top-P (Nucleus Sampling)', min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
@@ -627,7 +647,6 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }
 
-    // 3. Tab 02 Live Interactive Preview Controls
     if (state.view === 'variables') {
       const b = d.prompt_order?.[state.selected];
       const controlsSlot = root.querySelector<HTMLElement>('#ps-var-preview-controls-slot');
@@ -660,7 +679,7 @@ export function setup(ctx: SpindleFrontendContext) {
             );
             const lbl = document.createElement('span');
             lbl.textContent = ` ${v.label || v.name}`;
-            lbl.style.cssText = 'font-size:0.86rem;font-weight:600;margin-top:2px;';
+            lbl.style.cssText = 'font-size:0.84rem;font-weight:600;margin-top:2px;';
             row.appendChild(lbl);
           } else if (v.type === 'slider') {
             trackMount(() =>
@@ -686,7 +705,7 @@ export function setup(ctx: SpindleFrontendContext) {
             }));
             const labelEl = document.createElement('span');
             labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
             row.appendChild(labelEl);
             trackMount(() =>
               ctx.components.mountSelect(row, {
@@ -708,7 +727,7 @@ export function setup(ctx: SpindleFrontendContext) {
             }));
             const labelEl = document.createElement('span');
             labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
             row.appendChild(labelEl);
             const chosenList = Array.isArray(currentVal)
               ? currentVal.map(String)
@@ -730,7 +749,7 @@ export function setup(ctx: SpindleFrontendContext) {
           } else if (v.type === 'textarea') {
             const labelEl = document.createElement('span');
             labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
             row.appendChild(labelEl);
             trackMount(() =>
               ctx.components.mountTextArea(row, {
@@ -747,7 +766,7 @@ export function setup(ctx: SpindleFrontendContext) {
           } else {
             const labelEl = document.createElement('span');
             labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.86rem;font-weight:600;';
+            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
             row.appendChild(labelEl);
             trackMount(() =>
               ctx.components.mountTextInput(row, {
@@ -780,71 +799,69 @@ export function setup(ctx: SpindleFrontendContext) {
 
     destroyMounted();
     const d = state.draft;
+    const totalVarsCount = d
+      ? (d.prompt_order || []).reduce((acc: number, blk: any) => acc + (Array.isArray(blk.variables) ? blk.variables.length : 0), 0)
+      : 0;
+
     root.innerHTML = `
       <div class="ps-shell">
-        <header class="ps-masthead">
-          <div class="ps-brand">
-            <div class="ps-mark" aria-hidden="true">✳</div>
-            <div>
-              <div class="ps-kicker">Lumiverse Prompt IDE</div>
-              <h2>Preset Studio ${d ? `· <span style="color:var(--ps-accent)">${esc(d.name)}</span>` : ''}</h2>
+        <!-- Unified Sleek Top Header Bar -->
+        <header class="ps-topbar">
+          <div class="ps-row" style="flex:1;min-width:260px">
+            <div class="ps-brand">
+              <div class="ps-mark" aria-hidden="true">✳</div>
+              <strong style="font-size:0.95rem;white-space:nowrap">Preset Studio</strong>
             </div>
+
+            <select data-action="open" style="max-width:260px;min-height:32px;padding:3px 10px;font-weight:600" aria-label="Select preset">
+              <option value="">${d && !d.id ? `Draft: ${esc(d.name)}` : `Open preset (${state.presets.length})…`}</option>
+              ${selectOptions(state.presets, d?.id, (x: any) => x.name)}
+            </select>
+
+            <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
+            <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">📥 Import</button>
+            ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">📤 Export</button>' : ''}
+            ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
           </div>
+
           <div class="ps-actions">
             ${d ? `
-              <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} block tokens</span>
-              <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶ Undo</button>
-              <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷ Redo</button>
+              <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} tokens</span>
+              <span class="ps-pill ${state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.dirty ? '● Unsaved' : '✓ Saved'}</span>
+              <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶</button>
+              <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷</button>
+              <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.busy ? 'disabled' : ''}>Save Copy</button>
+              <button type="button" class="ps-primary ps-btn-sm" style="padding:5px 14px !important" data-action="save" ${state.busy ? 'disabled' : ''}>${d.id ? 'Save Changes' : 'Create Preset'}</button>
             ` : ''}
-            ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full Window</button>' : '<button type="button" class="ps-btn-sm ps-primary" data-action="full-window">⤢ Full Window</button>'}
-            <button type="button" class="ps-btn-sm" data-action="refresh">↻ Refresh</button>
+            <button type="button" class="ps-btn-sm" data-action="refresh" title="Reload presets and chats">↻</button>
+            ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full</button>' : '<button type="button" class="ps-btn-sm" data-action="full-window" title="Expand to full window">⤢ Full</button>'}
           </div>
         </header>
 
-        ${state.notice ? `<div class="ps-notice" role="status">${esc(state.notice)}</div>` : ''}
-
-        <!-- Clean, Direct Top Action Bar -->
-        <section class="ps-panel ps-between" aria-label="Preset library">
-          <div class="ps-row" style="flex:1">
-            <label style="max-width:320px">
-              <select data-action="open">
-                <option value="">Choose an existing preset…</option>
-                ${selectOptions(state.presets, d?.id, (x: any) => x.name)}
-              </select>
-            </label>
-            <button type="button" class="ps-btn-sm" data-action="new">＋ New</button>
-            <button type="button" class="ps-btn-sm" data-action="import-preset-json">📥 Import JSON</button>
-            ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json">📤 Export JSON</button>' : ''}
-            ${state.recovery ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
-          </div>
-
-          ${d ? `
-            <div class="ps-actions">
-              <span class="ps-pill ${state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.dirty ? '● Unsaved' : '✓ Saved'}</span>
-              <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.busy ? 'disabled' : ''}>Save Copy</button>
-              <button type="button" class="ps-primary" style="min-height:36px;padding:6px 16px" data-action="save" ${state.busy ? 'disabled' : ''}>${d.id ? 'Save Changes' : 'Create Preset'}</button>
-            </div>
-          ` : ''}
-        </section>
+        ${state.notice ? `<div class="ps-notice" role="status"><span>${esc(state.notice)}</span><button type="button" class="ps-btn-sm ps-btn-icon" data-action="dismiss-notice" aria-label="Dismiss">✕</button></div>` : ''}
 
         ${d ? `
-          <nav class="ps-tabs" aria-label="Studio tabs">
+          <!-- Clean 4-Tab "Adaptive Pro" Bar -->
+          <nav class="ps-tabs" aria-label="Studio workspace tabs">
             ${[
-              ['blocks', '01', 'Prompts'],
-              ['variables', '02', 'Variables & Inputs'],
-              ['settings', '03', 'Settings & Samplers'],
-              ['remix', '04', 'Templates & Mixer'],
-              ['test', '05', 'Test Lab'],
-              ['studio-settings', '06', 'Translate & Tools'],
+              ['blocks', '01', `Build Prompts (${d.prompt_order.length})`],
+              ['variables', '02', `User Inputs${totalVarsCount ? ` (${totalVarsCount})` : ''}`],
+              ['remix', '03', 'Remix & Translate'],
+              ['test', '04', 'Test Lab & X-Ray'],
             ].map(([id, step, label]) => `<button type="button" data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join('')}
           </nav>
 
-          ${state.view === 'blocks' ? renderArchitectTab(ctx, state) : state.view === 'variables' ? renderVariablesTab(state) : state.view === 'settings' ? renderSamplersTab(state) : state.view === 'remix' ? renderRemixTab(state) : state.view === 'test' ? renderTestTab(state) : renderStudioSettingsTab(state)}
+          ${state.view === 'blocks' ? renderArchitectTab(ctx, state) : state.view === 'variables' ? renderVariablesTab(state) : state.view === 'remix' ? renderRemixAndTranslateTab(state) : renderTestTab(state)}
         ` : `
-          <div class="ps-panel" style="text-align:center;padding:36px 16px">
+          <div class="ps-panel ps-empty-state" style="padding:42px 20px">
+            <div style="font-size:2rem;margin-bottom:8px">✳</div>
             <h3>Welcome to Preset Studio</h3>
-            <p class="ps-muted" style="margin:8px 0 16px">Open an existing preset from the dropdown above, import a JSON preset, or start fresh.</p>
-            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+            <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.</p>
+            <div class="ps-actions" style="justify-content:center">
+              <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+              <button type="button" data-action="import-preset-json">📥 Import Preset JSON</button>
+              ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ''}
+            </div>
           </div>
         `}
       </div>
@@ -852,8 +869,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
     mountInteractiveWidgets();
 
-    // If Test Lab is open, hydrate the chat reply bubble with rich Markdown/HTML
-    if (state.view === 'test') {
+    if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply') {
       const bubbleEl = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
       if (bubbleEl) {
         const textToRender = state.displayResult || state.result;
@@ -875,18 +891,14 @@ export function setup(ctx: SpindleFrontendContext) {
     root.scrollTop = savedRootScroll;
   }
 
-  const cleanupLauncher = mountPresetEditorLauncher(ctx, state, setFull, Boolean(mount), tab, scheduleTokenCount, render);
-  bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
-
   function refresh(): Promise<void> {
     if (refreshPromise) return refreshPromise;
-    hasLoadedOnce = true;
     refreshPromise = request('load')
       .then((data) => {
-        if (destroyed) return;
-        state.presets = data.presets || [];
-        state.chats = data.chats || [];
-        state.connections = data.connections || [];
+        if (destroyed || !data) return;
+        state.presets = Array.isArray(data.presets) ? data.presets : [];
+        state.chats = Array.isArray(data.chats) ? data.chats : [];
+        state.connections = Array.isArray(data.connections) ? data.connections : [];
         state.recovery = data.draft;
         if (data.permissions) state.permissions = { ...state.permissions, ...data.permissions };
         if (!state.preferencesLoaded) {
@@ -895,7 +907,13 @@ export function setup(ctx: SpindleFrontendContext) {
           state.preferencesLoaded = true;
         }
         state.templates = Array.isArray(data.templates) ? data.templates : [];
-        if (!state.chatId) state.chatId = data.active?.id || '';
+        // Ensure a valid chatId is selected if available
+        if (!state.chatId || !state.chats.some((c: any) => c.id === state.chatId)) {
+          state.chatId = data.active?.id || state.chats[0]?.id || '';
+        }
+        if (state.draft) {
+          scheduleTokenCount();
+        }
         render();
       })
       .finally(() => {
@@ -903,6 +921,18 @@ export function setup(ctx: SpindleFrontendContext) {
       });
     return refreshPromise;
   }
+
+  const cleanupLauncher = mountPresetEditorLauncher(
+    ctx,
+    state,
+    setFull,
+    Boolean(mount),
+    tab,
+    scheduleTokenCount,
+    refresh,
+    render,
+  );
+  bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
 
   async function saveEntriesAsTemplate(entries: any[], suggestedName = '') {
     if (!entries.length) throw new Error('Select at least one block first.');
@@ -932,19 +962,23 @@ export function setup(ctx: SpindleFrontendContext) {
     openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), e.clientX, e.clientY, contextMenuCallbacks);
   });
 
-  root.addEventListener('touchstart', (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest('[data-drag-handle]')) return;
-    const row = target.closest<HTMLElement>('[data-context-index]');
-    if (!row) return;
-    const t = e.touches[0];
-    const x = t.clientX;
-    const y = t.clientY;
-    clearTimeout(longPressTimer);
-    longPressTimer = setTimeout(() => {
-      openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
-    }, 520);
-  }, { passive: true });
+  root.addEventListener(
+    'touchstart',
+    (e) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-drag-handle]')) return;
+      const row = target.closest<HTMLElement>('[data-context-index]');
+      if (!row) return;
+      const t = e.touches[0];
+      const x = t.clientX;
+      const y = t.clientY;
+      clearTimeout(longPressTimer);
+      longPressTimer = setTimeout(() => {
+        openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
+      }, 520);
+    },
+    { passive: true },
+  );
   root.addEventListener('touchmove', () => clearTimeout(longPressTimer), { passive: true });
   root.addEventListener('touchend', () => clearTimeout(longPressTimer), { passive: true });
 
@@ -1117,7 +1151,17 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     if (el.dataset.action === 'open' && el.value) {
       try {
-        if (state.dirty && !(await askConfirm(root, modalRef, 'Discard Unsaved Changes?', 'Open this preset and discard your current unsaved draft?', 'warning', 'Open Preset'))) {
+        if (
+          state.dirty &&
+          !(await askConfirm(
+            root,
+            modalRef,
+            'Discard Unsaved Changes?',
+            'Open this preset and discard your current unsaved draft?',
+            'warning',
+            'Open Preset',
+          ))
+        ) {
           render();
           return;
         }
@@ -1147,13 +1191,32 @@ export function setup(ctx: SpindleFrontendContext) {
     const d = state.draft;
     const b = d?.prompt_order?.[state.selected];
     try {
-      if (a === 'full-window') { setFull(true); return; }
-      else if (a === 'close-window') { setFull(false); return; }
-      else if (a === 'refresh') await refresh();
-      else if (a === 'undo') { undo(); return; }
-      else if (a === 'redo') { redo(); return; }
-      else if (a === 'new') {
-        if (state.dirty && !(await askConfirm(root, modalRef, 'Start New Preset?', 'Discard your current unsaved draft and start a new preset?', 'warning', 'Start New'))) return;
+      if (a === 'full-window') {
+        setFull(true);
+        return;
+      } else if (a === 'close-window') {
+        setFull(false);
+        return;
+      } else if (a === 'dismiss-notice') {
+        state.notice = '';
+        render();
+        return;
+      } else if (a === 'refresh') {
+        await refresh();
+        state.notice = `Synced ${state.presets.length} presets and ${state.chats.length} chats.`;
+      } else if (a === 'undo') {
+        undo();
+        return;
+      } else if (a === 'redo') {
+        redo();
+        return;
+      } else if (a === 'new') {
+        if (
+          state.dirty &&
+          !(await askConfirm(root, modalRef, 'Start New Preset?', 'Discard your current unsaved draft and start a new preset?', 'warning', 'Start New'))
+        ) {
+          return;
+        }
         state.draft = freshDraft();
         state.savedFingerprint = '';
         state.selected = 0;
@@ -1165,7 +1228,12 @@ export function setup(ctx: SpindleFrontendContext) {
         persist(true);
       } else if (a === 'restore') {
         if (!state.recovery) throw new Error('No recovered draft is available.');
-        if (state.dirty && !(await askConfirm(root, modalRef, 'Recover Draft?', 'Replace the current draft with the last auto-recovered draft?', 'warning', 'Recover'))) return;
+        if (
+          state.dirty &&
+          !(await askConfirm(root, modalRef, 'Recover Draft?', 'Replace the current draft with the last auto-recovered draft?', 'warning', 'Recover'))
+        ) {
+          return;
+        }
         state.draft = ensureUniqueBlockIds(structuredClone(state.recovery));
         state.selected = 0;
         state.dirty = true;
@@ -1176,10 +1244,22 @@ export function setup(ctx: SpindleFrontendContext) {
       else if (a === 'export-template') {
         const t = state.templates[Number(el.dataset.index)];
         if (t) exportJsonFile(`template-${t.name.replace(/[^a-z0-9-_]+/gi, '_')}.json`, t);
-      } else if (a === 'view') state.view = el.dataset.view;
-      else if (a === 'editor-mode') state.editorMode = el.dataset.mode;
-      else if (a === 'open-find-replace') { openFindReplaceDialog(root, modalRef, state, persist, render); return; }
-      else if (a === 'toggle-category-collapse') {
+      } else if (a === 'view') {
+        state.view = el.dataset.view;
+      } else if (a === 'set-remix-subtab') {
+        state.remixSubTab = el.dataset.subtab || 'mixer';
+        render();
+        return;
+      } else if (a === 'set-test-output-tab') {
+        state.testOutputTab = el.dataset.outtab || 'reply';
+        render();
+        return;
+      } else if (a === 'editor-mode') {
+        state.editorMode = el.dataset.mode;
+      } else if (a === 'open-find-replace') {
+        openFindReplaceDialog(root, modalRef, state, persist, render);
+        return;
+      } else if (a === 'toggle-category-collapse') {
         const catId = el.dataset.catId!;
         state.collapsedCategories = state.collapsedCategories.includes(catId)
           ? state.collapsedCategories.filter((id: string) => id !== catId)
@@ -1190,7 +1270,6 @@ export function setup(ctx: SpindleFrontendContext) {
         state.collapsedCategories = allCollapsed ? [] : catIds;
       } else if (a === 'filter-blocks') state.blockFilter = el.dataset.filter;
       else if (a === 'filter-breakdown') state.breakdownFilter = el.dataset.filter;
-      else if (a === 'toggle-xray-expand') state.xrayExpanded = !state.xrayExpanded;
       else if (a === 'jump-to-block') {
         state.selected = Number(el.dataset.index) || 0;
         state.view = 'blocks';
@@ -1211,9 +1290,13 @@ export function setup(ctx: SpindleFrontendContext) {
         const rect = el.getBoundingClientRect();
         openBlockContextMenu(root, modalRef, state, Number(el.dataset.index), rect.left, rect.bottom + 4, contextMenuCallbacks);
         return;
-      } else if (a === 'toggle-lock' && b) { b.isLocked = !b.isLocked; persist(); }
-      else if (a === 'set-color' && b) { b.color = el.dataset.color || null; persist(); }
-      else if (a === 'toggle-trigger' && b) {
+      } else if (a === 'toggle-lock' && b) {
+        b.isLocked = !b.isLocked;
+        persist();
+      } else if (a === 'set-color' && b) {
+        b.color = el.dataset.color || null;
+        persist();
+      } else if (a === 'toggle-trigger' && b) {
         const tr = el.dataset.trigger!;
         const cur = Array.isArray(b.injectionTrigger) ? b.injectionTrigger : [];
         b.injectionTrigger = cur.includes(tr) ? cur.filter((x: string) => x !== tr) : [...cur, tr];
@@ -1224,8 +1307,10 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'insert-macro-chip') {
         insertTextAtPromptCursor(el.dataset.snippet || '');
         return;
-      } else if (a === 'open-text-editor' && b) { await openFullTextEditorForBlock(b); return; }
-      else if (a === 'apply-starter-variable' && b) {
+      } else if (a === 'open-text-editor' && b) {
+        await openFullTextEditorForBlock(b);
+        return;
+      } else if (a === 'apply-starter-variable' && b) {
         const starterId = el.dataset.starterId;
         const ex = VARIABLE_STARTER_EXAMPLES.find((s) => s.id === starterId);
         if (ex) {
@@ -1243,13 +1328,20 @@ export function setup(ctx: SpindleFrontendContext) {
           const curContent = b.content || '';
           b.content = curContent.trim() ? `${curContent.trim()}\n\n${snippetToInsert}` : snippetToInsert;
           persist();
-          state.notice = `Added variable “${newVar.label}” ({{var::${uniqueName}}}) to block.`;
+          state.notice = `Added variable “${newVar.label}” ({{var::${uniqueName}}}) to “${b.name}”.`;
         }
       } else if (a === 'insert-var-into-prompt' && b) {
         const varName = el.dataset.varName;
         if (varName) {
-          insertTextAtPromptCursor(`{{var::${varName}}}`);
-          state.notice = `Inserted {{var::${varName}}} into block content.`;
+          if (state.view === 'blocks') {
+            insertTextAtPromptCursor(`{{var::${varName}}}`);
+          } else {
+            const cur = (b.content || '').trim();
+            b.content = cur ? `${cur}\n\n{{var::${varName}}}` : `{{var::${varName}}}`;
+            persist();
+            render();
+          }
+          state.notice = `Inserted {{var::${varName}}} into “${b.name}”.`;
         }
         return;
       } else if (a === 'reset-block-variables' && b) {
@@ -1257,7 +1349,7 @@ export function setup(ctx: SpindleFrontendContext) {
           delete d.metadata.promptVariables[b.id];
           persist();
           render();
-          state.notice = 'Reset active variable values on this block to defaults.';
+          state.notice = 'Reset variable preview values on this block to defaults.';
         }
         return;
       } else if (a === 'copy-var-preview-output') {
@@ -1302,10 +1394,6 @@ export function setup(ctx: SpindleFrontendContext) {
           render();
         }
         return;
-      } else if (a === 'change-test-prompt-source') {
-        state.testPromptSource = (el as any).value || 'preset';
-        render();
-        return;
       } else if (a === 'set-test-turn-mode') {
         state.testTurnMode = el.dataset.mode || 'single';
         render();
@@ -1344,7 +1432,7 @@ export function setup(ctx: SpindleFrontendContext) {
         state.displayResult = '';
         state.reasoning = '';
         state.custom = '';
-        state.notice = 'Added reply to conversation thread. Type your next response below!';
+        state.notice = 'Added reply to conversation thread. Type your next response on the left!';
         render();
         setTimeout(() => {
           const allTextareas = root.querySelectorAll<HTMLTextAreaElement>('textarea[data-turn-field="content"]');
@@ -1555,10 +1643,18 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'apply-batch') {
         const batch = state.batchTranslation;
         const target = el.dataset.target!;
-        if (!batch || batch.target !== target || (target === 'source' ? state.importPreset : state.draft) !== batch.owner) throw new Error('The preset changed. Translate again.');
+        if (!batch || batch.target !== target || (target === 'source' ? state.importPreset : state.draft) !== batch.owner)
+          throw new Error('The preset changed. Translate again.');
         const list = target === 'source' ? state.importBlocks : state.draft.prompt_order;
         const pairs = batch.entries.map((entry: any) => ({ entry, block: list.find((item: any) => item.id === entry.id) }));
-        if (pairs.some(({ entry, block }: any) => !block || (entry.name !== undefined && (block.name || '') !== entry.original.name) || (entry.content !== undefined && (block.content || '') !== entry.original.content))) {
+        if (
+          pairs.some(
+            ({ entry, block }: any) =>
+              !block ||
+              (entry.name !== undefined && (block.name || '') !== entry.original.name) ||
+              (entry.content !== undefined && (block.content || '') !== entry.original.content),
+          )
+        ) {
           throw new Error('A block changed since translation. Translate again.');
         }
         for (const { entry, block } of pairs) applyTranslatedFields(block, entry);
@@ -1566,28 +1662,6 @@ export function setup(ctx: SpindleFrontendContext) {
         if (target === 'draft') persist();
         state.notice = target === 'draft' ? 'Translations applied to the draft.' : 'Translations ready to add; source preset unchanged.';
       } else if (a === 'discard-batch') state.batchTranslation = null;
-      else if (a === 'translate-source') {
-        const index = Number(el.dataset.index);
-        const block = state.importBlocks[index];
-        const presetId = state.importPreset;
-        if (!block) throw new Error('Select a source block first.');
-        state.translating = true;
-        render();
-        try {
-          const result = await translateFields(block, el.dataset.scope!);
-          if (state.importPreset === presetId) state.sourceTranslation = { presetId, index, ...result };
-        } finally {
-          state.translating = false;
-        }
-        state.notice = 'Translation ready to review.';
-      } else if (a === 'apply-source-translation') {
-        const t = state.sourceTranslation;
-        const block = state.importBlocks[Number(el.dataset.index)];
-        if (!t || t.presetId !== state.importPreset || t.index !== Number(el.dataset.index) || !block) throw new Error('The source block changed. Translate it again.');
-        applyTranslatedFields(block, t);
-        state.sourceTranslation = null;
-        state.notice = 'Translation ready to add.';
-      } else if (a === 'discard-source-translation') state.sourceTranslation = null;
       else if (a === 'translate') {
         if (!b) throw new Error('Select a block first.');
         const blockId = b.id;
@@ -1633,7 +1707,18 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'delete-checked-blocks' && d) {
         const count = state.selectedDraft.length;
         if (!count) return;
-        if (!(await askConfirm(root, modalRef, 'Delete Checked Blocks?', `Delete ${count} checked block(s) from your draft?`, 'danger', `Delete ${count} Block(s)`))) return;
+        if (
+          !(await askConfirm(
+            root,
+            modalRef,
+            'Delete Checked Blocks?',
+            `Delete ${count} checked block(s) from your draft?`,
+            'danger',
+            `Delete ${count} Block(s)`,
+          ))
+        ) {
+          return;
+        }
         const toRemove = new Set(state.selectedDraft);
         d.prompt_order = d.prompt_order.filter((blk: any) => !toRemove.has(blk.id));
         if (d.metadata?.promptVariables) {
@@ -1672,9 +1757,7 @@ export function setup(ctx: SpindleFrontendContext) {
           await saveChain;
           await request('draft', { draft: saved });
           await refresh();
-          state.notice = saved.provider === 'loom'
-            ? `Saved "${saved.name}" live to Lumiverse.`
-            : `Saved "${saved.name}".`;
+          state.notice = saved.provider === 'loom' ? `Saved "${saved.name}" live to Lumiverse.` : `Saved "${saved.name}".`;
         } finally {
           root.inert = false;
           root.removeAttribute('aria-busy');
@@ -1689,7 +1772,8 @@ export function setup(ctx: SpindleFrontendContext) {
         } else {
           if (!state.chatId) throw new Error('Choose a chat first.');
           const active = await request('active', { chatId: state.chatId, presetId: d.id, generationType: state.generationType });
-          if (active.preset_id && d.id && active.preset_id !== d.id) throw new Error('The selected chat uses a different preset. Open that preset first.');
+          if (active.preset_id && d.id && active.preset_id !== d.id)
+            throw new Error('The selected chat uses a different preset. Open that preset first.');
           for (const block of d.prompt_order) if (Object.hasOwn(active.block_states || {}, block.id)) block.enabled = active.block_states[block.id];
           persist();
           state.notice = `Applied active block states from ${active.source || 'profile'}.`;
@@ -1708,11 +1792,12 @@ export function setup(ctx: SpindleFrontendContext) {
           generationType: state.generationType,
         });
         state.assembled = result;
+        state.testOutputTab = 'xray';
         state.notice = 'Saved-preset dry run complete.';
         state.busy = false;
       } else if (a === 'preview' || a === 'run') {
         const isCustomSource = state.testPromptSource === 'custom';
-        if (!isCustomSource && !state.chatId) throw new Error('Choose a chat first.');
+        if (!isCustomSource && !state.chatId) throw new Error('Choose a Context Chat on the left first.');
         if (isCustomSource && !state.testCustomPrompt.trim() && !state.custom.trim()) {
           throw new Error('Type your custom prompt text or a custom test turn first.');
         }
@@ -1722,14 +1807,16 @@ export function setup(ctx: SpindleFrontendContext) {
         state.reasoning = '';
         state.lastUsage = null;
         state.assembled = null;
+        state.testOutputTab = a === 'preview' ? 'xray' : 'reply';
         const snapshot = structuredClone(d);
         const requestId = uid();
         state.activeRun = requestId;
-        const stagedTurns = state.testTurnMode === 'multi'
-          ? state.testTurns
-          : state.custom.trim()
-            ? [{ role: 'user', content: state.custom.trim() }]
-            : [];
+        const stagedTurns =
+          state.testTurnMode === 'multi'
+            ? state.testTurns
+            : state.custom.trim()
+              ? [{ role: 'user', content: state.custom.trim() }]
+              : [];
         render();
         await new Promise((resolve, reject) => {
           pending.set(requestId, {
@@ -1788,43 +1875,6 @@ export function setup(ctx: SpindleFrontendContext) {
         state.busy = false;
         state.activeRun = null;
       }
-      if (
-        ![
-          'refresh',
-          'save',
-          'save-copy',
-          'dry',
-          'profile',
-          'stop',
-          'collect-blocks',
-          'insert-template',
-          'quick-insert-template',
-          'quick-template-from-selected',
-          'delete-template',
-          'translate',
-          'apply-translation',
-          'save-preferences',
-          'translate-source',
-          'apply-source-translation',
-          'translate-batch',
-          'apply-batch',
-          'import-block',
-          'add-checked-imports',
-          'delete-checked-blocks',
-          'delete-row',
-          'delete-block',
-          'fill-dummy-turns',
-          'continue-test-dialogue',
-          'apply-starter-variable',
-          'toggle-authors-note',
-          'set-authors-note-preset',
-          'set-reply-view-mode',
-          'set-test-prompt-source',
-          'reset-block-variables',
-        ].includes(a)
-      ) {
-        state.notice = '';
-      }
       render();
     } catch (err: any) {
       state.busy = false;
@@ -1841,6 +1891,8 @@ export function setup(ctx: SpindleFrontendContext) {
     });
   });
 
+  // Immediate initial load so presets, chats, and connections are always populated
+  refresh().catch(() => {});
   render();
 
   return () => {

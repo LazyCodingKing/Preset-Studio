@@ -41,7 +41,6 @@ export async function syncSaveWithNativePresetEditor(
   isCopy: boolean,
 ): Promise<any> {
   const pe = ctx.ui?.presetEditor;
-  // If the native preset editor is actively open in the UI for this preset, sync into it first
   if (!isCopy && draftToSave.id && pe?.getState && pe?.updatePreset) {
     try {
       const peState = pe.getState();
@@ -65,7 +64,6 @@ export async function syncSaveWithNativePresetEditor(
     } catch (_) {}
   }
 
-  // Authoritative database persistence via Spindle Presets API
   return await request('save', {
     preset: { ...draftToSave, prompt_order: cloneBlocksForHost(draftToSave.prompt_order || []) },
     copy: isCopy,
@@ -79,6 +77,7 @@ export function mountPresetEditorLauncher(
   hasFullMount: boolean,
   tab: any,
   scheduleTokenCount: () => void,
+  refresh: () => Promise<void>,
   render: () => void,
 ): () => void {
   let toolbarHandle: { root: HTMLElement; destroy?: () => void } | null = null;
@@ -115,10 +114,16 @@ export function mountPresetEditorLauncher(
           state.dirty = false;
           state.historyPast = [structuredClone(hostDraft)];
           state.historyFuture = [];
-          scheduleTokenCount();
         }
-        if (hasFullMount) setFull(true);
-        else {
+        // Always refresh presets, chats, and connections when launching from the native editor
+        refresh()
+          .catch(() => {})
+          .finally(() => {
+            scheduleTokenCount();
+          });
+        if (hasFullMount) {
+          setFull(true);
+        } else {
           tab.activate?.();
           render();
         }
@@ -134,6 +139,7 @@ export function mountPresetEditorLauncher(
           if (hostDraft) {
             state.draft = hostDraft;
             state.savedFingerprint = computeDraftFingerprint(hostDraft);
+            scheduleTokenCount();
             render();
           }
         }
@@ -144,12 +150,16 @@ export function mountPresetEditorLauncher(
   return () => {
     unsubPresetEditor?.();
     if (toolbarHandle?.destroy) {
-      try { toolbarHandle.destroy(); } catch (_) {}
+      try {
+        toolbarHandle.destroy();
+      } catch (_) {}
       toolbarHandle = null;
       toolbarRoot = null;
     } else if (toolbarRoot) {
       toolbarRoot.replaceChildren();
-      try { toolbarRoot.remove(); } catch (_) {}
+      try {
+        toolbarRoot.remove();
+      } catch (_) {}
       toolbarRoot = null;
     }
   };

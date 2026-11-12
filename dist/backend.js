@@ -6,11 +6,16 @@ async function changeTemplates(userId, mutate) {
   const key = userId || "owner";
   const prior = templateQueues.get(key) || Promise.resolve();
   const task = prior.catch(() => {}).then(async () => {
-    const items = await spindle.userStorage.getJson("templates.json", { fallback: [], userId });
+    const items = await spindle.userStorage.getJson("templates.json", {
+      fallback: [],
+      ...userId ? { userId } : {}
+    });
     if (!Array.isArray(items))
       throw new Error("Template library is invalid.");
     const next = mutate(items);
-    await spindle.userStorage.setJson("templates.json", next, { userId });
+    await spindle.userStorage.setJson("templates.json", next, {
+      ...userId ? { userId } : {}
+    });
     return next;
   });
   templateQueues.set(key, task);
@@ -104,7 +109,7 @@ function restoreMacros(text, tokens) {
 async function translateOneField(text, language, connectionId, userId) {
   const protectedText = protectMacros(text);
   const result = await spindle.generate.quiet({
-    userId,
+    ...userId ? { userId } : {},
     ...connectionId ? { connection_id: connectionId } : {},
     reasoning: { source: "off" },
     messages: [
@@ -137,7 +142,7 @@ async function translatePackedChunk(items, language, connectionId, userId) {
   });
   try {
     const result = await spindle.generate.quiet({
-      userId,
+      ...userId ? { userId } : {},
       ...connectionId ? { connection_id: connectionId } : {},
       reasoning: { source: "off" },
       messages: [
@@ -195,7 +200,7 @@ async function injectAuthorsNote(messages, breakdown, authorsNote, chatId, userI
     const resolved = await spindle.macros.resolve(rawContent, {
       ...chatId ? { chatId: String(chatId) } : {},
       commit: false,
-      userId
+      ...userId ? { userId } : {}
     });
     if (typeof resolved?.text === "string")
       resolvedContent = resolved.text;
@@ -215,12 +220,12 @@ async function injectAuthorsNote(messages, breakdown, authorsNote, chatId, userI
   });
 }
 async function applyDisplayRegexIfPermitted(content, chatId, userId) {
-  if (!content || !spindle.permissions.has("regex_scripts"))
+  if (!content || !spindle.permissions?.has?.("regex_scripts"))
     return content;
   try {
     let characterId;
-    if (chatId && spindle.permissions.has("chats")) {
-      const chat = await spindle.chats.get(chatId, userId).catch(() => null);
+    if (chatId && spindle.permissions?.has?.("chats")) {
+      const chat = await spindle.chats.get(chatId, ...userId ? [userId] : []).catch(() => null);
       if (chat?.character_id)
         characterId = chat.character_id;
     }
@@ -246,7 +251,7 @@ async function applyDisplayRegexIfPermitted(content, chatId, userId) {
             ...chatId ? { chatId } : {},
             ...characterId ? { characterId } : {},
             commit: false,
-            userId
+            ...userId ? { userId } : {}
           });
           if (res?.text) {
             findPattern = script.substitute_macros === "escaped" ? res.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : res.text;
@@ -254,7 +259,7 @@ async function applyDisplayRegexIfPermitted(content, chatId, userId) {
         }
         const flags = typeof script.flags === "string" ? script.flags : "g";
         const regex = new RegExp(findPattern, flags);
-        let replacement = script.replace_string ?? "";
+        const replacement = script.replace_string ?? "";
         current = current.replace(regex, (...args) => {
           let out = replacement;
           if (Array.isArray(script.trim_strings) && script.trim_strings.length > 0) {
@@ -283,7 +288,7 @@ async function applyDisplayRegexIfPermitted(content, chatId, userId) {
             ...chatId ? { chatId } : {},
             ...characterId ? { characterId } : {},
             commit: false,
-            userId
+            ...userId ? { userId } : {}
           });
           if (typeof afterRes?.text === "string")
             current = afterRes.text;
@@ -297,18 +302,27 @@ async function applyDisplayRegexIfPermitted(content, chatId, userId) {
 }
 function getPermissionSnapshot() {
   return {
-    presets: spindle.permissions.has("presets"),
-    chats: spindle.permissions.has("chats"),
-    generation: spindle.permissions.has("generation"),
-    app_manipulation: spindle.permissions.has("app_manipulation"),
-    regex_scripts: spindle.permissions.has("regex_scripts")
+    presets: Boolean(spindle.permissions?.has ? spindle.permissions.has("presets") : true),
+    chats: Boolean(spindle.permissions?.has ? spindle.permissions.has("chats") : true),
+    generation: Boolean(spindle.permissions?.has ? spindle.permissions.has("generation") : true),
+    app_manipulation: Boolean(spindle.permissions?.has ? spindle.permissions.has("app_manipulation") : true),
+    regex_scripts: Boolean(spindle.permissions?.has ? spindle.permissions.has("regex_scripts") : false)
   };
 }
-spindle.permissions.onChanged((detail) => {
-  spindle.log.info(`Permission "${detail.permission}" changed: ${detail.granted}`);
+spindle.permissions?.onChanged?.((detail) => {
+  spindle.log?.info?.(`Permission "${detail.permission}" changed: ${detail.granted}`);
   spindle.sendToFrontend({ type: "permissions", permissions: getPermissionSnapshot() });
 });
-spindle.commands.register([
+spindle.on?.("PRESET_CHANGED", (_payload, userId) => {
+  spindle.sendToFrontend({ type: "host-sync", reason: "preset_changed" }, userId);
+});
+spindle.on?.("CHAT_SWITCHED", (payload, userId) => {
+  spindle.sendToFrontend({ type: "host-sync", reason: "chat_switched", chatId: payload?.chatId || "" }, userId);
+});
+spindle.on?.("CONNECTION_PROFILE_LOADED", (_payload, userId) => {
+  spindle.sendToFrontend({ type: "host-sync", reason: "connection_changed" }, userId);
+});
+spindle.commands?.register?.([
   {
     id: "open-studio-full",
     label: "Preset Studio: Open Full Window",
@@ -324,7 +338,7 @@ spindle.commands.register([
     scope: "chat"
   }
 ]);
-spindle.commands.onInvoked((commandId, context) => {
+spindle.commands?.onInvoked?.((commandId, context) => {
   spindle.sendToFrontend({
     type: "command",
     commandId,
@@ -336,27 +350,39 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
   if (!msg || !msg.requestId || !msg.action)
     return;
   const id = msg.requestId;
+  const uOpt = userId ? { userId } : {};
+  const uArg = userId ? [userId] : [];
   try {
     let data;
     switch (msg.action) {
       case "load": {
-        const [presets, chats, active, connections, draft, templates, preferences] = await Promise.all([
-          spindle.permissions.has("presets") ? spindle.presets.list({ limit: 200, userId }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-          spindle.permissions.has("chats") ? spindle.chats.list({ limit: 200, userId }).catch(() => ({ data: [] })) : Promise.resolve({ data: [] }),
-          spindle.permissions.has("chats") ? spindle.chats.getActive(userId).catch(() => null) : Promise.resolve(null),
-          spindle.permissions.has("generation") ? spindle.connections.list(userId).catch(() => []) : Promise.resolve([]),
-          spindle.userStorage.getJson("draft.json", { fallback: null, userId }),
-          spindle.userStorage.getJson("templates.json", { fallback: [], userId }),
-          spindle.userStorage.getJson("preferences.json", { fallback: {}, userId })
+        const [presetsRes, chatsRes, activeChat, connections, draft, templates, preferences] = await Promise.all([
+          !spindle.permissions || spindle.permissions.has("presets") ? spindle.presets.list({ limit: 200, ...uOpt }).catch((err) => {
+            spindle.log?.warn?.(`presets.list failed: ${err?.message || err}`);
+            return { data: [] };
+          }) : Promise.resolve({ data: [] }),
+          !spindle.permissions || spindle.permissions.has("chats") ? spindle.chats.list({ limit: 200, ...uOpt }).catch((err) => {
+            spindle.log?.warn?.(`chats.list failed: ${err?.message || err}`);
+            return { data: [] };
+          }) : Promise.resolve({ data: [] }),
+          !spindle.permissions || spindle.permissions.has("chats") ? spindle.chats.getActive(...uArg).catch(() => null) : Promise.resolve(null),
+          !spindle.permissions || spindle.permissions.has("generation") ? spindle.connections.list(...uArg).catch(() => []) : Promise.resolve([]),
+          spindle.userStorage.getJson("draft.json", { fallback: null, ...uOpt }).catch(() => null),
+          spindle.userStorage.getJson("templates.json", { fallback: [], ...uOpt }).catch(() => []),
+          spindle.userStorage.getJson("preferences.json", { fallback: {}, ...uOpt }).catch(() => ({}))
         ]);
+        const chatList = Array.isArray(chatsRes?.data) ? [...chatsRes.data] : [];
+        if (activeChat && activeChat.id && !chatList.some((c) => c.id === activeChat.id)) {
+          chatList.unshift(activeChat);
+        }
         data = {
-          presets: presets.data,
-          chats: chats.data,
-          active,
-          connections,
+          presets: Array.isArray(presetsRes?.data) ? presetsRes.data : [],
+          chats: chatList,
+          active: activeChat || null,
+          connections: Array.isArray(connections) ? connections : [],
           draft,
-          templates,
-          preferences,
+          templates: Array.isArray(templates) ? templates : [],
+          preferences: preferences || {},
           permissions: getPermissionSnapshot()
         };
         break;
@@ -364,10 +390,10 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
       case "preferences": {
         const translationLanguage = typeof msg.translationLanguage === "string" ? msg.translationLanguage.trim().slice(0, 80) : "English";
         const translationConnection = typeof msg.translationConnection === "string" ? msg.translationConnection.trim().slice(0, 120) : "";
-        await spindle.userStorage.setJson("preferences.json", { translationLanguage, translationConnection }, { userId });
+        await spindle.userStorage.setJson("preferences.json", { translationLanguage, translationConnection }, uOpt);
         spindle.toast.success("Studio settings saved", {
           title: "Preset Studio",
-          ...userId ? { userId } : {}
+          ...uOpt
         });
         data = true;
         break;
@@ -386,30 +412,30 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         ]);
         spindle.toast.success(`Saved template "${t.name.trim().slice(0, 60)}"`, {
           title: "Template Library",
-          ...userId ? { userId } : {}
+          ...uOpt
         });
         break;
       }
       case "template-delete": {
         data = await changeTemplates(userId, (items) => items.filter((t) => t.id !== msg.id));
-        spindle.toast.info("Template deleted", { title: "Template Library", ...userId ? { userId } : {} });
+        spindle.toast.info("Template deleted", { title: "Template Library", ...uOpt });
         break;
       }
       case "get": {
-        if (!spindle.permissions.has("presets"))
+        if (spindle.permissions && !spindle.permissions.has("presets"))
           throw new Error('Enable the "presets" permission to load presets.');
-        data = await spindle.presets.get(msg.id, userId);
+        data = await spindle.presets.get(msg.id, ...uArg);
         break;
       }
       case "active": {
-        if (!spindle.permissions.has("presets")) {
+        if (spindle.permissions && !spindle.permissions.has("presets")) {
           throw new Error('Enable the "presets" permission to inspect active block states.');
         }
         if (typeof spindle.presets.getActive === "function") {
-          data = await spindle.presets.getActive(msg.chatId, userId);
+          data = await spindle.presets.getActive(msg.chatId, ...uArg);
           break;
         }
-        if (!spindle.permissions.has("generation")) {
+        if (spindle.permissions && !spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to resolve active profile states via dry run.');
         }
         const dryRes = await spindle.generate.dryRun({
@@ -418,7 +444,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           generationType: msg.generationType || "normal"
         }, userId);
         const activeIds = new Set((dryRes.breakdown || []).filter((b) => b.blockId).map((b) => String(b.blockId)));
-        const targetPreset = msg.presetId ? await spindle.presets.get(msg.presetId, userId) : null;
+        const targetPreset = msg.presetId ? await spindle.presets.get(msg.presetId, ...uArg) : null;
         const block_states = {};
         for (const blk of targetPreset?.prompt_order || []) {
           if (blk.marker && blk.marker !== "category")
@@ -430,11 +456,11 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "draft":
-        await spindle.userStorage.setJson("draft.json", msg.draft, { userId });
+        await spindle.userStorage.setJson("draft.json", msg.draft, uOpt);
         data = true;
         break;
       case "save": {
-        if (!spindle.permissions.has("presets")) {
+        if (spindle.permissions && !spindle.permissions.has("presets")) {
           throw new Error('Enable the "presets" permission in Settings -> Extensions to save presets.');
         }
         const input = clean(msg.preset);
@@ -442,17 +468,17 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           throw new Error("Please give the preset a name before saving.");
         let savedPreset;
         if (msg.copy || !msg.preset.id) {
-          savedPreset = await spindle.presets.create(input, userId);
+          savedPreset = await spindle.presets.create(input, ...uArg);
         } else {
-          const existing = await spindle.presets.get(msg.preset.id, userId).catch(() => null);
+          const existing = await spindle.presets.get(msg.preset.id, ...uArg).catch(() => null);
           if (!existing) {
-            savedPreset = await spindle.presets.create(input, userId);
+            savedPreset = await spindle.presets.create(input, ...uArg);
           } else {
             const currentRev = typeof existing.cache_revision === "number" ? existing.cache_revision : typeof msg.preset.cache_revision === "number" ? msg.preset.cache_revision : 0;
-            savedPreset = await spindle.presets.update(msg.preset.id, { ...input, expected_cache_revision: currentRev }, userId);
+            savedPreset = await spindle.presets.update(msg.preset.id, { ...input, expected_cache_revision: currentRev }, ...uArg);
           }
         }
-        spindle.toast.success(`Saved "${savedPreset.name}"`, { title: "Preset Studio", ...userId ? { userId } : {} });
+        spindle.toast?.success?.(`Saved "${savedPreset.name}"`, { title: "Preset Studio", ...uOpt });
         data = savedPreset;
         break;
       }
@@ -460,7 +486,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         const title = typeof msg.title === "string" && msg.title.trim() ? msg.title.trim().slice(0, 120) : "Edit Prompt Block";
         const value = typeof msg.value === "string" ? msg.value : "";
         const placeholder = typeof msg.placeholder === "string" ? msg.placeholder.slice(0, 240) : "Write prompt instructions and {{macros}}\u2026";
-        data = await spindle.textEditor.open({ title, value, placeholder, userId });
+        data = await spindle.textEditor.open({ title, value, placeholder, ...uOpt });
         break;
       }
       case "macro-preview": {
@@ -473,15 +499,15 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           ...msg.chatId ? { chatId: String(msg.chatId) } : {},
           ...msg.characterId ? { characterId: String(msg.characterId) } : {},
           commit: false,
-          userId
+          ...uOpt
         });
         break;
       }
       case "count-tokens": {
         const rawTexts = Array.isArray(msg.texts) ? msg.texts.slice(0, 256) : [];
         let explicitModel;
-        if (msg.connectionId && spindle.permissions.has("generation")) {
-          const conn = await spindle.connections.get(String(msg.connectionId), userId);
+        if (msg.connectionId && (!spindle.permissions || spindle.permissions.has("generation"))) {
+          const conn = await spindle.connections.get(String(msg.connectionId), ...uArg).catch(() => null);
           if (conn?.model)
             explicitModel = conn.model;
         }
@@ -495,14 +521,14 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           try {
             const res = await spindle.tokens.countText(text, {
               ...explicitModel ? { model: explicitModel } : { modelSource: "main" },
-              userId
+              ...uOpt
             });
             tokenizerName = res.tokenizer_name || tokenizerName;
             approximate = Boolean(res.approximate);
             resolvedModel = res.model || resolvedModel;
             return res.total_tokens;
           } catch {
-            return Math.ceil(text.length / 4);
+            return Math.max(1, Math.ceil(text.length / 4));
           }
         }));
         data = { counts, tokenizerName, approximate, model: resolvedModel };
@@ -512,16 +538,16 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         const kind = ["success", "info", "warning", "error"].includes(msg.kind) ? msg.kind : "info";
         const text = typeof msg.message === "string" ? msg.message.trim().slice(0, 240) : "";
         if (text) {
-          spindle.toast[kind](text, {
+          spindle.toast?.[kind]?.(text, {
             ...typeof msg.title === "string" && msg.title.trim() ? { title: msg.title.trim().slice(0, 80) } : {},
-            ...userId ? { userId } : {}
+            ...uOpt
           });
         }
         data = true;
         break;
       }
       case "translate": {
-        if (!spindle.permissions.has("generation")) {
+        if (spindle.permissions && !spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to translate blocks.');
         }
         if (typeof msg.text !== "string" || !msg.text.trim())
@@ -534,7 +560,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "translate-batch": {
-        if (!spindle.permissions.has("generation")) {
+        if (spindle.permissions && !spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to translate blocks.');
         }
         const language = typeof msg.language === "string" ? msg.language.trim() : "";
@@ -605,7 +631,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "dry": {
-        if (!spindle.permissions.has("generation")) {
+        if (spindle.permissions && !spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to run a dry run.');
         }
         const dryRes = await spindle.generate.dryRun({
@@ -618,7 +644,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
         break;
       }
       case "cancel": {
-        const controller = runs.get(userId + ":" + msg.runId);
+        const controller = runs.get((userId || "owner") + ":" + msg.runId);
         if (controller)
           controller.abort();
         data = true;
@@ -626,14 +652,14 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
       }
       case "preview":
       case "run": {
-        if (!spindle.permissions.has("generation")) {
+        if (spindle.permissions && !spindle.permissions.has("generation")) {
           throw new Error('Enable the "generation" permission to preview or generate test replies.');
         }
         const isCustomSource = msg.promptSource === "custom";
         if (!isCustomSource && !msg.chatId)
           throw new Error("Select a chat for context.");
         const controller = new AbortController;
-        const key = userId + ":" + id;
+        const key = (userId || "owner") + ":" + id;
         runs.set(key, controller);
         try {
           let messages = [];
@@ -673,7 +699,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
                 generationType: msg.generationType || "normal",
                 promptVariables: {},
                 signal: controller.signal
-              }, userId);
+              }, ...uArg);
               assembledData = assembled;
               messages = [...assembled.messages];
               breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
@@ -697,7 +723,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
               generationType: msg.generationType || "normal",
               promptVariables: msg.preset?.metadata?.promptVariables || {},
               signal: controller.signal
-            }, userId);
+            }, ...uArg);
             assembledData = assembled;
             messages = [...assembled.messages];
             breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
@@ -723,7 +749,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
               messages,
               parameters: msg.preset?.parameters || {},
               ...msg.connectionId ? { connection_id: msg.connectionId } : {},
-              ...userId ? { userId } : {},
+              ...uOpt,
               signal: controller.signal
             };
             for await (const chunk of spindle.generate.quietStream(args)) {
@@ -761,9 +787,9 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
       return;
     }
     const message = error?.message || String(error);
-    spindle.log.warn(`Request "${msg.action}" failed: ${message}`);
+    spindle.log?.warn?.(`Request "${msg.action}" failed: ${message}`);
     reply(userId, id, "error", { error: message }, frontendSessionId);
   }
 });
 spindle.sendToFrontend({ type: "backend-ready", permissions: getPermissionSnapshot() });
-spindle.log.info("Preset Studio backend loaded");
+spindle.log?.info?.("Preset Studio backend loaded");
