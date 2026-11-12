@@ -770,8 +770,18 @@ export function renderXRayBreakdownInline(state: any): string {
 }
 
 export function renderTestTab(state: any): string {
-  const runA = state.runs[state.compareA];
-  const runB = state.runs[state.compareB];
+  const runs: any[] = Array.isArray(state.runs) ? state.runs : [];
+  const activeRunIdx =
+    typeof state.viewingRunIndex === 'number' && state.viewingRunIndex >= 0 && state.viewingRunIndex < runs.length
+      ? state.viewingRunIndex
+      : runs.length - 1;
+  const viewedRun = !state.busy && activeRunIdx >= 0 ? runs[activeRunIdx] : null;
+  const activeReasoning = state.busy ? state.reasoning : (viewedRun?.reasoning ?? state.reasoning);
+  const activeUsage = state.busy ? state.lastUsage : (viewedRun?.usage ?? state.lastUsage);
+  const hasReplyContent = Boolean(state.busy ? state.result : (viewedRun?.content || state.result));
+
+  const runA = runs[state.compareA];
+  const runB = runs[state.compareB];
   const isCustomPromptMode = state.testPromptSource === 'custom';
   const isMultiTurn = state.testTurnMode === 'multi';
   const turns = Array.isArray(state.testTurns) ? state.testTurns : [];
@@ -871,7 +881,8 @@ export function renderTestTab(state: any): string {
           <div class="ps-between" style="margin-top:12px;gap:8px">
             <button type="button" class="ps-btn-sm" data-action="preview" ${state.busy ? 'disabled' : ''}>🔬 Inspect Prompt X-Ray</button>
             <div class="ps-actions">
-              <button type="button" class="ps-primary" style="min-height:38px;padding:6px 16px" data-action="run" ${state.busy ? 'disabled' : ''}>▶ Generate Reply</button>
+              ${runs.length > 0 ? `<button type="button" class="ps-btn-sm" data-action="run" ${state.busy ? 'disabled' : ''} title="Re-run with your latest preset/prompt edits and add a new swipe to history">↻ Regenerate</button>` : ''}
+              <button type="button" class="ps-primary" style="min-height:38px;padding:6px 16px" data-action="run" ${state.busy ? 'disabled' : ''}>▶ ${runs.length > 0 ? 'New Run' : 'Generate Reply'}</button>
               <button type="button" class="ps-danger-btn ps-btn-sm" data-action="stop" ${!state.busy ? 'disabled' : ''}>■ Stop</button>
             </div>
           </div>
@@ -927,31 +938,64 @@ export function renderTestTab(state: any): string {
 
             ${outTab === 'reply' ? `
               <div class="ps-actions">
-                ${state.lastUsage ? `<span class="ps-pill ps-pill-ok">P: ${state.lastUsage.prompt_tokens || 0}t · C: ${state.lastUsage.completion_tokens || 0}t</span>` : ''}
+                ${activeUsage ? `<span class="ps-pill ps-pill-ok">P: ${activeUsage.prompt_tokens || 0}t · C: ${activeUsage.completion_tokens || 0}t</span>` : ''}
                 <button type="button" class="ps-btn-sm ${isChatView ? 'ps-primary' : ''}" data-action="set-reply-view-mode" data-mode="chat">Chat</button>
                 <button type="button" class="ps-btn-sm ${!isChatView ? 'ps-primary' : ''}" data-action="set-reply-view-mode" data-mode="raw">Raw</button>
-                <button type="button" class="ps-btn-sm" data-action="copy-test-reply" ${!state.result ? 'disabled' : ''}>📋</button>
+                <button type="button" class="ps-btn-sm" data-action="copy-test-reply" ${!hasReplyContent ? 'disabled' : ''} title="Copy this reply">📋</button>
               </div>
             ` : ''}
           </div>
 
           ${outTab === 'reply' ? `
-            ${state.reasoning ? `
+            <!-- Swipe / Run History Deck Bar -->
+            ${runs.length > 0 ? `
+              <div class="ps-card ps-between" style="margin-bottom:10px;padding:7px 10px;background:var(--ps-bg)">
+                <div class="ps-row">
+                  <button type="button" class="ps-btn-sm ps-btn-icon" data-action="swipe-run-prev" ${state.busy || activeRunIdx <= 0 ? 'disabled' : ''} title="Previous test run">◀</button>
+                  <span style="font-size:0.82rem;font-weight:650">
+                    Run #${activeRunIdx + 1} of ${runs.length}
+                  </span>
+                  <button type="button" class="ps-btn-sm ps-btn-icon" data-action="swipe-run-next" ${state.busy || activeRunIdx >= runs.length - 1 ? 'disabled' : ''} title="Next test run">▶</button>
+                  ${viewedRun ? `
+                    <span class="ps-pill">${esc(viewedRun.time)}</span>
+                    <span class="ps-pill ps-pill-accent" title="Preset & active blocks used for this run">${esc(viewedRun.presetName || viewedRun.snapshot?.name || 'Draft')} · ${viewedRun.activeBlocksCount ?? '?'} blk</span>
+                  ` : ''}
+                </div>
+                <div class="ps-actions">
+                  <button type="button" class="ps-btn-sm ps-primary" data-action="run" ${state.busy ? 'disabled' : ''} title="Regenerate using your latest preset/prompt edits">↻ Regenerate</button>
+                  ${runs.length >= 2 ? `<button type="button" class="ps-btn-sm" data-action="compare-current-swipe" ${state.busy ? 'disabled' : ''} title="Compare this run side-by-side with the previous run">⚖️ Diff</button>` : ''}
+                  ${viewedRun?.snapshot ? `<button type="button" class="ps-btn-sm" data-action="restore-run-snapshot" data-run-idx="${activeRunIdx}" ${state.busy ? 'disabled' : ''} title="Restore your preset draft to the exact blocks & samplers used in Run #${activeRunIdx + 1}">↺ Restore Preset</button>` : ''}
+                  <button type="button" class="ps-btn-sm ps-danger-btn ps-btn-icon" data-action="delete-run-item" data-run-idx="${activeRunIdx}" ${state.busy ? 'disabled' : ''} title="Delete this run from history">🗑</button>
+                </div>
+              </div>
+              ${viewedRun?.userPromptPreview ? `
+                <div class="ps-muted" style="font-size:0.76rem;margin-bottom:8px;padding:0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                  <strong>Prompted:</strong> “${esc(viewedRun.userPromptPreview)}”
+                </div>
+              ` : ''}
+            ` : ''}
+
+            ${activeReasoning ? `
               <details class="ps-collapsible" style="margin:0 0 10px 0" open>
                 <summary class="ps-between">
                   <span>💭 Chain-of-Thought Reasoning</span>
                   <button type="button" class="ps-btn-sm" data-action="copy-test-reasoning">📋 Copy</button>
                 </summary>
-                <div class="ps-result ps-reasoning-box" style="max-height:160px">${esc(state.reasoning)}</div>
+                <div class="ps-result ps-reasoning-box" style="max-height:160px">${esc(activeReasoning)}</div>
               </details>
             ` : ''}
 
             <div class="ps-chat-bubble" id="ps-chat-reply-bubble" aria-live="polite"></div>
 
-            ${state.result && !state.busy ? `
+            ${hasReplyContent && !state.busy ? `
               <div class="ps-between" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--ps-border)">
-                <span class="ps-muted">Continue testing multi-turn conversation with this reply:</span>
-                <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">💬 Append to Thread & Reply →</button>
+                <div class="ps-actions">
+                  ${runs.length > 1 ? `<button type="button" class="ps-btn-sm ps-danger-btn" data-action="clear-run-history">Clear All ${runs.length} Runs</button>` : ''}
+                </div>
+                <div class="ps-actions">
+                  <button type="button" class="ps-btn-sm" data-action="run">↻ Regenerate Turn</button>
+                  <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">💬 Append to Thread & Reply →</button>
+                </div>
               </div>
             ` : ''}
           ` : outTab === 'xray' ? `

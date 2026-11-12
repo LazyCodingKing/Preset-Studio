@@ -109,6 +109,7 @@ export function setup(ctx: SpindleFrontendContext) {
     },
     testReplyViewMode: 'chat',
     runs: [],
+    viewingRunIndex: -1,
     compareA: 0,
     compareB: 1,
     assembled: null,
@@ -872,7 +873,17 @@ export function setup(ctx: SpindleFrontendContext) {
     if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply') {
       const bubbleEl = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
       if (bubbleEl) {
-        const textToRender = state.displayResult || state.result;
+        const runs = Array.isArray(state.runs) ? state.runs : [];
+        const idx =
+          typeof state.viewingRunIndex === 'number' && state.viewingRunIndex >= 0 && state.viewingRunIndex < runs.length
+            ? state.viewingRunIndex
+            : runs.length - 1;
+        const viewed = !state.busy && idx >= 0 ? runs[idx] : null;
+        const textToRender = state.busy
+          ? state.displayResult || state.result
+          : viewed
+            ? viewed.displayContent || viewed.content || ''
+            : state.displayResult || state.result;
         renderChatPreviewInto(bubbleEl, textToRender, state.testReplyViewMode === 'raw');
       }
     }
@@ -907,6 +918,21 @@ export function setup(ctx: SpindleFrontendContext) {
           state.preferencesLoaded = true;
         }
         state.templates = Array.isArray(data.templates) ? data.templates : [];
+        if (!state.runs.length && Array.isArray(data.testHistory) && data.testHistory.length) {
+          state.runs = data.testHistory;
+          state.viewingRunIndex = state.runs.length - 1;
+          const latest = state.runs[state.viewingRunIndex];
+          if (latest && !state.result) {
+            state.result = latest.content || '';
+            state.displayResult = latest.displayContent || latest.content || '';
+            state.reasoning = latest.reasoning || '';
+            state.lastUsage = latest.usage || null;
+          }
+          if (state.runs.length >= 2) {
+            state.compareA = state.runs.length - 2;
+            state.compareB = state.runs.length - 1;
+          }
+        }
         // Ensure a valid chatId is selected if available
         if (!state.chatId || !state.chats.some((c: any) => c.id === state.chatId)) {
           state.chatId = data.active?.id || state.chats[0]?.id || '';
@@ -1370,6 +1396,100 @@ export function setup(ctx: SpindleFrontendContext) {
           state.authorsNote.enabled = true;
           render();
         }
+        return;
+      } else if (a === 'swipe-run-prev') {
+        const cur = state.viewingRunIndex >= 0 ? state.viewingRunIndex : state.runs.length - 1;
+        if (cur > 0) {
+          state.viewingRunIndex = cur - 1;
+          const r = state.runs[state.viewingRunIndex];
+          if (r) {
+            state.result = r.content || '';
+            state.displayResult = r.displayContent || r.content || '';
+            state.reasoning = r.reasoning || '';
+            state.lastUsage = r.usage || null;
+          }
+          render();
+        }
+        return;
+      } else if (a === 'swipe-run-next') {
+        const cur = state.viewingRunIndex >= 0 ? state.viewingRunIndex : state.runs.length - 1;
+        if (cur < state.runs.length - 1) {
+          state.viewingRunIndex = cur + 1;
+          const r = state.runs[state.viewingRunIndex];
+          if (r) {
+            state.result = r.content || '';
+            state.displayResult = r.displayContent || r.content || '';
+            state.reasoning = r.reasoning || '';
+            state.lastUsage = r.usage || null;
+          }
+          render();
+        }
+        return;
+      } else if (a === 'compare-current-swipe') {
+        const cur = state.viewingRunIndex >= 0 ? state.viewingRunIndex : state.runs.length - 1;
+        state.compareB = cur;
+        state.compareA = Math.max(0, cur - 1);
+        state.testOutputTab = 'compare';
+        render();
+        return;
+      } else if (a === 'restore-run-snapshot') {
+        const idx = Number(el.dataset.runIdx);
+        const targetRun = state.runs[idx];
+        if (!targetRun?.snapshot) return;
+        if (
+          !(await askConfirm(
+            root,
+            modalRef,
+            `Restore Preset from Run #${idx + 1}?`,
+            `Replace your current draft blocks, variables, and samplers with the exact snapshot used in Run #${idx + 1} (${targetRun.time})? (You can still Undo with Ctrl+Z.)`,
+            'warning',
+            'Restore Snapshot',
+          ))
+        ) {
+          return;
+        }
+        state.draft = ensureUniqueBlockIds(structuredClone(targetRun.snapshot));
+        state.selected = 0;
+        persist();
+        state.notice = `Restored preset draft to Run #${idx + 1} (${targetRun.time}).`;
+        render();
+        return;
+      } else if (a === 'delete-run-item') {
+        const idx = Number(el.dataset.runIdx);
+        if (idx >= 0 && idx < state.runs.length) {
+          state.runs.splice(idx, 1);
+          state.viewingRunIndex = Math.max(-1, Math.min(idx, state.runs.length - 1));
+          const curRun = state.viewingRunIndex >= 0 ? state.runs[state.viewingRunIndex] : null;
+          state.result = curRun?.content || '';
+          state.displayResult = curRun?.displayContent || curRun?.content || '';
+          state.reasoning = curRun?.reasoning || '';
+          state.lastUsage = curRun?.usage || null;
+          request('test-history-save', { runs: state.runs }).catch(() => {});
+          render();
+        }
+        return;
+      } else if (a === 'clear-run-history') {
+        if (
+          !(await askConfirm(
+            root,
+            modalRef,
+            'Clear Test History?',
+            `Remove all ${state.runs.length} recorded test runs from history?`,
+            'danger',
+            'Clear History',
+          ))
+        ) {
+          return;
+        }
+        state.runs = [];
+        state.viewingRunIndex = -1;
+        state.result = '';
+        state.displayResult = '';
+        state.reasoning = '';
+        state.lastUsage = null;
+        request('test-history-save', { runs: [] }).catch(() => {});
+        state.notice = 'Cleared test run history.';
+        render();
         return;
       } else if (a === 'set-reply-view-mode') {
         state.testReplyViewMode = el.dataset.mode || 'chat';
@@ -1859,17 +1979,30 @@ export function setup(ctx: SpindleFrontendContext) {
             if (result?.reasoning && !state.reasoning) state.reasoning = result.reasoning;
             state.result = result?.content || state.result;
             state.displayResult = result?.displayContent || state.result;
+            const activeBlocksCount = (snapshot?.prompt_order || []).filter((blk: any) => blk.enabled && blk.marker !== 'category').length;
+            const userPromptPreview =
+              state.testTurnMode === 'multi' && state.testTurns.length
+                ? state.testTurns[state.testTurns.length - 1]?.content || ''
+                : state.custom.trim() || (state.testPromptSource === 'custom' ? state.testCustomPrompt.trim() : '');
             state.runs.push({
               time: new Date().toLocaleTimeString(),
               connection: state.connections.find((c: any) => c.id === state.connectionId)?.name || 'Active connection',
+              presetName: snapshot?.name || 'Draft',
+              activeBlocksCount,
+              userPromptPreview: userPromptPreview.slice(0, 120),
               content: state.result,
+              displayContent: state.displayResult,
               reasoning: state.reasoning,
+              usage: state.lastUsage,
               snapshot,
             });
+            if (state.runs.length > 15) state.runs.shift();
+            state.viewingRunIndex = state.runs.length - 1;
             if (state.runs.length >= 2) {
               state.compareA = state.runs.length - 2;
               state.compareB = state.runs.length - 1;
             }
+            request('test-history-save', { runs: state.runs }).catch(() => {});
           }
         });
         state.busy = false;

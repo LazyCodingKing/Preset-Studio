@@ -410,7 +410,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
     let data: any;
     switch (msg.action) {
       case 'load': {
-        const [presetsRes, chatsRes, activeChat, connections, draft, templates, preferences] = await Promise.all([
+        const [presetsRes, chatsRes, activeChat, connections, draft, templates, preferences, testHistory] = await Promise.all([
           !spindle.permissions || spindle.permissions.has('presets')
             ? spindle.presets.list({ limit: 200, ...uOpt } as any).catch((err) => {
                 spindle.log?.warn?.(`presets.list failed: ${err?.message || err}`);
@@ -432,6 +432,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           spindle.userStorage.getJson('draft.json', { fallback: null, ...uOpt }).catch(() => null),
           spindle.userStorage.getJson('templates.json', { fallback: [], ...uOpt }).catch(() => []),
           spindle.userStorage.getJson('preferences.json', { fallback: {}, ...uOpt }).catch(() => ({})),
+          spindle.userStorage.getJson('test_history.json', { fallback: [], ...uOpt }).catch(() => []),
         ]);
 
         const chatList = Array.isArray(chatsRes?.data) ? [...chatsRes.data] : [];
@@ -447,8 +448,15 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           draft,
           templates: Array.isArray(templates) ? templates : [],
           preferences: preferences || {},
+          testHistory: Array.isArray(testHistory) ? testHistory.slice(-15) : [],
           permissions: getPermissionSnapshot(),
         };
+        break;
+      }
+      case 'test-history-save': {
+        const runsToSave = Array.isArray(msg.runs) ? msg.runs.slice(-15) : [];
+        await spindle.userStorage.setJson('test_history.json', runsToSave, uOpt);
+        data = true;
         break;
       }
       case 'preferences': {

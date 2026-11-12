@@ -356,7 +356,7 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
     let data;
     switch (msg.action) {
       case "load": {
-        const [presetsRes, chatsRes, activeChat, connections, draft, templates, preferences] = await Promise.all([
+        const [presetsRes, chatsRes, activeChat, connections, draft, templates, preferences, testHistory] = await Promise.all([
           !spindle.permissions || spindle.permissions.has("presets") ? spindle.presets.list({ limit: 200, ...uOpt }).catch((err) => {
             spindle.log?.warn?.(`presets.list failed: ${err?.message || err}`);
             return { data: [] };
@@ -369,7 +369,8 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           !spindle.permissions || spindle.permissions.has("generation") ? spindle.connections.list(...uArg).catch(() => []) : Promise.resolve([]),
           spindle.userStorage.getJson("draft.json", { fallback: null, ...uOpt }).catch(() => null),
           spindle.userStorage.getJson("templates.json", { fallback: [], ...uOpt }).catch(() => []),
-          spindle.userStorage.getJson("preferences.json", { fallback: {}, ...uOpt }).catch(() => ({}))
+          spindle.userStorage.getJson("preferences.json", { fallback: {}, ...uOpt }).catch(() => ({})),
+          spindle.userStorage.getJson("test_history.json", { fallback: [], ...uOpt }).catch(() => [])
         ]);
         const chatList = Array.isArray(chatsRes?.data) ? [...chatsRes.data] : [];
         if (activeChat && activeChat.id && !chatList.some((c) => c.id === activeChat.id)) {
@@ -383,8 +384,15 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
           draft,
           templates: Array.isArray(templates) ? templates : [],
           preferences: preferences || {},
+          testHistory: Array.isArray(testHistory) ? testHistory.slice(-15) : [],
           permissions: getPermissionSnapshot()
         };
+        break;
+      }
+      case "test-history-save": {
+        const runsToSave = Array.isArray(msg.runs) ? msg.runs.slice(-15) : [];
+        await spindle.userStorage.setJson("test_history.json", runsToSave, uOpt);
+        data = true;
         break;
       }
       case "preferences": {
