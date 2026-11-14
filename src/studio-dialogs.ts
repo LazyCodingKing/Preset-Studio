@@ -16,21 +16,28 @@ export function closeModalRef(modalRef: ModalRef): void {
   }
 }
 
-export function askConfirm(
-  root: HTMLElement,
+export async function askConfirm(
+  dialogHost: HTMLElement,
   modalRef: ModalRef,
   title: string,
   message: string,
   variant: 'warning' | 'danger' | 'info' = 'warning',
   confirmLabel = 'Confirm',
+  showConfirmFn?: (opts: any) => Promise<{ confirmed: boolean }>,
 ): Promise<boolean> {
   closeModalRef(modalRef);
+  if (typeof showConfirmFn === 'function') {
+    try {
+      const res = await showConfirmFn({ title, message, variant, confirmLabel, cancelLabel: 'Cancel' });
+      return Boolean(res?.confirmed);
+    } catch (_) {}
+  }
   const returnFocus = document.activeElement as HTMLElement | null;
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     dialog.className = 'ps-native-dialog';
     const isDanger = variant === 'danger';
-    dialog.innerHTML = `<h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? 'ps-danger-btn' : 'ps-primary'}" style="${isDanger ? 'background:var(--ps-danger);color:#14111c;font-weight:700' : ''}" data-confirm-result="ok">${esc(confirmLabel)}</button></div>`;
+    dialog.innerHTML = `<h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? 'ps-danger-btn' : 'ps-primary'}" style="${isDanger ? 'background:var(--ps-danger);color:var(--ps-accent-contrast);font-weight:700' : ''}" data-confirm-result="ok">${esc(confirmLabel)}</button></div>`;
     const finish = (val: boolean) => {
       if (modalRef.current === dialog) modalRef.current = null;
       try { dialog.close(); } catch (_) {}
@@ -45,7 +52,7 @@ export function askConfirm(
       const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-confirm-result]');
       if (btn) finish(btn.dataset.confirmResult === 'ok');
     });
-    root.appendChild(dialog);
+    dialogHost.appendChild(dialog);
     modalRef.current = dialog;
     if (typeof dialog.showModal === 'function') dialog.showModal();
     else dialog.setAttribute('open', '');
@@ -313,6 +320,7 @@ export function openBlockContextMenu(
   `;
   const dismiss = () => {
     document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onMenuKey, true);
     if (modalRef.current === menu) modalRef.current = null;
     menu.remove();
   };
@@ -320,7 +328,16 @@ export function openBlockContextMenu(
   const onOutside = (ev: Event) => {
     if (!menu.contains(ev.target as Node)) dismiss();
   };
-  setTimeout(() => document.addEventListener('pointerdown', onOutside, true), 0);
+  const onMenuKey = (ev: KeyboardEvent) => {
+    if (ev.key === 'Escape') {
+      ev.stopPropagation();
+      dismiss();
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('pointerdown', onOutside, true);
+    document.addEventListener('keydown', onMenuKey, true);
+  }, 0);
   menu.addEventListener('click', async (ev) => {
     const btn = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-ctx-key]');
     if (!btn) return;

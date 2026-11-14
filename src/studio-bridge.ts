@@ -34,6 +34,22 @@ export function readHostPresetEditorDraft(ctx: any): any | null {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s.`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 export async function syncSaveWithNativePresetEditor(
   ctx: any,
   request: (action: string, payload?: any) => Promise<any>,
@@ -58,7 +74,12 @@ export async function syncSaveWithNativePresetEditor(
           },
         }));
         if (typeof pe.flush === 'function') {
-          await pe.flush();
+          await withTimeout(pe.flush(), 12_000, 'Native Preset Editor save');
+          const synced = await request('get', { id: draftToSave.id });
+          if (synced) {
+            await request('toast', { kind: 'success', title: 'Preset Studio', message: `Saved "${synced.name}"` }).catch(() => {});
+            return synced;
+          }
         }
       }
     } catch (_) {}
@@ -170,7 +191,7 @@ export function bindDragAndDropListeners(
   state: any,
   moveBlock: (from: number, to: number) => void,
   clearLongPress: () => void,
-): void {
+): () => void {
   let dragFromIndex: number | null = null;
   let touchDragIndex: number | null = null;
 
@@ -179,6 +200,15 @@ export function bindDragAndDropListeners(
       el.classList.remove('ps-dragging', 'ps-drag-over-top', 'ps-drag-over-bottom');
     });
   }
+
+  function resetDragState() {
+    dragFromIndex = null;
+    touchDragIndex = null;
+    clearDragIndicators();
+  }
+
+  const onWindowBlur = () => resetDragState();
+  window.addEventListener('blur', onWindowBlur);
 
   root.addEventListener('dragstart', (e) => {
     const target = e.target as HTMLElement;
@@ -269,7 +299,11 @@ export function bindDragAndDropListeners(
   });
 
   root.addEventListener('pointercancel', () => {
-    touchDragIndex = null;
-    clearDragIndicators();
+    resetDragState();
   });
+
+  return () => {
+    resetDragState();
+    window.removeEventListener('blur', onWindowBlur);
+  };
 }

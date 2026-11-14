@@ -325,29 +325,96 @@ export function resolveBlockVariablesPreview(block: any, savedBlockVars: Record<
     return varMap.get(name)!.rendered;
   });
 
+  const resolveAtom = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('.') && varMap.has(trimmed.slice(1))) {
+      return varMap.get(trimmed.slice(1))!.rendered;
+    }
+    return trimmed;
+  };
+
   const isTruthy = (cond: string): boolean => {
     let c = cond.trim();
     let negate = false;
-    if (c.startsWith('!')) {
-      negate = true;
+    while (c.startsWith('!')) {
+      negate = !negate;
       c = c.slice(1).trim();
     }
-    if (c.startsWith('.') && varMap.has(c.slice(1))) {
-      c = varMap.get(c.slice(1))!.rendered;
+    const cmpMatch = c.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    let result: boolean;
+    if (cmpMatch) {
+      const lhs = resolveAtom(cmpMatch[1]);
+      const op = cmpMatch[2];
+      const rhs = resolveAtom(cmpMatch[3]);
+      const ln = Number(lhs);
+      const rn = Number(rhs);
+      const numeric = lhs !== '' && rhs !== '' && Number.isFinite(ln) && Number.isFinite(rn);
+      if (op === '==') result = numeric ? ln === rn : lhs === rhs;
+      else if (op === '!=') result = numeric ? ln !== rn : lhs !== rhs;
+      else if (op === '>') result = numeric ? ln > rn : lhs > rhs;
+      else if (op === '<') result = numeric ? ln < rn : lhs < rhs;
+      else if (op === '>=') result = numeric ? ln >= rn : lhs >= rhs;
+      else result = numeric ? ln <= rn : lhs <= rhs;
+    } else {
+      const val = resolveAtom(c);
+      result = Boolean(val) && !['0', 'false', 'null', 'undefined', 'no', 'off'].includes(val.toLowerCase());
     }
-    const falsy = !c || ['0', 'false', 'null', 'undefined', 'no', 'off'].includes(c.toLowerCase());
-    return negate ? falsy : !falsy;
+    return negate ? !result : result;
   };
 
-  text = text.replace(/\{\{\s*if(?:::|\s+)([^{}]+?)\}\}([\s\S]*?)\{\{\s*\/if\s*\}\}/gi, (_m, cond, body) => {
-    const parts = String(body).split(/\{\{\s*else\s*\}\}/i);
-    return isTruthy(cond) ? parts[0] : (parts[1] ?? '');
-  });
+  for (let pass = 0; pass < 8; pass++) {
+    const next = text
+      .replace(/\{\{\s*if(?:::|\s+)([^{}]+?)\}\}((?:(?!\{\{\s*(?:if|unless)(?:::|\s+))[\s\S])*?)\{\{\s*\/if\s*\}\}/gi, (_m, cond, body) => {
+        const branches = String(body).split(/\{\{\s*(?:elseif|elif)(?:::|\s+)([^{}]+?)\}\}/i);
+        if (isTruthy(cond)) return branches[0].split(/\{\{\s*else\s*\}\}/i)[0];
+        for (let i = 1; i < branches.length; i += 2) {
+          const eCond = branches[i];
+          const eBody = branches[i + 1] ?? '';
+          if (isTruthy(eCond)) return eBody.split(/\{\{\s*else\s*\}\}/i)[0];
+        }
+        const tail = branches[branches.length - 1] ?? '';
+        const elseParts = tail.split(/\{\{\s*else\s*\}\}/i);
+        return elseParts.length > 1 ? elseParts[1] : '';
+      })
+      .replace(/\{\{\s*unless(?:::|\s+)([^{}]+?)\}\}((?:(?!\{\{\s*(?:if|unless)(?:::|\s+))[\s\S])*?)\{\{\s*\/unless\s*\}\}/gi, (_m, cond, body) => {
+        const parts = String(body).split(/\{\{\s*else\s*\}\}/i);
+        return !isTruthy(cond) ? parts[0] : (parts[1] ?? '');
+      });
+    if (next === text) break;
+    text = next;
+  }
 
   return text.trim();
 }
 
-const UNSAFE_HTML_TAGS = new Set(['SCRIPT', 'IFRAME', 'FRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE', 'META', 'LINK']);
+const UNSAFE_HTML_TAGS = new Set([
+  'SCRIPT',
+  'IFRAME',
+  'FRAME',
+  'OBJECT',
+  'EMBED',
+  'APPLET',
+  'BASE',
+  'META',
+  'LINK',
+  'NOSCRIPT',
+  'TEMPLATE',
+  'FOREIGNOBJECT',
+  'ANIMATE',
+  'SET',
+  'ANIMATETRANSFORM',
+]);
+const URI_ATTRS = new Set(['href', 'src', 'xlink:href', 'action', 'formaction', 'poster', 'data']);
+
+function isUnsafeUri(raw: string): boolean {
+  const normalized = raw.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+  return (
+    normalized.startsWith('javascript:') ||
+    normalized.startsWith('vbscript:') ||
+    normalized.startsWith('data:text/html') ||
+    normalized.startsWith('data:image/svg+xml')
+  );
+}
 
 function sanitizeHtmlFragment(rawHtml: string): DocumentFragment {
   const parser = new DOMParser();
@@ -356,15 +423,24 @@ function sanitizeHtmlFragment(rawHtml: string): DocumentFragment {
   const toRemove: Element[] = [];
   let node = walker.nextNode() as Element | null;
   while (node) {
-    if (UNSAFE_HTML_TAGS.has(node.tagName)) {
+    if (UNSAFE_HTML_TAGS.has(node.tagName.toUpperCase())) {
       toRemove.push(node);
     } else {
       for (const attr of Array.from(node.attributes)) {
         const name = attr.name.toLowerCase();
-        const val = attr.value.trim().toLowerCase();
-        if (name.startsWith('on') || ((name === 'href' || name === 'src' || name === 'xlink:href') && val.startsWith('javascript:'))) {
+        if (name.startsWith('on') || name === 'srcdoc') {
+          node.removeAttribute(attr.name);
+        } else if (URI_ATTRS.has(name) && isUnsafeUri(attr.value)) {
+          node.removeAttribute(attr.name);
+        } else if (name === 'style' && /expression\s*\(|javascript:|@import/i.test(attr.value)) {
           node.removeAttribute(attr.name);
         }
+      }
+      if (node.tagName.toUpperCase() === 'STYLE' && node.textContent) {
+        node.textContent = node.textContent
+          .replace(/@import\b[^;]*;?/gi, '')
+          .replace(/expression\s*\(/gi, '/*blocked*/(')
+          .replace(/javascript\s*:/gi, '');
       }
     }
     node = walker.nextNode() as Element | null;
@@ -638,6 +714,53 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   } catch (_) {
     return false;
   }
+}
+
+export function clampSelectedIndex(draft: any, selected: number): number {
+  const len = Array.isArray(draft?.prompt_order) ? draft.prompt_order.length : 0;
+  if (len <= 0) return 0;
+  const n = Number.isFinite(selected) ? Math.floor(selected) : 0;
+  return Math.max(0, Math.min(n, len - 1));
+}
+
+export function computeLineDiff(
+  textA: string,
+  textB: string,
+): Array<{ kind: 'same' | 'add' | 'rem'; text: string }> {
+  const aLines = String(textA || '').split('\n');
+  const bLines = String(textB || '').split('\n');
+  const maxLen = 250;
+  if (aLines.length > maxLen || bLines.length > maxLen) {
+    return [
+      ...aLines.map((t) => ({ kind: 'rem' as const, text: t })),
+      ...bLines.map((t) => ({ kind: 'add' as const, text: t })),
+    ];
+  }
+  const m = aLines.length;
+  const n = bLines.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = aLines[i] === bLines[j] ? 1 + dp[i + 1][j + 1] : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: Array<{ kind: 'same' | 'add' | 'rem'; text: string }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (aLines[i] === bLines[j]) {
+      out.push({ kind: 'same', text: aLines[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push({ kind: 'rem', text: aLines[i++] });
+    } else {
+      out.push({ kind: 'add', text: bLines[j++] });
+    }
+  }
+  while (i < m) out.push({ kind: 'rem', text: aLines[i++] });
+  while (j < n) out.push({ kind: 'add', text: bLines[j++] });
+  return out;
 }
 
 export function exportJsonFile(filename: string, dataObj: unknown): void {

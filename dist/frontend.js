@@ -1,20 +1,24 @@
 // src/studio-styles.ts
 var STUDIO_BASE_CSS = `
 .ps-root {
-  --ps-bg: var(--lumiverse-fill, #17161d);
-  --ps-bg-deep: var(--lumiverse-bg-deep, #100f15);
-  --ps-surface: var(--lumiverse-fill-subtle, #201e29);
+  --ps-bg: var(--lumiverse-fill, var(--lumiverse-bg, #17161d));
+  --ps-bg-deep: var(--lumiverse-bg-deep, var(--lumiverse-bg, #100f15));
+  --ps-surface: var(--lumiverse-fill-subtle, var(--lumiverse-bg-elevated, #201e29));
   --ps-elevated: var(--lumiverse-bg-elevated, #292734);
-  --ps-border: var(--lumiverse-border, rgba(255, 255, 255, 0.1));
-  --ps-border-hover: var(--lumiverse-border-hover, rgba(255, 255, 255, 0.22));
+  --ps-border: var(--lumiverse-border, rgba(128, 128, 160, 0.22));
+  --ps-border-hover: var(--lumiverse-border-hover, rgba(128, 128, 160, 0.38));
   --ps-text: var(--lumiverse-text, #f3f1f8);
   --ps-muted: var(--lumiverse-text-muted, #9e99b0);
   --ps-accent: var(--lumiverse-primary, #a795e8);
-  --ps-accent-soft: rgba(167, 149, 232, 0.14);
+  --ps-accent-soft: var(--lumiverse-primary-015, rgba(167, 149, 232, 0.14));
+  --ps-accent-border: var(--lumiverse-primary-050, rgba(167, 149, 232, 0.45));
   --ps-accent-contrast: var(--lumiverse-primary-contrast, #14111d);
   --ps-danger: var(--lumiverse-danger, #ef6c6c);
+  --ps-danger-soft: var(--lumiverse-danger-015, rgba(239, 108, 108, 0.14));
   --ps-success: var(--lumiverse-success, #5ec269);
+  --ps-success-soft: var(--lumiverse-success-015, rgba(94, 194, 105, 0.14));
   --ps-warning: var(--lumiverse-warning, #f5b942);
+  --ps-warning-soft: var(--lumiverse-warning-015, rgba(245, 185, 66, 0.12));
   --ps-radius: var(--lumiverse-radius, 10px);
   --ps-kb-inset: 0px;
   container-type: inline-size;
@@ -75,11 +79,11 @@ var STUDIO_BASE_CSS = `
   color: var(--ps-accent-contrast) !important;
   border-color: transparent !important;
   font-weight: 700 !important;
-  box-shadow: 0 2px 10px rgba(167, 149, 232, 0.22);
+  box-shadow: 0 2px 10px var(--ps-accent-soft);
 }
 .ps-primary:hover:not(:disabled) { filter: brightness(1.08); }
-.ps-danger-btn { border-color: rgba(239, 108, 108, 0.38) !important; color: var(--ps-danger) !important; }
-.ps-danger-btn:hover:not(:disabled) { background: rgba(239, 108, 108, 0.12) !important; }
+.ps-danger-btn { border-color: var(--lumiverse-danger-050, rgba(239, 108, 108, 0.42)) !important; color: var(--ps-danger) !important; }
+.ps-danger-btn:hover:not(:disabled) { background: var(--ps-danger-soft) !important; }
 
 /* Surfaces & Cards */
 .ps-panel {
@@ -148,9 +152,9 @@ var STUDIO_BASE_CSS = `
   color: var(--ps-muted);
   white-space: nowrap;
 }
-.ps-pill-accent { border-color: rgba(167, 149, 232, 0.5); color: var(--ps-accent); background: var(--ps-accent-soft); }
-.ps-pill-warn { border-color: rgba(245, 185, 66, 0.5); color: var(--ps-warning); background: rgba(245, 185, 66, 0.1); }
-.ps-pill-ok { border-color: rgba(94, 194, 105, 0.5); color: var(--ps-success); background: rgba(94, 194, 105, 0.12); }
+.ps-pill-accent { border-color: var(--ps-accent-border); color: var(--ps-accent); background: var(--ps-accent-soft); }
+.ps-pill-warn { border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.5)); color: var(--ps-warning); background: var(--ps-warning-soft); }
+.ps-pill-ok { border-color: var(--lumiverse-success-050, rgba(94, 194, 105, 0.5)); color: var(--ps-success); background: var(--ps-success-soft); }
 .ps-step-badge {
   display: inline-flex;
   align-items: center;
@@ -399,7 +403,10 @@ var STUDIO_BASE_CSS = `
 }
 .ps-row-actions { display: flex; align-items: center; gap: 3px; flex: none; }
 .ps-row-step { display: none !important; }
-.ps-block:hover .ps-row-step, .ps-block.ps-active-row .ps-row-step { display: inline-flex !important; }
+.ps-block:hover .ps-row-step, .ps-block.ps-active-row .ps-row-step, .ps-block:focus-within .ps-row-step { display: inline-flex !important; }
+@media (hover: none) {
+  .ps-row-step { display: inline-flex !important; }
+}
 .ps-row-btn {
   min-height: 24px !important;
   min-width: 24px !important;
@@ -407,6 +414,34 @@ var STUDIO_BASE_CSS = `
   font-size: 0.72rem !important;
   flex: none;
 }
+.ps-perm-banner {
+  border: 1px solid var(--lumiverse-warning-050, rgba(245, 185, 66, 0.45));
+  background: var(--ps-warning-soft);
+  border-radius: var(--ps-radius);
+  padding: 9px 12px;
+  margin: 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.83rem;
+}
+.ps-diff-box {
+  font-family: var(--lumiverse-font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  border: 1px solid var(--ps-border);
+  border-radius: 8px;
+  background: var(--ps-bg);
+  max-height: 440px;
+  overflow: auto;
+  padding: 6px 0;
+}
+.ps-diff-line { padding: 2px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ps-diff-rem { background: var(--ps-danger-soft); color: var(--ps-danger); }
+.ps-diff-add { background: var(--ps-success-soft); color: var(--ps-success); }
+.ps-diff-same { color: var(--ps-muted); }
+.ps-dialog-host { display: contents; }
 
 /* Native Dialogs & Context Menu */
 .ps-native-dialog {
@@ -509,7 +544,7 @@ var STUDIO_POLISH_CSS = `
   place-items: center;
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(167, 149, 232, 0.5);
+  border: 1px solid var(--ps-accent-border);
   border-radius: 8px;
   color: var(--ps-accent);
   background: var(--ps-accent-soft);
@@ -520,7 +555,9 @@ var STUDIO_POLISH_CSS = `
 /* Primary 4-Tab Bar */
 .ps-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
   gap: 6px;
   border-bottom: 1px solid var(--ps-border);
   padding-bottom: 8px;
@@ -534,6 +571,7 @@ var STUDIO_POLISH_CSS = `
   padding: 6px 13px !important;
   min-height: 34px !important;
   white-space: nowrap;
+  flex: 0 0 auto;
   font-size: 0.86rem !important;
 }
 .ps-tabs button:hover:not(:disabled) {
@@ -544,7 +582,7 @@ var STUDIO_POLISH_CSS = `
   color: var(--ps-text) !important;
   background: var(--ps-surface) !important;
   border-color: var(--ps-accent) !important;
-  box-shadow: 0 2px 10px rgba(167, 149, 232, 0.14);
+  box-shadow: 0 2px 10px var(--ps-accent-soft);
   font-weight: 700 !important;
 }
 .ps-step {
@@ -897,26 +935,93 @@ function resolveBlockVariablesPreview(block, savedBlockVars = {}) {
       return full;
     return varMap.get(name).rendered;
   });
+  const resolveAtom = (raw) => {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith(".") && varMap.has(trimmed.slice(1))) {
+      return varMap.get(trimmed.slice(1)).rendered;
+    }
+    return trimmed;
+  };
   const isTruthy = (cond) => {
     let c = cond.trim();
     let negate = false;
-    if (c.startsWith("!")) {
-      negate = true;
+    while (c.startsWith("!")) {
+      negate = !negate;
       c = c.slice(1).trim();
     }
-    if (c.startsWith(".") && varMap.has(c.slice(1))) {
-      c = varMap.get(c.slice(1)).rendered;
+    const cmpMatch = c.match(/^(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    let result;
+    if (cmpMatch) {
+      const lhs = resolveAtom(cmpMatch[1]);
+      const op = cmpMatch[2];
+      const rhs = resolveAtom(cmpMatch[3]);
+      const ln = Number(lhs);
+      const rn = Number(rhs);
+      const numeric = lhs !== "" && rhs !== "" && Number.isFinite(ln) && Number.isFinite(rn);
+      if (op === "==")
+        result = numeric ? ln === rn : lhs === rhs;
+      else if (op === "!=")
+        result = numeric ? ln !== rn : lhs !== rhs;
+      else if (op === ">")
+        result = numeric ? ln > rn : lhs > rhs;
+      else if (op === "<")
+        result = numeric ? ln < rn : lhs < rhs;
+      else if (op === ">=")
+        result = numeric ? ln >= rn : lhs >= rhs;
+      else
+        result = numeric ? ln <= rn : lhs <= rhs;
+    } else {
+      const val = resolveAtom(c);
+      result = Boolean(val) && !["0", "false", "null", "undefined", "no", "off"].includes(val.toLowerCase());
     }
-    const falsy = !c || ["0", "false", "null", "undefined", "no", "off"].includes(c.toLowerCase());
-    return negate ? falsy : !falsy;
+    return negate ? !result : result;
   };
-  text = text.replace(/\{\{\s*if(?:::|\s+)([^{}]+?)\}\}([\s\S]*?)\{\{\s*\/if\s*\}\}/gi, (_m, cond, body) => {
-    const parts = String(body).split(/\{\{\s*else\s*\}\}/i);
-    return isTruthy(cond) ? parts[0] : parts[1] ?? "";
-  });
+  for (let pass = 0;pass < 8; pass++) {
+    const next = text.replace(/\{\{\s*if(?:::|\s+)([^{}]+?)\}\}((?:(?!\{\{\s*(?:if|unless)(?:::|\s+))[\s\S])*?)\{\{\s*\/if\s*\}\}/gi, (_m, cond, body) => {
+      const branches = String(body).split(/\{\{\s*(?:elseif|elif)(?:::|\s+)([^{}]+?)\}\}/i);
+      if (isTruthy(cond))
+        return branches[0].split(/\{\{\s*else\s*\}\}/i)[0];
+      for (let i = 1;i < branches.length; i += 2) {
+        const eCond = branches[i];
+        const eBody = branches[i + 1] ?? "";
+        if (isTruthy(eCond))
+          return eBody.split(/\{\{\s*else\s*\}\}/i)[0];
+      }
+      const tail = branches[branches.length - 1] ?? "";
+      const elseParts = tail.split(/\{\{\s*else\s*\}\}/i);
+      return elseParts.length > 1 ? elseParts[1] : "";
+    }).replace(/\{\{\s*unless(?:::|\s+)([^{}]+?)\}\}((?:(?!\{\{\s*(?:if|unless)(?:::|\s+))[\s\S])*?)\{\{\s*\/unless\s*\}\}/gi, (_m, cond, body) => {
+      const parts = String(body).split(/\{\{\s*else\s*\}\}/i);
+      return !isTruthy(cond) ? parts[0] : parts[1] ?? "";
+    });
+    if (next === text)
+      break;
+    text = next;
+  }
   return text.trim();
 }
-var UNSAFE_HTML_TAGS = new Set(["SCRIPT", "IFRAME", "FRAME", "OBJECT", "EMBED", "APPLET", "BASE", "META", "LINK"]);
+var UNSAFE_HTML_TAGS = new Set([
+  "SCRIPT",
+  "IFRAME",
+  "FRAME",
+  "OBJECT",
+  "EMBED",
+  "APPLET",
+  "BASE",
+  "META",
+  "LINK",
+  "NOSCRIPT",
+  "TEMPLATE",
+  "FOREIGNOBJECT",
+  "ANIMATE",
+  "SET",
+  "ANIMATETRANSFORM"
+]);
+var URI_ATTRS = new Set(["href", "src", "xlink:href", "action", "formaction", "poster", "data"]);
+function isUnsafeUri(raw) {
+  const normalized = raw.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+  return normalized.startsWith("javascript:") || normalized.startsWith("vbscript:") || normalized.startsWith("data:text/html") || normalized.startsWith("data:image/svg+xml");
+}
 function sanitizeHtmlFragment(rawHtml) {
   const parser = new DOMParser;
   const doc = parser.parseFromString(`<body>${rawHtml}</body>`, "text/html");
@@ -924,15 +1029,21 @@ function sanitizeHtmlFragment(rawHtml) {
   const toRemove = [];
   let node = walker.nextNode();
   while (node) {
-    if (UNSAFE_HTML_TAGS.has(node.tagName)) {
+    if (UNSAFE_HTML_TAGS.has(node.tagName.toUpperCase())) {
       toRemove.push(node);
     } else {
       for (const attr of Array.from(node.attributes)) {
         const name = attr.name.toLowerCase();
-        const val = attr.value.trim().toLowerCase();
-        if (name.startsWith("on") || (name === "href" || name === "src" || name === "xlink:href") && val.startsWith("javascript:")) {
+        if (name.startsWith("on") || name === "srcdoc") {
+          node.removeAttribute(attr.name);
+        } else if (URI_ATTRS.has(name) && isUnsafeUri(attr.value)) {
+          node.removeAttribute(attr.name);
+        } else if (name === "style" && /expression\s*\(|javascript:|@import/i.test(attr.value)) {
           node.removeAttribute(attr.name);
         }
+      }
+      if (node.tagName.toUpperCase() === "STYLE" && node.textContent) {
+        node.textContent = node.textContent.replace(/@import\b[^;]*;?/gi, "").replace(/expression\s*\(/gi, "/*blocked*/(").replace(/javascript\s*:/gi, "");
       }
     }
     node = walker.nextNode();
@@ -1182,6 +1293,53 @@ async function copyToClipboard(text) {
     return false;
   }
 }
+function clampSelectedIndex(draft, selected) {
+  const len = Array.isArray(draft?.prompt_order) ? draft.prompt_order.length : 0;
+  if (len <= 0)
+    return 0;
+  const n = Number.isFinite(selected) ? Math.floor(selected) : 0;
+  return Math.max(0, Math.min(n, len - 1));
+}
+function computeLineDiff(textA, textB) {
+  const aLines = String(textA || "").split(`
+`);
+  const bLines = String(textB || "").split(`
+`);
+  const maxLen = 250;
+  if (aLines.length > maxLen || bLines.length > maxLen) {
+    return [
+      ...aLines.map((t) => ({ kind: "rem", text: t })),
+      ...bLines.map((t) => ({ kind: "add", text: t }))
+    ];
+  }
+  const m = aLines.length;
+  const n = bLines.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1;i >= 0; i--) {
+    for (let j = n - 1;j >= 0; j--) {
+      dp[i][j] = aLines[i] === bLines[j] ? 1 + dp[i + 1][j + 1] : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (aLines[i] === bLines[j]) {
+      out.push({ kind: "same", text: aLines[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push({ kind: "rem", text: aLines[i++] });
+    } else {
+      out.push({ kind: "add", text: bLines[j++] });
+    }
+  }
+  while (i < m)
+    out.push({ kind: "rem", text: aLines[i++] });
+  while (j < n)
+    out.push({ kind: "add", text: bLines[j++] });
+  return out;
+}
 function exportJsonFile(filename, dataObj) {
   const blob = new Blob([JSON.stringify(dataObj, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
@@ -1206,14 +1364,20 @@ function closeModalRef(modalRef) {
     modalRef.current = null;
   }
 }
-function askConfirm(root, modalRef, title, message, variant = "warning", confirmLabel = "Confirm") {
+async function askConfirm(dialogHost, modalRef, title, message, variant = "warning", confirmLabel = "Confirm", showConfirmFn) {
   closeModalRef(modalRef);
+  if (typeof showConfirmFn === "function") {
+    try {
+      const res = await showConfirmFn({ title, message, variant, confirmLabel, cancelLabel: "Cancel" });
+      return Boolean(res?.confirmed);
+    } catch (_) {}
+  }
   const returnFocus = document.activeElement;
   return new Promise((resolve) => {
     const dialog = document.createElement("dialog");
     dialog.className = "ps-native-dialog";
     const isDanger = variant === "danger";
-    dialog.innerHTML = `<h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? "ps-danger-btn" : "ps-primary"}" style="${isDanger ? "background:var(--ps-danger);color:#14111c;font-weight:700" : ""}" data-confirm-result="ok">${esc(confirmLabel)}</button></div>`;
+    dialog.innerHTML = `<h3 style="margin-bottom:8px">${esc(title)}</h3><p class="ps-muted" style="margin-bottom:16px;color:var(--ps-text)">${esc(message)}</p><div class="ps-actions" style="justify-content:flex-end"><button type="button" data-confirm-result="cancel">Cancel</button><button type="button" class="${isDanger ? "ps-danger-btn" : "ps-primary"}" style="${isDanger ? "background:var(--ps-danger);color:var(--ps-accent-contrast);font-weight:700" : ""}" data-confirm-result="ok">${esc(confirmLabel)}</button></div>`;
     const finish = (val) => {
       if (modalRef.current === dialog)
         modalRef.current = null;
@@ -1239,7 +1403,7 @@ function askConfirm(root, modalRef, title, message, variant = "warning", confirm
       if (btn)
         finish(btn.dataset.confirmResult === "ok");
     });
-    root.appendChild(dialog);
+    dialogHost.appendChild(dialog);
     modalRef.current = dialog;
     if (typeof dialog.showModal === "function")
       dialog.showModal();
@@ -1508,6 +1672,7 @@ function openBlockContextMenu(root, modalRef, state, index, x, y, callbacks) {
   `;
   const dismiss = () => {
     document.removeEventListener("pointerdown", onOutside, true);
+    document.removeEventListener("keydown", onMenuKey, true);
     if (modalRef.current === menu)
       modalRef.current = null;
     menu.remove();
@@ -1517,7 +1682,16 @@ function openBlockContextMenu(root, modalRef, state, index, x, y, callbacks) {
     if (!menu.contains(ev.target))
       dismiss();
   };
-  setTimeout(() => document.addEventListener("pointerdown", onOutside, true), 0);
+  const onMenuKey = (ev) => {
+    if (ev.key === "Escape") {
+      ev.stopPropagation();
+      dismiss();
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onMenuKey, true);
+  }, 0);
   menu.addEventListener("click", async (ev) => {
     const btn = ev.target.closest("button[data-ctx-key]");
     if (!btn)
@@ -1556,6 +1730,24 @@ function openBlockContextMenu(root, modalRef, state, index, x, y, callbacks) {
 }
 
 // src/studio-views.ts
+function renderPermissionBanner(state) {
+  const perms = state.permissions || {};
+  const missing = [];
+  if (!perms.presets)
+    missing.push("Presets");
+  if (!perms.chats)
+    missing.push("Chats");
+  if (!perms.generation)
+    missing.push("Generation");
+  if (!missing.length)
+    return "";
+  return `
+    <div class="ps-perm-banner" role="alert">
+      <span>⚠ Missing permissions: <strong>${esc(missing.join(", "))}</strong>. Enable them in Extensions to load presets, chats, and test generation.</span>
+      <button type="button" class="ps-btn-sm ps-primary" data-action="open-extension-settings">Open Extension Settings</button>
+    </div>
+  `;
+}
 function translationButtons(state, action, block, index) {
   const id = index === undefined ? "" : ` data-index="${index}"`;
   const disabled = state.translating ? "disabled" : "";
@@ -1637,18 +1829,13 @@ function renderInlineSamplersDrawer(state) {
     </details>
   `;
 }
-function renderArchitectTab(ctx, state) {
+function getFilteredDraftBlocks(state) {
   const d = state.draft;
-  if (state.editorMode === "native") {
-    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div><h3>Native Loom Block Editor</h3><p class="ps-muted">Drag-and-drop blocks, configure placement selectors, and insert macros using Lumiverse's built-in component.</p></div><button type="button" class="ps-btn-sm ps-primary" data-action="editor-mode" data-mode="studio">⇄ Return to Studio View</button></div><div id="ps-native-loom-slot"></div></div>`;
-  }
-  const b = d.prompt_order[state.selected];
-  const varDiag = buildPresetVariableDiagnostics(d.prompt_order);
-  const categoryBlocks = d.prompt_order.filter((blk) => blk.marker === "category");
-  const allCatsCollapsed = categoryBlocks.length > 0 && categoryBlocks.every((c) => state.collapsedCategories.includes(c.id));
+  if (!d || !Array.isArray(d.prompt_order))
+    return [];
   let currentCatId = null;
-  const hasSearchOrFilter = Boolean(state.blockSearch.trim()) || state.blockFilter !== "all";
-  const filteredBlocks = d.prompt_order.map((block, index) => {
+  const hasSearchOrFilter = Boolean((state.blockSearch || "").trim()) || state.blockFilter !== "all";
+  return d.prompt_order.map((block, index) => {
     if (block.marker === "category")
       currentCatId = block.id;
     return {
@@ -1666,12 +1853,59 @@ function renderArchitectTab(ctx, state) {
       return false;
     if (state.blockFilter === "markers" && (!block.marker || block.marker === "category"))
       return false;
-    if (state.blockSearch.trim()) {
+    if ((state.blockSearch || "").trim()) {
       const q = state.blockSearch.toLowerCase();
       return (block.name || "").toLowerCase().includes(q) || (block.content || "").toLowerCase().includes(q);
     }
     return true;
   });
+}
+function renderBlockListOnlyHtml(state) {
+  const d = state.draft;
+  if (!d)
+    return "";
+  const varDiag = buildPresetVariableDiagnostics(d.prompt_order);
+  const filteredBlocks = getFilteredDraftBlocks(state);
+  return filteredBlocks.map(({ block, index, isChild }) => {
+    const tok = state.tokenCounts[block.id];
+    const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
+    const isCat = block.marker === "category";
+    const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
+    const roleLabel = isCat ? "folder" : block.marker ? `slot: ${block.marker}` : block.role;
+    return `
+      <div class="ps-block ${isCat ? "ps-is-cat" : isChild ? "ps-is-child" : ""} ${!block.enabled ? "ps-is-off" : ""} ${index === state.selected ? "ps-active-row" : ""}" draggable="true" data-context-index="${index}">
+        <span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>
+        ${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}">${isCatCollapsed ? "▸" : "▾"}</button>` : `<input type="checkbox" style="width:auto;min-height:16px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? "checked" : ""}>`}
+        <button type="button" class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || "Untitled")}">
+          <div class="ps-block-title-row">
+            ${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ""}
+            ${block.isLocked ? '<span title="Locked" style="font-size:0.7rem;opacity:0.75;flex:none">\uD83D\uDD12</span>' : ""}
+            <span class="ps-block-title">${esc(block.name || "Untitled")}</span>
+          </div>
+          <div class="ps-block-sub">
+            <span>${esc(roleLabel)}</span>
+            <span data-token-id="${esc(block.id)}">${block.content?.trim() && tok ? `· ${tok}t` : ""}</span>
+            ${defCnt ? `<span title="${defCnt} user variable(s) on this block" style="color:var(--ps-accent)">· \uD83C\uDF9B ${defCnt}</span>` : ""}
+          </div>
+        </button>
+        <div class="ps-row-actions">
+          <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? "disabled" : ""} title="Move up">↑</button>
+          <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? "disabled" : ""} title="Move down">↓</button>
+          ${!isCat ? `<button type="button" class="ps-row-btn ${block.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? "On" : "Off"}</button>` : ""}
+          <button type="button" class="ps-row-btn" data-action="block-menu" data-index="${index}" title="Block options">⋯</button>
+        </div>
+      </div>`;
+  }).join("") || '<div class="ps-empty-state"><p>No blocks match your filter.</p></div>';
+}
+function renderArchitectTab(ctx, state) {
+  const d = state.draft;
+  if (state.editorMode === "native") {
+    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div><h3>Native Loom Block Editor</h3><p class="ps-muted">Drag-and-drop blocks, configure placement selectors, and insert macros using Lumiverse's built-in component.</p></div><button type="button" class="ps-btn-sm ps-primary" data-action="editor-mode" data-mode="studio">⇄ Return to Studio View</button></div><div id="ps-native-loom-slot"></div></div>`;
+  }
+  const b = d.prompt_order[state.selected];
+  const categoryBlocks = d.prompt_order.filter((blk) => blk.marker === "category");
+  const allCatsCollapsed = categoryBlocks.length > 0 && categoryBlocks.every((c) => state.collapsedCategories.includes(c.id));
+  const filteredBlocks = getFilteredDraftBlocks(state);
   const macroData = state.macroPreview?.blockId === b?.id ? state.macroPreview : null;
   const varCount = Array.isArray(b?.variables) ? b.variables.length : 0;
   const markerOptions = b && b.marker && !MARKERS.some((m) => m.id === b.marker) ? [...MARKERS, { id: b.marker, label: `${b.marker} (Preset Marker)` }] : MARKERS;
@@ -1690,7 +1924,7 @@ function renderArchitectTab(ctx, state) {
       <div class="ps-col-list ps-panel" style="margin:0" data-scroll-id="prompt-order-list">
         <div class="ps-between" style="margin-bottom:8px">
           <div class="ps-row">
-            <strong>Prompt Blocks (${filteredBlocks.length}/${d.prompt_order.length})</strong>
+            <strong data-block-list-count>Prompt Blocks (${filteredBlocks.length}/${d.prompt_order.length})</strong>
             ${categoryBlocks.length ? `<button type="button" class="ps-btn-sm" data-action="toggle-all-categories" title="Collapse or expand all categories">${allCatsCollapsed ? "▾ Expand" : "▸ Collapse"}</button>` : ""}
           </div>
           <div class="ps-actions">
@@ -1723,37 +1957,8 @@ function renderArchitectTab(ctx, state) {
           </div>
         ` : ""}
 
-        <div class="ps-list">
-          ${filteredBlocks.map(({ block, index, isChild }) => {
-    const tok = state.tokenCounts[block.id];
-    const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
-    const isCat = block.marker === "category";
-    const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
-    const roleLabel = isCat ? "folder" : block.marker ? `slot: ${block.marker}` : block.role;
-    return `
-              <div class="ps-block ${isCat ? "ps-is-cat" : isChild ? "ps-is-child" : ""} ${!block.enabled ? "ps-is-off" : ""} ${index === state.selected ? "ps-active-row" : ""}" draggable="true" data-context-index="${index}">
-                <span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>
-                ${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}">${isCatCollapsed ? "▸" : "▾"}</button>` : `<input type="checkbox" style="width:auto;min-height:16px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? "checked" : ""}>`}
-                <button type="button" class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || "Untitled")}">
-                  <div class="ps-block-title-row">
-                    ${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ""}
-                    ${block.isLocked ? '<span title="Locked" style="font-size:0.7rem;opacity:0.75;flex:none">\uD83D\uDD12</span>' : ""}
-                    <span class="ps-block-title">${esc(block.name || "Untitled")}</span>
-                  </div>
-                  <div class="ps-block-sub">
-                    <span>${esc(roleLabel)}</span>
-                    <span data-token-id="${esc(block.id)}">${block.content?.trim() && tok ? `· ${tok}t` : ""}</span>
-                    ${defCnt ? `<span title="${defCnt} user variable(s) on this block" style="color:var(--ps-accent)">· \uD83C\uDF9B ${defCnt}</span>` : ""}
-                  </div>
-                </button>
-                <div class="ps-row-actions">
-                  <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? "disabled" : ""} title="Move up">↑</button>
-                  <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? "disabled" : ""} title="Move down">↓</button>
-                  ${!isCat ? `<button type="button" class="ps-row-btn ${block.enabled ? "ps-toggle-on" : ""}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? "On" : "Off"}</button>` : ""}
-                  <button type="button" class="ps-row-btn" data-action="block-menu" data-index="${index}" title="Block options">⋯</button>
-                </div>
-              </div>`;
-  }).join("") || '<div class="ps-empty-state"><p>No blocks match your filter.</p></div>'}
+        <div class="ps-list" id="ps-block-list-slot">
+          ${renderBlockListOnlyHtml(state)}
         </div>
       </div>
 
@@ -2025,10 +2230,10 @@ function renderVariablesTab(state) {
           <div class="ps-between" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--ps-border)">
             <div class="ps-row">
               <span class="ps-step-badge">${vi + 1}</span>
-              <strong>${esc(v.label || v.name || "Variable")}</strong>
-              <code class="ps-pill ps-mono">{{var::${esc(v.name || "key")}}}</code>
-              <button type="button" class="ps-btn-sm" data-action="insert-var-into-prompt" data-var-name="${esc(v.name || "key")}">＋ Insert in Prompt</button>
-              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="copy-var-macro" data-macro="{{var::${esc(v.name || "key")}}}" title="Copy macro">\uD83D\uDCCB</button>
+              <strong data-var-card-title="${vi}">${esc(v.label || v.name || "Variable")}</strong>
+              <code class="ps-pill ps-mono" data-var-card-macro="${vi}">{{var::${esc(v.name || "key")}}}</code>
+              <button type="button" class="ps-btn-sm" data-action="insert-var-into-prompt" data-var-insert-btn="${vi}" data-var-name="${esc(v.name || "key")}">＋ Insert in Prompt</button>
+              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="copy-var-macro" data-var-copy-btn="${vi}" data-macro="{{var::${esc(v.name || "key")}}}" title="Copy macro">\uD83D\uDCCB</button>
             </div>
             <button type="button" class="ps-btn-sm ps-danger-btn" data-action="delete-variable" data-vindex="${vi}">\uD83D\uDDD1 Remove</button>
           </div>
@@ -2173,6 +2378,7 @@ function renderRemixAndTranslateTab(state) {
               ${checkedCount ? `<span class="ps-pill ps-pill-accent">${checkedCount} checked</span>` : ""}
             </div>
             <div class="ps-actions">
+              <input style="width:180px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || "")}">
               ${checkedCount ? `
                 <button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount}) to Draft</button>
                 <button type="button" class="ps-btn-sm" data-action="collect-blocks">\uD83D\uDCE6 Save Checked as Template…</button>
@@ -2182,29 +2388,8 @@ function renderRemixAndTranslateTab(state) {
             </div>
           </div>
 
-          <div class="ps-list">
-            ${state.importBlocks.map((block, i) => {
-    const isExpanded = state.expandedImports.includes(i);
-    return `
-                <article class="ps-card ${block.marker === "category" ? "ps-is-cat" : ""}" style="padding:${isExpanded ? "10px 12px" : "6px 12px"}">
-                  <div class="ps-between">
-                    <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-                      <input style="width:auto;min-height:18px" type="checkbox" data-import-index="${i}" ${state.selectedImports.includes(i) ? "checked" : ""}>
-                      <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-import-expand" data-index="${i}">${isExpanded ? "▾" : "▸"}</button>
-                      <button type="button" class="ps-block-main" data-action="toggle-import-expand" data-index="${i}">
-                        <strong>${esc(block.name || "Untitled")}</strong>
-                        <span class="ps-pill">${block.marker === "category" ? "Folder" : esc(block.marker || block.role)}</span>
-                      </button>
-                    </div>
-                    <div class="ps-actions">
-                      <button type="button" class="ps-btn-sm" data-action="copy-source-content" data-index="${i}">\uD83D\uDCCB</button>
-                      <button type="button" class="ps-primary ps-btn-sm" data-action="import-block" data-index="${i}">＋ Add to Draft</button>
-                    </div>
-                  </div>
-                  ${isExpanded ? block.content ? `<pre class="ps-result" style="margin-top:8px;max-height:170px">${esc(block.content)}</pre>` : '<p class="ps-muted" style="margin-top:6px">Built-in data slot — injects dynamic context.</p>' : ""}
-                </article>
-              `;
-  }).join("")}
+          <div class="ps-list" id="ps-remix-source-slot">
+            ${renderRemixSourceListHtml(state)}
           </div>
         ` : ""}
       </div>
@@ -2239,17 +2424,69 @@ function renderRemixAndTranslateTab(state) {
     `}
   `;
 }
+function renderRemixSourceListHtml(state) {
+  const q = (state.remixSearch || "").trim().toLowerCase();
+  const rows = (state.importBlocks || []).map((block, i) => ({ block, i })).filter(({ block }) => {
+    if (!q)
+      return true;
+    return (block.name || "").toLowerCase().includes(q) || (block.content || "").toLowerCase().includes(q);
+  });
+  if (!rows.length)
+    return '<p class="ps-muted">No source blocks match your search.</p>';
+  return rows.map(({ block, i }) => {
+    const isExpanded = state.expandedImports.includes(i);
+    return `
+        <article class="ps-card ${block.marker === "category" ? "ps-is-cat" : ""}" style="padding:${isExpanded ? "10px 12px" : "6px 12px"}">
+          <div class="ps-between">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+              <input style="width:auto;min-height:18px" type="checkbox" data-import-index="${i}" ${state.selectedImports.includes(i) ? "checked" : ""}>
+              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-import-expand" data-index="${i}">${isExpanded ? "▾" : "▸"}</button>
+              <button type="button" class="ps-block-main" data-action="toggle-import-expand" data-index="${i}">
+                <strong>${esc(block.name || "Untitled")}</strong>
+                <span class="ps-pill">${block.marker === "category" ? "Folder" : esc(block.marker || block.role)}</span>
+              </button>
+            </div>
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="copy-source-content" data-index="${i}">\uD83D\uDCCB</button>
+              <button type="button" class="ps-primary ps-btn-sm" data-action="import-block" data-index="${i}">＋ Add to Draft</button>
+            </div>
+          </div>
+          ${isExpanded ? block.content ? `<pre class="ps-result" style="margin-top:8px;max-height:170px">${esc(block.content)}</pre>` : '<p class="ps-muted" style="margin-top:6px">Built-in data slot — injects dynamic context.</p>' : ""}
+        </article>
+      `;
+  }).join("");
+}
+function renderXRayListOnlyHtml(state) {
+  const breakdown = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown : [];
+  const filtered = breakdown.filter((item) => {
+    if (state.breakdownFilter !== "all" && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter)
+      return false;
+    if ((state.breakdownSearch || "").trim()) {
+      const q = state.breakdownSearch.toLowerCase();
+      return (item.name || "").toLowerCase().includes(q) || (item.content || "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+  return filtered.map((item, idx) => `
+          <details class="ps-card" data-details-id="xray-${idx}">
+            <summary class="ps-between" style="cursor:pointer">
+              <span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
+              <span class="ps-muted">~${Math.ceil((item.content || "").length / 4)}t</span>
+            </summary>
+            <pre class="ps-result" style="margin-top:8px">${esc(item.content || "(empty)")}</pre>
+          </details>
+        `).join("") || '<p class="ps-muted">No items match filter.</p>';
+}
 function renderXRayBreakdownInline(state) {
   const a = state.assembled;
   if (!a) {
-    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">\uD83D\uDD2C</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>\uD83D\uDD2C Inspect Prompt</strong> or <strong>▶ Generate Reply</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
+    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">\uD83D\uDD2C</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>\uD83D\uDD2C Inspect Prompt X-Ray</strong> or <strong>▶ Generate Reply</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
   }
   const isCustom = a.source === "custom";
   const d = state.draft;
   const nonCatBlocks = (d?.prompt_order || []).filter((b) => b.marker !== "category");
   const enabledCount = nonCatBlocks.filter((b) => b.enabled).length;
   const breakdown = Array.isArray(a.breakdown) ? a.breakdown : [];
-  const messages = Array.isArray(a.messages) ? a.messages : [];
   const buckets = { block: 0, chat_history: 0, world_info: 0, memory: 0, authors_note: 0, other: 0 };
   breakdown.forEach((item) => {
     const est = Math.ceil((item.content || "").length / 4);
@@ -2267,15 +2504,6 @@ function renderXRayBreakdownInline(state) {
       buckets.other += est;
   });
   const totalEst = Math.max(1, buckets.block + buckets.chat_history + buckets.world_info + buckets.memory + buckets.authors_note + buckets.other);
-  const filtered = breakdown.filter((item) => {
-    if (state.breakdownFilter !== "all" && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter)
-      return false;
-    if (state.breakdownSearch.trim()) {
-      const q = state.breakdownSearch.toLowerCase();
-      return (item.name || "").toLowerCase().includes(q) || (item.content || "").toLowerCase().includes(q);
-    }
-    return true;
-  });
   return `
     <div>
       <div class="ps-between" style="margin-bottom:8px">
@@ -2298,16 +2526,8 @@ function renderXRayBreakdownInline(state) {
         <input style="width:165px;max-width:100%;min-height:28px;padding:3px 8px;font-size:0.78rem" placeholder="Filter X-Ray…" data-state="breakdownSearch" value="${esc(state.breakdownSearch)}">
       </div>
 
-      <div class="ps-list" style="max-height:500px;overflow-y:auto" data-scroll-id="xray-list">
-        ${filtered.map((item, idx) => `
-          <details class="ps-card" data-details-id="xray-${idx}">
-            <summary class="ps-between" style="cursor:pointer">
-              <span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
-              <span class="ps-muted">~${Math.ceil((item.content || "").length / 4)}t</span>
-            </summary>
-            <pre class="ps-result" style="margin-top:8px">${esc(item.content || "(empty)")}</pre>
-          </details>
-        `).join("") || '<p class="ps-muted">No items match filter.</p>'}
+      <div class="ps-list" id="ps-xray-list-slot" style="max-height:500px;overflow-y:auto" data-scroll-id="xray-list">
+        ${renderXRayListOnlyHtml(state)}
       </div>
     </div>
   `;
@@ -2540,28 +2760,52 @@ function renderTestTab(state) {
             ${renderXRayBreakdownInline(state)}
           ` : `
             ${state.runs.length >= 2 && runA && runB ? `
-              <div class="ps-row" style="margin-bottom:10px">
-                <label>Left Run (A)
-                  <select data-state="compareA">
-                    ${state.runs.map((r, idx) => `<option value="${idx}" ${Number(state.compareA) === idx ? "selected" : ""}>Run #${idx + 1} (${esc(r.time)})</option>`).join("")}
-                  </select>
-                </label>
-                <label>Right Run (B)
-                  <select data-state="compareB">
-                    ${state.runs.map((r, idx) => `<option value="${idx}" ${Number(state.compareB) === idx ? "selected" : ""}>Run #${idx + 1} (${esc(r.time)})</option>`).join("")}
-                  </select>
-                </label>
-              </div>
-              <div class="ps-grid">
-                <div class="ps-card">
-                  <div class="ps-between"><strong>Run #${Number(state.compareA) + 1}</strong><span class="ps-pill">${esc(runA.connection)}</span></div>
-                  <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
+              <div class="ps-between" style="margin-bottom:10px">
+                <div class="ps-row" style="flex:1">
+                  <label>Left Run (A)
+                    <select data-state="compareA">
+                      ${state.runs.map((r, idx) => `<option value="${idx}" ${Number(state.compareA) === idx ? "selected" : ""}>Run #${idx + 1} (${esc(r.time)})</option>`).join("")}
+                    </select>
+                  </label>
+                  <label>Right Run (B)
+                    <select data-state="compareB">
+                      ${state.runs.map((r, idx) => `<option value="${idx}" ${Number(state.compareB) === idx ? "selected" : ""}>Run #${idx + 1} (${esc(r.time)})</option>`).join("")}
+                    </select>
+                  </label>
                 </div>
-                <div class="ps-card">
-                  <div class="ps-between"><strong>Run #${Number(state.compareB) + 1}</strong><span class="ps-pill">${esc(runB.connection)}</span></div>
-                  <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
+                <div class="ps-seg-bar">
+                  <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== "diff"}">Side-by-Side</button>
+                  <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === "diff"}">Line Diff</button>
                 </div>
               </div>
+              ${state.compareMode === "diff" ? `
+                <div class="ps-diff-box">
+                  ${computeLineDiff(runA.content || "", runB.content || "").map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === "add" ? "+ " : line.kind === "rem" ? "- " : "  "}${esc(line.text || " ")}</div>`).join("")}
+                </div>
+              ` : `
+                <div class="ps-grid">
+                  <div class="ps-card">
+                    <div class="ps-between">
+                      <strong>Run #${Number(state.compareA) + 1}</strong>
+                      <div class="ps-actions">
+                        <span class="ps-pill">${esc(runA.connection)}</span>
+                        ${runA.usage?.completion_tokens ? `<span class="ps-pill">${runA.usage.completion_tokens}t</span>` : ""}
+                      </div>
+                    </div>
+                    <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
+                  </div>
+                  <div class="ps-card">
+                    <div class="ps-between">
+                      <strong>Run #${Number(state.compareB) + 1}</strong>
+                      <div class="ps-actions">
+                        <span class="ps-pill">${esc(runB.connection)}</span>
+                        ${runB.usage?.completion_tokens ? `<span class="ps-pill">${runB.usage.completion_tokens}t</span>` : ""}
+                      </div>
+                    </div>
+                    <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
+                  </div>
+                </div>
+              `}
             ` : `
               <div class="ps-empty-state">
                 <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
@@ -2603,6 +2847,18 @@ function readHostPresetEditorDraft(ctx) {
     return null;
   }
 }
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s.`)), ms);
+    promise.then((v) => {
+      clearTimeout(t);
+      resolve(v);
+    }, (e) => {
+      clearTimeout(t);
+      reject(e);
+    });
+  });
+}
 async function syncSaveWithNativePresetEditor(ctx, request, draftToSave, isCopy) {
   const pe = ctx.ui?.presetEditor;
   if (!isCopy && draftToSave.id && pe?.getState && pe?.updatePreset) {
@@ -2622,7 +2878,12 @@ async function syncSaveWithNativePresetEditor(ctx, request, draftToSave, isCopy)
           }
         }));
         if (typeof pe.flush === "function") {
-          await pe.flush();
+          await withTimeout(pe.flush(), 12000, "Native Preset Editor save");
+          const synced = await request("get", { id: draftToSave.id });
+          if (synced) {
+            await request("toast", { kind: "success", title: "Preset Studio", message: `Saved "${synced.name}"` }).catch(() => {});
+            return synced;
+          }
         }
       }
     } catch (_) {}
@@ -2717,6 +2978,13 @@ function bindDragAndDropListeners(root, state, moveBlock, clearLongPress) {
       el.classList.remove("ps-dragging", "ps-drag-over-top", "ps-drag-over-bottom");
     });
   }
+  function resetDragState() {
+    dragFromIndex = null;
+    touchDragIndex = null;
+    clearDragIndicators();
+  }
+  const onWindowBlur = () => resetDragState();
+  window.addEventListener("blur", onWindowBlur);
   root.addEventListener("dragstart", (e) => {
     const target = e.target;
     const row = target.closest("[data-context-index]");
@@ -2813,13 +3081,17 @@ function bindDragAndDropListeners(root, state, moveBlock, clearLongPress) {
       moveBlock(from, to);
   });
   root.addEventListener("pointercancel", () => {
-    touchDragIndex = null;
-    clearDragIndicators();
+    resetDragState();
   });
+  return () => {
+    resetDragState();
+    window.removeEventListener("blur", onWindowBlur);
+  };
 }
 
 // src/frontend.ts
 function setup(ctx) {
+  ctx.deferReady?.();
   const tab = ctx.ui.registerDrawerTab({
     id: "studio",
     title: "Preset Studio",
@@ -2832,6 +3104,16 @@ function setup(ctx) {
   const polish = ctx.dom.addStyle(STUDIO_POLISH_CSS);
   const root = document.createElement("div");
   root.className = "ps-root";
+  const shellEl = document.createElement("div");
+  shellEl.className = "ps-shell";
+  const shellHeaderEl = document.createElement("div");
+  shellHeaderEl.className = "ps-shell-header";
+  const shellBodyEl = document.createElement("div");
+  shellBodyEl.className = "ps-shell-body";
+  const dialogHostEl = document.createElement("div");
+  dialogHostEl.className = "ps-dialog-host";
+  shellEl.append(shellHeaderEl, shellBodyEl);
+  root.append(shellEl, dialogHostEl);
   tab.root.appendChild(root);
   let mount = null;
   let full = false;
@@ -2845,12 +3127,17 @@ function setup(ctx) {
     chats: [],
     connections: [],
     permissions: { presets: true, chats: true, generation: true, app_manipulation: true, regex_scripts: false },
+    loading: false,
+    loadError: "",
+    saving: false,
     draft: null,
     recovery: null,
     selected: 0,
     view: "blocks",
     remixSubTab: "mixer",
+    remixSearch: "",
     testOutputTab: "reply",
+    compareMode: "side",
     editorMode: "studio",
     blockFilter: "all",
     blockSearch: "",
@@ -2914,38 +3201,76 @@ function setup(ctx) {
   const pending = new Map;
   const tokenCache = new Map;
   const mountedHandles = new Set;
+  const variablePreviewHandles = new Set;
   const modalRef = { current: null };
   let timer = null;
   let tokenTimer = null;
+  let varPreviewTimer = null;
   let longPressTimer = null;
   let refreshPromise = null;
+  let lastLocalSaveAt = 0;
+  let resetDragState = () => {};
   let destroyed = false;
   let saveChain = Promise.resolve();
-  function destroyMounted() {
-    for (const h of mountedHandles) {
+  function destroyHandleSet(set) {
+    for (const h of set) {
       try {
         h.destroy?.();
       } catch (_) {}
     }
-    mountedHandles.clear();
+    set.clear();
   }
-  function trackMount(fn) {
+  function destroyMounted() {
+    destroyHandleSet(variablePreviewHandles);
+    destroyHandleSet(mountedHandles);
+  }
+  function trackMount(fn, targetSet = mountedHandles) {
     try {
       const h = fn();
       if (h && typeof h.destroy === "function")
-        mountedHandles.add(h);
+        targetSet.add(h);
       return h;
     } catch (_) {
       return null;
     }
   }
+  function clampSelected() {
+    state.selected = clampSelectedIndex(state.draft, state.selected);
+  }
   const unsubKb = ctx.ui?.events?.onKeyboardChange?.((kb) => {
     root.style.setProperty("--ps-kb-inset", kb?.visible ? `${kb.insetBottom || 0}px` : "0px");
   });
-  function request(action, payload = {}, handlers = {}) {
+  function request(action, payload = {}, handlers = {}, timeoutMs) {
     const requestId = uid();
+    const resolvedTimeout = timeoutMs !== undefined ? timeoutMs : action === "text-editor" ? 0 : ["preview", "run", "translate", "translate-batch"].includes(action) ? 120000 : 18000;
     return new Promise((resolve, reject) => {
-      pending.set(requestId, { resolve, reject, ...handlers });
+      const entry = {
+        resolve: (val) => {
+          if (entry.timeoutId)
+            clearTimeout(entry.timeoutId);
+          resolve(val);
+        },
+        reject: (err) => {
+          if (entry.timeoutId)
+            clearTimeout(entry.timeoutId);
+          reject(err);
+        },
+        ...handlers
+      };
+      const armTimer = () => {
+        if (entry.timeoutId)
+          clearTimeout(entry.timeoutId);
+        if (resolvedTimeout > 0) {
+          entry.timeoutId = setTimeout(() => {
+            if (pending.delete(requestId)) {
+              entry.reject(new Error(`Request "${action}" timed out. Check connection or retry.`));
+            }
+          }, resolvedTimeout);
+        }
+      };
+      entry.touch = armTimer;
+      armTimer();
+      pending.set(requestId, entry);
       ctx.sendToBackend({ action, requestId, ...payload });
     });
   }
@@ -2978,13 +3303,14 @@ function setup(ctx) {
     if (msg.type === "backend-ready" || msg.type === "permissions") {
       if (msg.permissions)
         state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      refresh(true).catch(() => {});
       return;
     }
     if (msg.type === "host-sync") {
       if (msg.chatId)
         state.chatId = msg.chatId;
-      refresh().catch(() => {});
+      const silent = msg.reason === "preset_changed" && Date.now() - lastLocalSaveAt < 2000;
+      refresh(false, silent).catch(() => {});
       return;
     }
     if (msg.type === "command") {
@@ -2995,6 +3321,7 @@ function setup(ctx) {
       else if (msg.commandId === "test-studio-chat") {
         if (!state.draft)
           state.draft = freshDraft();
+        clampSelected();
         state.view = "test";
         if (mount)
           setFull(true);
@@ -3009,6 +3336,7 @@ function setup(ctx) {
     const p = pending.get(msg.requestId);
     if (!p)
       return;
+    p.touch?.();
     if (msg.type === "token") {
       p.onToken?.(msg.token);
       return;
@@ -3251,7 +3579,7 @@ function setup(ctx) {
       if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.prompt_order)) {
         throw new Error("JSON file is not a valid preset (missing prompt_order array).");
       }
-      if (state.dirty && !await askConfirm(root, modalRef, "Replace Draft?", "Replace your current unsaved draft with the imported preset?", "warning", "Replace")) {
+      if (state.dirty && !await confirmUser("Replace Draft?", "Replace your current unsaved draft with the imported preset?", "warning", "Replace")) {
         return;
       }
       delete parsed.id;
@@ -3282,7 +3610,7 @@ function setup(ctx) {
     if (!b)
       return;
     const msg = b.isLocked ? `“${b.name || "Untitled"}” is currently locked (\uD83D\uDD12). Delete it from your draft anyway?` : `Delete “${b.name || "Untitled"}” from your draft?`;
-    if (!await askConfirm(root, modalRef, "Delete Block?", msg, "danger", "Delete Block"))
+    if (!await confirmUser("Delete Block?", msg, "danger", "Delete Block"))
       return;
     const removedId = b.id;
     d.prompt_order.splice(index, 1);
@@ -3361,12 +3689,135 @@ function setup(ctx) {
     const text = resolveBlockVariablesPreview(b, savedBlockVars);
     outBox.textContent = text || "(Block content is empty)";
   }
+  function mountVariablePreviewControls() {
+    destroyHandleSet(variablePreviewHandles);
+    const d = state.draft;
+    if (!d || !ctx.components || state.view !== "variables")
+      return;
+    const b = d.prompt_order?.[state.selected];
+    const controlsSlot = shellBodyEl.querySelector("#ps-var-preview-controls-slot");
+    if (!controlsSlot || !b || !Array.isArray(b.variables) || b.variables.length === 0)
+      return;
+    controlsSlot.innerHTML = "";
+    d.metadata = d.metadata || {};
+    d.metadata.promptVariables = d.metadata.promptVariables || {};
+    d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
+    const savedVars = d.metadata.promptVariables[b.id];
+    for (const v of b.variables) {
+      if (!v?.name)
+        continue;
+      const currentVal = savedVars[v.name] !== undefined ? savedVars[v.name] : v.defaultValue;
+      const row = document.createElement("div");
+      row.style.cssText = "display:grid;gap:4px;";
+      controlsSlot.appendChild(row);
+      if (v.type === "switch" || v.type === "boolean") {
+        trackMount(() => ctx.components.mountSwitch(row, {
+          checked: currentVal === 1 || currentVal === "1" || currentVal === true || currentVal === "true",
+          size: "md",
+          ariaLabel: v.label || v.name,
+          onChange: (checked) => {
+            savedVars[v.name] = checked ? 1 : 0;
+            persist();
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+        const lbl = document.createElement("span");
+        lbl.textContent = ` ${v.label || v.name}`;
+        lbl.style.cssText = "font-size:0.84rem;font-weight:600;margin-top:2px;";
+        row.appendChild(lbl);
+      } else if (v.type === "slider") {
+        trackMount(() => ctx.components.mountRangeSlider(row, {
+          label: v.label || v.name,
+          hint: v.description || "",
+          min: Number.isFinite(Number(v.min)) ? Number(v.min) : 0,
+          max: Number.isFinite(Number(v.max)) ? Number(v.max) : 100,
+          step: Number.isFinite(Number(v.step)) ? Number(v.step) : 1,
+          value: Number.isFinite(Number(currentVal)) ? Number(currentVal) : Number(v.min || 0),
+          onCommit: (val) => {
+            savedVars[v.name] = val;
+            persist();
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+      } else if (v.type === "select") {
+        const rawOpts = Array.isArray(v.options) ? v.options : [];
+        const selectOptionsList = rawOpts.map((o) => ({
+          value: String(o.id ?? o.label ?? ""),
+          label: String(o.label || o.id || "Option")
+        }));
+        const labelEl = document.createElement("span");
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
+        row.appendChild(labelEl);
+        trackMount(() => ctx.components.mountSelect(row, {
+          value: String(currentVal ?? selectOptionsList[0]?.value ?? ""),
+          options: selectOptionsList,
+          placeholder: "Choose option…",
+          onChange: (val) => {
+            savedVars[v.name] = val;
+            persist();
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+      } else if (v.type === "multiselect") {
+        const rawOpts = Array.isArray(v.options) ? v.options : [];
+        const multiOptionsList = rawOpts.map((o) => ({
+          value: String(o.id ?? o.label ?? ""),
+          label: String(o.label || o.id || "Option")
+        }));
+        const labelEl = document.createElement("span");
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
+        row.appendChild(labelEl);
+        const chosenList = Array.isArray(currentVal) ? currentVal.map(String) : typeof currentVal === "string" && currentVal.trim() ? currentVal.split(",").map((s) => s.trim()) : [];
+        trackMount(() => ctx.components.mountMultiSelect(row, {
+          value: chosenList,
+          options: multiOptionsList,
+          placeholder: "Select items…",
+          onChange: (vals) => {
+            savedVars[v.name] = vals;
+            persist();
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+      } else if (v.type === "textarea") {
+        const labelEl = document.createElement("span");
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
+        row.appendChild(labelEl);
+        trackMount(() => ctx.components.mountTextArea(row, {
+          value: String(currentVal ?? ""),
+          rows: Number(v.rows || 3),
+          placeholder: v.description || "Type value…",
+          onChange: (val) => {
+            savedVars[v.name] = val;
+            persist(false, true);
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+      } else {
+        const labelEl = document.createElement("span");
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
+        row.appendChild(labelEl);
+        trackMount(() => ctx.components.mountTextInput(row, {
+          value: String(currentVal ?? ""),
+          placeholder: v.description || "Type value…",
+          onChange: (val) => {
+            savedVars[v.name] = val;
+            persist(false, true);
+            updateLiveVariablesPreview();
+          }
+        }), variablePreviewHandles);
+      }
+    }
+  }
   function mountInteractiveWidgets() {
     const d = state.draft;
     if (!d || !ctx.components)
       return;
     if (state.view === "blocks" && state.editorMode === "native") {
-      const slot = root.querySelector("#ps-native-loom-slot");
+      const slot = shellBodyEl.querySelector("#ps-native-loom-slot");
       if (slot && ctx.components.mountLoomBlockEditor) {
         trackMount(() => ctx.components.mountLoomBlockEditor(slot, {
           value: {
@@ -3378,6 +3829,7 @@ function setup(ctx) {
             d.prompt_order = next.blocks;
             d.metadata = d.metadata || {};
             d.metadata.promptVariables = next.promptVariableValues || {};
+            clampSelected();
             persist();
           }
         }));
@@ -3388,21 +3840,23 @@ function setup(ctx) {
         { key: "temperature", label: "Temperature (Randomness)", min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: "top_p", label: "Top-P (Nucleus Sampling)", min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
         { key: "min_p", label: "Min-P", min: 0, max: 1, step: 0.01, def: 0, decimals: 2 },
-        { key: "frequency_penalty", label: "Frequency Penalty", min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
-        { key: "presence_penalty", label: "Presence Penalty", min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
+        { key: "frequency_penalty", label: "Frequency Penalty", min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
+        { key: "presence_penalty", label: "Presence Penalty", min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: "repetition_penalty", label: "Repetition Penalty", min: 1, max: 2, step: 0.01, def: 1, decimals: 2 }
       ];
       for (const s of specs) {
-        const slot = root.querySelector(`[data-slider-slot="${s.key}"]`);
+        const slot = shellBodyEl.querySelector(`[data-slider-slot="${s.key}"]`);
         if (!slot)
           continue;
         slot.innerHTML = "";
+        const rawNum = Number(d.parameters?.[s.key]);
+        const initVal = d.parameters?.[s.key] !== undefined && d.parameters?.[s.key] !== "" && Number.isFinite(rawNum) ? rawNum : s.def;
         trackMount(() => ctx.components.mountRangeSlider(slot, {
           label: s.label,
           min: s.min,
           max: s.max,
           step: s.step,
-          value: Number(d.parameters?.[s.key] ?? s.def),
+          value: initVal,
           format: { decimals: s.decimals },
           onCommit: (val) => {
             d.parameters = d.parameters || {};
@@ -3413,208 +3867,95 @@ function setup(ctx) {
       }
     }
     if (state.view === "variables") {
-      const b = d.prompt_order?.[state.selected];
-      const controlsSlot = root.querySelector("#ps-var-preview-controls-slot");
-      if (controlsSlot && b && Array.isArray(b.variables) && b.variables.length > 0) {
-        controlsSlot.innerHTML = "";
-        d.metadata = d.metadata || {};
-        d.metadata.promptVariables = d.metadata.promptVariables || {};
-        d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
-        const savedVars = d.metadata.promptVariables[b.id];
-        for (const v of b.variables) {
-          if (!v?.name)
-            continue;
-          const currentVal = savedVars[v.name] !== undefined ? savedVars[v.name] : v.defaultValue;
-          const row = document.createElement("div");
-          row.style.cssText = "display:grid;gap:4px;";
-          controlsSlot.appendChild(row);
-          if (v.type === "switch" || v.type === "boolean") {
-            trackMount(() => ctx.components.mountSwitch(row, {
-              checked: currentVal === 1 || currentVal === "1" || currentVal === true || currentVal === "true",
-              size: "md",
-              ariaLabel: v.label || v.name,
-              onChange: (checked) => {
-                savedVars[v.name] = checked ? 1 : 0;
-                persist();
-                updateLiveVariablesPreview();
-              }
-            }));
-            const lbl = document.createElement("span");
-            lbl.textContent = ` ${v.label || v.name}`;
-            lbl.style.cssText = "font-size:0.84rem;font-weight:600;margin-top:2px;";
-            row.appendChild(lbl);
-          } else if (v.type === "slider") {
-            trackMount(() => ctx.components.mountRangeSlider(row, {
-              label: v.label || v.name,
-              hint: v.description || "",
-              min: Number.isFinite(Number(v.min)) ? Number(v.min) : 0,
-              max: Number.isFinite(Number(v.max)) ? Number(v.max) : 100,
-              step: Number.isFinite(Number(v.step)) ? Number(v.step) : 1,
-              value: Number.isFinite(Number(currentVal)) ? Number(currentVal) : Number(v.min || 0),
-              onCommit: (val) => {
-                savedVars[v.name] = val;
-                persist();
-                updateLiveVariablesPreview();
-              }
-            }));
-          } else if (v.type === "select") {
-            const rawOpts = Array.isArray(v.options) ? v.options : [];
-            const selectOptionsList = rawOpts.map((o) => ({
-              value: String(o.id ?? o.label ?? ""),
-              label: String(o.label || o.id || "Option")
-            }));
-            const labelEl = document.createElement("span");
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
-            row.appendChild(labelEl);
-            trackMount(() => ctx.components.mountSelect(row, {
-              value: String(currentVal ?? selectOptionsList[0]?.value ?? ""),
-              options: selectOptionsList,
-              placeholder: "Choose option…",
-              onChange: (val) => {
-                savedVars[v.name] = val;
-                persist();
-                updateLiveVariablesPreview();
-              }
-            }));
-          } else if (v.type === "multiselect") {
-            const rawOpts = Array.isArray(v.options) ? v.options : [];
-            const multiOptionsList = rawOpts.map((o) => ({
-              value: String(o.id ?? o.label ?? ""),
-              label: String(o.label || o.id || "Option")
-            }));
-            const labelEl = document.createElement("span");
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
-            row.appendChild(labelEl);
-            const chosenList = Array.isArray(currentVal) ? currentVal.map(String) : typeof currentVal === "string" && currentVal.trim() ? currentVal.split(",").map((s) => s.trim()) : [];
-            trackMount(() => ctx.components.mountMultiSelect(row, {
-              value: chosenList,
-              options: multiOptionsList,
-              placeholder: "Select items…",
-              onChange: (vals) => {
-                savedVars[v.name] = vals;
-                persist();
-                updateLiveVariablesPreview();
-              }
-            }));
-          } else if (v.type === "textarea") {
-            const labelEl = document.createElement("span");
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
-            row.appendChild(labelEl);
-            trackMount(() => ctx.components.mountTextArea(row, {
-              value: String(currentVal ?? ""),
-              rows: Number(v.rows || 3),
-              placeholder: v.description || "Type value…",
-              onChange: (val) => {
-                savedVars[v.name] = val;
-                persist(false, true);
-                updateLiveVariablesPreview();
-              }
-            }));
-          } else {
-            const labelEl = document.createElement("span");
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = "font-size:0.84rem;font-weight:600;";
-            row.appendChild(labelEl);
-            trackMount(() => ctx.components.mountTextInput(row, {
-              value: String(currentVal ?? ""),
-              placeholder: v.description || "Type value…",
-              onChange: (val) => {
-                savedVars[v.name] = val;
-                persist(false, true);
-                updateLiveVariablesPreview();
-              }
-            }));
-          }
-        }
-      }
+      mountVariablePreviewControls();
     }
   }
-  function render() {
+  function renderHeader() {
     if (destroyed)
       return;
-    const savedRootScroll = root.scrollTop;
-    const savedScrollMap = new Map;
-    root.querySelectorAll("[data-scroll-id]").forEach((el) => {
-      if (el.dataset.scrollId)
-        savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
-    });
-    const openDetailsIds = new Set;
-    root.querySelectorAll("details[data-details-id]").forEach((el) => {
-      if (el.open && el.dataset.detailsId)
-        openDetailsIds.add(el.dataset.detailsId);
-    });
-    destroyMounted();
     const d = state.draft;
     const totalVarsCount = d ? (d.prompt_order || []).reduce((acc, blk) => acc + (Array.isArray(blk.variables) ? blk.variables.length : 0), 0) : 0;
-    root.innerHTML = `
-      <div class="ps-shell">
-        <!-- Unified Sleek Top Header Bar -->
-        <header class="ps-topbar">
-          <div class="ps-row" style="flex:1;min-width:260px">
-            <div class="ps-brand">
-              <div class="ps-mark" aria-hidden="true">✳</div>
-              <strong style="font-size:0.95rem;white-space:nowrap">Preset Studio</strong>
-            </div>
-
-            <select data-action="open" style="max-width:260px;min-height:32px;padding:3px 10px;font-weight:600" aria-label="Select preset">
-              <option value="">${d && !d.id ? `Draft: ${esc(d.name)}` : `Open preset (${state.presets.length})…`}</option>
-              ${selectOptions(state.presets, d?.id, (x) => x.name)}
-            </select>
-
-            <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
-            <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">\uD83D\uDCE5 Import</button>
-            ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">\uD83D\uDCE4 Export</button>' : ""}
-            ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ""}
+    shellHeaderEl.innerHTML = `
+      <header class="ps-topbar">
+        <div class="ps-row" style="flex:1;min-width:240px">
+          <div class="ps-brand">
+            <div class="ps-mark" aria-hidden="true">✳</div>
+            <strong style="font-size:0.95rem;white-space:nowrap">Preset Studio</strong>
           </div>
 
-          <div class="ps-actions">
-            ${d ? `
-              <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} tokens</span>
-              <span class="ps-pill ${state.dirty ? "ps-pill-warn" : "ps-pill-ok"}">${state.dirty ? "● Unsaved" : "✓ Saved"}</span>
-              <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? "disabled" : ""} title="Undo (Ctrl+Z)">↶</button>
-              <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? "disabled" : ""} title="Redo (Ctrl+Shift+Z)">↷</button>
-              <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.busy ? "disabled" : ""}>Save Copy</button>
-              <button type="button" class="ps-primary ps-btn-sm" style="padding:5px 14px !important" data-action="save" ${state.busy ? "disabled" : ""}>${d.id ? "Save Changes" : "Create Preset"}</button>
-            ` : ""}
-            <button type="button" class="ps-btn-sm" data-action="refresh" title="Reload presets and chats">↻</button>
-            ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full</button>' : '<button type="button" class="ps-btn-sm" data-action="full-window" title="Expand to full window">⤢ Full</button>'}
-          </div>
-        </header>
+          <select data-action="open" style="max-width:260px;min-height:32px;padding:3px 10px;font-weight:600" aria-label="Select preset">
+            <option value="">${d && !d.id ? `Draft: ${esc(d.name)}` : state.loading && !state.presets.length ? "Loading presets…" : `Open preset (${state.presets.length})…`}</option>
+            ${selectOptions(state.presets, d?.id, (x) => x.name)}
+          </select>
 
-        ${state.notice ? `<div class="ps-notice" role="status"><span>${esc(state.notice)}</span><button type="button" class="ps-btn-sm ps-btn-icon" data-action="dismiss-notice" aria-label="Dismiss">✕</button></div>` : ""}
+          <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
+          <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">\uD83D\uDCE5 Import</button>
+          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">\uD83D\uDCE4 Export</button>' : ""}
+          ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ""}
+        </div>
 
-        ${d ? `
-          <!-- Clean 4-Tab "Adaptive Pro" Bar -->
-          <nav class="ps-tabs" aria-label="Studio workspace tabs">
-            ${[
+        <div class="ps-actions">
+          ${d ? `
+            <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} tokens</span>
+            <span class="ps-pill ${state.saving ? "ps-pill-accent" : state.dirty ? "ps-pill-warn" : "ps-pill-ok"}">${state.saving ? "↻ Saving…" : state.dirty ? "● Unsaved" : "✓ Saved"}</span>
+            <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? "disabled" : ""} title="Undo (Ctrl+Z)">↶</button>
+            <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? "disabled" : ""} title="Redo (Ctrl+Shift+Z)">↷</button>
+            <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.saving ? "disabled" : ""}>Save Copy</button>
+            <button type="button" class="ps-primary ps-btn-sm" style="padding:5px 14px !important" data-action="save" ${state.saving ? "disabled" : ""}>${state.saving ? "Saving…" : d.id ? "Save Changes" : "Create Preset"}</button>
+          ` : ""}
+          <button type="button" class="ps-btn-sm" data-action="refresh" ${state.loading ? "disabled" : ""} title="Reload presets and chats">${state.loading ? "…" : "↻"}</button>
+          ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full</button>' : '<button type="button" class="ps-btn-sm" data-action="full-window" title="Expand to full window">⤢ Full</button>'}
+        </div>
+      </header>
+
+      ${renderPermissionBanner(state)}
+      ${state.loadError ? `<div class="ps-notice" style="border-left-color:var(--ps-danger)" role="alert"><span>⚠ ${esc(state.loadError)}</span><button type="button" class="ps-btn-sm ps-primary" data-action="refresh">Retry Load</button></div>` : ""}
+      ${state.notice ? `<div class="ps-notice" role="status"><span>${esc(state.notice)}</span><button type="button" class="ps-btn-sm ps-btn-icon" data-action="dismiss-notice" aria-label="Dismiss">✕</button></div>` : ""}
+
+      ${d ? `
+        <nav class="ps-tabs" aria-label="Studio workspace tabs">
+          ${[
       ["blocks", "01", `Build Prompts (${d.prompt_order.length})`],
       ["variables", "02", `User Inputs${totalVarsCount ? ` (${totalVarsCount})` : ""}`],
       ["remix", "03", "Remix & Translate"],
       ["test", "04", "Test Lab & X-Ray"]
     ].map(([id, step, label]) => `<button type="button" data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join("")}
-          </nav>
-
-          ${state.view === "blocks" ? renderArchitectTab(ctx, state) : state.view === "variables" ? renderVariablesTab(state) : state.view === "remix" ? renderRemixAndTranslateTab(state) : renderTestTab(state)}
-        ` : `
-          <div class="ps-panel ps-empty-state" style="padding:42px 20px">
-            <div style="font-size:2rem;margin-bottom:8px">✳</div>
-            <h3>Welcome to Preset Studio</h3>
-            <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.</p>
-            <div class="ps-actions" style="justify-content:center">
-              <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
-              <button type="button" data-action="import-preset-json">\uD83D\uDCE5 Import Preset JSON</button>
-              ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ""}
-            </div>
-          </div>
-        `}
-      </div>
+        </nav>
+      ` : ""}
     `;
+  }
+  function renderBody() {
+    if (destroyed)
+      return;
+    clampSelected();
+    const savedRootScroll = root.scrollTop;
+    const savedScrollMap = new Map;
+    shellBodyEl.querySelectorAll("[data-scroll-id]").forEach((el) => {
+      if (el.dataset.scrollId)
+        savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
+    });
+    const openDetailsIds = new Set;
+    shellBodyEl.querySelectorAll("details[data-details-id]").forEach((el) => {
+      if (el.open && el.dataset.detailsId)
+        openDetailsIds.add(el.dataset.detailsId);
+    });
+    destroyMounted();
+    const d = state.draft;
+    shellBodyEl.innerHTML = d ? state.view === "blocks" ? renderArchitectTab(ctx, state) : state.view === "variables" ? renderVariablesTab(state) : state.view === "remix" ? renderRemixAndTranslateTab(state) : renderTestTab(state) : `
+        <div class="ps-panel ps-empty-state" style="padding:42px 20px">
+          <div style="font-size:2rem;margin-bottom:8px">✳</div>
+          <h3>Welcome to Preset Studio</h3>
+          <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">${state.loading ? "Loading your presets, chats, and connections…" : `Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.`}</p>
+          <div class="ps-actions" style="justify-content:center">
+            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+            <button type="button" data-action="import-preset-json">\uD83D\uDCE5 Import Preset JSON</button>
+            ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ""}
+          </div>
+        </div>
+      `;
     mountInteractiveWidgets();
     if (state.view === "test" && (state.testOutputTab || "reply") === "reply") {
-      const bubbleEl = root.querySelector("#ps-chat-reply-bubble");
+      const bubbleEl = shellBodyEl.querySelector("#ps-chat-reply-bubble");
       if (bubbleEl) {
         const runs = Array.isArray(state.runs) ? state.runs : [];
         const idx = typeof state.viewingRunIndex === "number" && state.viewingRunIndex >= 0 && state.viewingRunIndex < runs.length ? state.viewingRunIndex : runs.length - 1;
@@ -3624,12 +3965,12 @@ function setup(ctx) {
       }
     }
     openDetailsIds.forEach((id) => {
-      const det = root.querySelector(`details[data-details-id="${CSS.escape(id)}"]`);
+      const det = shellBodyEl.querySelector(`details[data-details-id="${CSS.escape(id)}"]`);
       if (det)
         det.open = true;
     });
     savedScrollMap.forEach((pos, id) => {
-      const el = root.querySelector(`[data-scroll-id="${CSS.escape(id)}"]`);
+      const el = shellBodyEl.querySelector(`[data-scroll-id="${CSS.escape(id)}"]`);
       if (el) {
         el.scrollTop = pos.top;
         el.scrollLeft = pos.left;
@@ -3637,10 +3978,21 @@ function setup(ctx) {
     });
     root.scrollTop = savedRootScroll;
   }
-  function refresh() {
-    if (refreshPromise)
+  function render() {
+    if (destroyed)
+      return;
+    resetDragState();
+    renderHeader();
+    renderBody();
+  }
+  function refresh(force = false, silent = false) {
+    if (refreshPromise && !force)
       return refreshPromise;
-    refreshPromise = request("load").then((data) => {
+    state.loading = true;
+    state.loadError = "";
+    if (!silent)
+      renderHeader();
+    const currentRun = request("load", {}, {}, 15000).then((data) => {
       if (destroyed || !data)
         return;
       state.presets = Array.isArray(data.presets) ? data.presets : [];
@@ -3676,18 +4028,38 @@ function setup(ctx) {
       if (state.draft) {
         scheduleTokenCount();
       }
-      render();
+      state.loading = false;
+      state.loadError = "";
+      if (silent) {
+        renderHeader();
+      } else {
+        render();
+      }
+    }).catch((err) => {
+      if (destroyed)
+        return;
+      state.loading = false;
+      state.loadError = err?.message || "Could not load presets from backend.";
+      renderHeader();
+      if (!state.draft)
+        renderBody();
     }).finally(() => {
-      refreshPromise = null;
+      if (refreshPromise === currentRun)
+        refreshPromise = null;
     });
-    return refreshPromise;
+    refreshPromise = currentRun;
+    return currentRun;
   }
   const cleanupLauncher = mountPresetEditorLauncher(ctx, state, setFull, Boolean(mount), tab, scheduleTokenCount, refresh, render);
-  bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
+  resetDragState = bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
+  async function confirmUser(title, message, variant = "warning", confirmLabel = "Confirm") {
+    const showConfirmFn = typeof ctx.ui?.showConfirm === "function" ? (opts) => ctx.ui.showConfirm(opts) : undefined;
+    return askConfirm(dialogHostEl, modalRef, title, message, variant, confirmLabel, showConfirmFn);
+  }
   async function saveEntriesAsTemplate(entries, suggestedName = "") {
     if (!entries.length)
       throw new Error("Select at least one block first.");
-    const name = await promptTemplateName(root, modalRef, suggestedName, entries.length);
+    const name = await promptTemplateName(dialogHostEl, modalRef, suggestedName, entries.length);
     if (!name)
       return;
     state.templates = await request("template-save", {
@@ -3710,7 +4082,7 @@ function setup(ctx) {
     if (!row)
       return;
     e.preventDefault();
-    openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), e.clientX, e.clientY, contextMenuCallbacks);
+    openBlockContextMenu(dialogHostEl, modalRef, state, Number(row.dataset.contextIndex), e.clientX, e.clientY, contextMenuCallbacks);
   });
   root.addEventListener("touchstart", (e) => {
     const target = e.target;
@@ -3724,7 +4096,7 @@ function setup(ctx) {
     const y = t.clientY;
     clearTimeout(longPressTimer);
     longPressTimer = setTimeout(() => {
-      openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
+      openBlockContextMenu(dialogHostEl, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
     }, 520);
   }, { passive: true });
   root.addEventListener("touchmove", () => clearTimeout(longPressTimer), { passive: true });
@@ -3735,12 +4107,21 @@ function setup(ctx) {
       return;
     const d = state.draft;
     if (el.dataset.block && d) {
+      clampSelected();
+      const targetBlock = d.prompt_order?.[state.selected];
+      if (!targetBlock)
+        return;
       let val = el.value;
       if (el.dataset.block === "depth")
         val = Math.max(0, Number(val) || 0);
       if (el.dataset.block === "marker" || el.dataset.block === "categoryMode" || el.dataset.block === "group")
         val = val || null;
-      d.prompt_order[state.selected][el.dataset.block] = val;
+      targetBlock[el.dataset.block] = val;
+      if (el.dataset.block === "name") {
+        const heading = shellBodyEl.querySelector(".ps-col-detail h3");
+        if (heading)
+          heading.textContent = val || "Untitled";
+      }
       persist(false, true);
     } else if (el.dataset.preset && d) {
       d[el.dataset.preset] = el.value;
@@ -3759,7 +4140,8 @@ function setup(ctx) {
       else if (field === "content")
         state.authorsNote.content = el.value;
     } else if (el.dataset.varIndex !== undefined && d) {
-      const b = d.prompt_order[state.selected];
+      clampSelected();
+      const b = d.prompt_order?.[state.selected];
       const idx = Number(el.dataset.varIndex);
       const v = b?.variables?.[idx];
       if (!v)
@@ -3778,19 +4160,27 @@ function setup(ctx) {
         else
           v[f] = ["min", "max", "step", "rows"].includes(f) ? Number(el.value) : el.value;
       }
-      b.variables[idx] = normalizeVariableDef(v, true);
+      const norm = normalizeVariableDef(v, true);
+      b.variables[idx] = norm;
+      const titleEl = shellBodyEl.querySelector(`[data-var-card-title="${idx}"]`);
+      if (titleEl)
+        titleEl.textContent = norm.label || norm.name || "Variable";
+      const macroEl = shellBodyEl.querySelector(`[data-var-card-macro="${idx}"]`);
+      if (macroEl)
+        macroEl.textContent = `{{var::${norm.name || "key"}}}`;
+      const insBtn = shellBodyEl.querySelector(`[data-var-insert-btn="${idx}"]`);
+      if (insBtn)
+        insBtn.dataset.varName = norm.name || "key";
+      const copyBtn = shellBodyEl.querySelector(`[data-var-copy-btn="${idx}"]`);
+      if (copyBtn)
+        copyBtn.dataset.macro = `{{var::${norm.name || "key"}}}`;
       persist(false, true);
       updateLiveVariablesPreview();
-    } else if (el.dataset.varRuntime && d) {
-      const b = d.prompt_order[state.selected];
-      if (!b)
-        return;
-      d.metadata = d.metadata || {};
-      d.metadata.promptVariables = d.metadata.promptVariables || {};
-      d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
-      d.metadata.promptVariables[b.id][el.dataset.varRuntime] = el.value;
-      persist(false, true);
-      updateLiveVariablesPreview();
+      clearTimeout(varPreviewTimer);
+      varPreviewTimer = setTimeout(() => {
+        if (!destroyed)
+          mountVariablePreviewControls();
+      }, 150);
     } else if (el.dataset.state === "sourceTranslationName" && state.sourceTranslation)
       state.sourceTranslation.name = el.value;
     else if (el.dataset.state === "translationName" && state.translation)
@@ -3807,15 +4197,25 @@ function setup(ctx) {
     } else if (el.dataset.state) {
       const key = el.dataset.state;
       state[key] = el.value;
-      if (["blockSearch", "breakdownSearch", "compareA", "compareB"].includes(key)) {
-        const pos = el.selectionStart;
-        render();
-        const nextEl = root.querySelector(`[data-state="${key}"]`);
-        if (nextEl) {
-          nextEl.focus({ preventScroll: true });
-          if (typeof pos === "number" && nextEl.setSelectionRange)
-            nextEl.setSelectionRange(pos, pos);
+      if (key === "blockSearch") {
+        const slot = shellBodyEl.querySelector("#ps-block-list-slot");
+        if (slot)
+          slot.innerHTML = renderBlockListOnlyHtml(state);
+        const countEl = shellBodyEl.querySelector("[data-block-list-count]");
+        if (countEl && state.draft) {
+          const shown = slot ? slot.querySelectorAll(".ps-block").length : 0;
+          countEl.textContent = `Prompt Blocks (${shown}/${state.draft.prompt_order.length})`;
         }
+      } else if (key === "breakdownSearch") {
+        const slot = shellBodyEl.querySelector("#ps-xray-list-slot");
+        if (slot)
+          slot.innerHTML = renderXRayListOnlyHtml(state);
+      } else if (key === "remixSearch") {
+        const slot = shellBodyEl.querySelector("#ps-remix-source-slot");
+        if (slot)
+          slot.innerHTML = renderRemixSourceListHtml(state);
+      } else if (["compareA", "compareB"].includes(key)) {
+        renderBody();
       }
     }
   });
@@ -3827,7 +4227,7 @@ function setup(ctx) {
       if (["compareA", "compareB", "connectionId", "chatId", "generationType"].includes(key)) {
         if (key === "connectionId")
           scheduleTokenCount();
-        render();
+        renderBody();
       }
       return;
     }
@@ -3836,10 +4236,13 @@ function setup(ctx) {
       return;
     }
     if (el.tagName === "SELECT" && el.dataset.block && state.draft) {
+      clampSelected();
+      const blk = state.draft.prompt_order?.[state.selected];
+      if (!blk)
+        return;
       let val = el.value;
       if (el.dataset.block === "marker" || el.dataset.block === "categoryMode")
         val = val || null;
-      const blk = state.draft.prompt_order[state.selected];
       blk[el.dataset.block] = val;
       if (el.dataset.block === "marker") {
         if (val === "category" && !blk.categoryMode)
@@ -3848,47 +4251,49 @@ function setup(ctx) {
           blk.categoryMode = null;
       }
       persist();
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.draftId !== undefined) {
       const id = el.dataset.draftId;
       state.selectedDraft = el.checked ? [...new Set([...state.selectedDraft, id])] : state.selectedDraft.filter((x) => x !== id);
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.importIndex !== undefined) {
       const i = Number(el.dataset.importIndex);
       state.selectedImports = el.checked ? [...new Set([...state.selectedImports, i])] : state.selectedImports.filter((n) => n !== i);
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.customCheck === "history") {
       state.testCustomPromptIncludeHistory = el.checked;
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.turnIdx !== undefined && el.dataset.turnField === "role") {
       const idx = Number(el.dataset.turnIdx);
       if (state.testTurns[idx]) {
         state.testTurns[idx].role = el.value;
-        render();
+        renderBody();
       }
       return;
     }
     if (el.dataset.varField === "type") {
+      clampSelected();
       const b = state.draft?.prompt_order?.[state.selected];
       const idx = Number(el.dataset.varIndex);
       if (b?.variables?.[idx]) {
         b.variables[idx] = normalizeVariableDef({ ...b.variables[idx], type: el.value });
       }
       persist();
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.action === "select-block-dropdown") {
       state.selected = Number(el.value) || 0;
-      render();
+      clampSelected();
+      renderBody();
       return;
     }
     if (el.dataset.action === "import-source") {
@@ -3908,7 +4313,7 @@ function setup(ctx) {
           state.importValues = preset.metadata?.promptVariables || {};
           state.expandedImports = state.importBlocks.map((_, idx) => idx);
         }
-        render();
+        renderBody();
       } catch (err) {
         state.notice = err.message;
         render();
@@ -3917,8 +4322,8 @@ function setup(ctx) {
     }
     if (el.dataset.action === "open" && el.value) {
       try {
-        if (state.dirty && !await askConfirm(root, modalRef, "Discard Unsaved Changes?", "Open this preset and discard your current unsaved draft?", "warning", "Open Preset")) {
-          render();
+        if (state.dirty && !await confirmUser("Discard Unsaved Changes?", "Open this preset and discard your current unsaved draft?", "warning", "Open Preset")) {
+          renderHeader();
           return;
         }
         state.draft = ensureUniqueBlockIds(await request("get", { id: el.value }));
@@ -3957,9 +4362,14 @@ function setup(ctx) {
         state.notice = "";
         render();
         return;
+      } else if (a === "open-extension-settings") {
+        ctx.events.emit("open-settings", { view: "extensions" });
+        return;
       } else if (a === "refresh") {
-        await refresh();
-        state.notice = `Synced ${state.presets.length} presets and ${state.chats.length} chats.`;
+        await refresh(true);
+        if (!state.loadError) {
+          state.notice = `Synced ${state.presets.length} presets and ${state.chats.length} chats.`;
+        }
       } else if (a === "undo") {
         undo();
         return;
@@ -3967,7 +4377,7 @@ function setup(ctx) {
         redo();
         return;
       } else if (a === "new") {
-        if (state.dirty && !await askConfirm(root, modalRef, "Start New Preset?", "Discard your current unsaved draft and start a new preset?", "warning", "Start New")) {
+        if (state.dirty && !await confirmUser("Start New Preset?", "Discard your current unsaved draft and start a new preset?", "warning", "Start New")) {
           return;
         }
         state.draft = freshDraft();
@@ -3982,11 +4392,11 @@ function setup(ctx) {
       } else if (a === "restore") {
         if (!state.recovery)
           throw new Error("No recovered draft is available.");
-        if (state.dirty && !await askConfirm(root, modalRef, "Recover Draft?", "Replace the current draft with the last auto-recovered draft?", "warning", "Recover")) {
+        if (state.dirty && !await confirmUser("Recover Draft?", "Replace the current draft with the last auto-recovered draft?", "warning", "Recover")) {
           return;
         }
         state.draft = ensureUniqueBlockIds(structuredClone(state.recovery));
-        state.selected = 0;
+        clampSelected();
         state.dirty = true;
         scheduleTokenCount();
       } else if (a === "import-preset-json")
@@ -4003,16 +4413,20 @@ function setup(ctx) {
         state.view = el.dataset.view;
       } else if (a === "set-remix-subtab") {
         state.remixSubTab = el.dataset.subtab || "mixer";
-        render();
+        renderBody();
         return;
       } else if (a === "set-test-output-tab") {
         state.testOutputTab = el.dataset.outtab || "reply";
-        render();
+        renderBody();
+        return;
+      } else if (a === "set-compare-mode") {
+        state.compareMode = el.dataset.mode === "diff" ? "diff" : "side";
+        renderBody();
         return;
       } else if (a === "editor-mode") {
         state.editorMode = el.dataset.mode;
       } else if (a === "open-find-replace") {
-        openFindReplaceDialog(root, modalRef, state, persist, render);
+        openFindReplaceDialog(dialogHostEl, modalRef, state, persist, render);
         return;
       } else if (a === "toggle-category-collapse") {
         const catId = el.dataset.catId;
@@ -4038,6 +4452,7 @@ function setup(ctx) {
         }
       } else if (a === "select-block") {
         state.selected = Number(el.dataset.index);
+        clampSelected();
         state.mobileDetailOpen = true;
         if (state.showMacroPane)
           await runMacroPreview(d.prompt_order[state.selected]);
@@ -4045,7 +4460,7 @@ function setup(ctx) {
         state.mobileDetailOpen = false;
       else if (a === "block-menu") {
         const rect = el.getBoundingClientRect();
-        openBlockContextMenu(root, modalRef, state, Number(el.dataset.index), rect.left, rect.bottom + 4, contextMenuCallbacks);
+        openBlockContextMenu(dialogHostEl, modalRef, state, Number(el.dataset.index), rect.left, rect.bottom + 4, contextMenuCallbacks);
         return;
       } else if (a === "toggle-lock" && b) {
         b.isLocked = !b.isLocked;
@@ -4172,7 +4587,7 @@ ${snippetToInsert}` : snippetToInsert;
         const targetRun = state.runs[idx];
         if (!targetRun?.snapshot)
           return;
-        if (!await askConfirm(root, modalRef, `Restore Preset from Run #${idx + 1}?`, `Replace your current draft blocks, variables, and samplers with the exact snapshot used in Run #${idx + 1} (${targetRun.time})? (You can still Undo with Ctrl+Z.)`, "warning", "Restore Snapshot")) {
+        if (!await confirmUser(`Restore Preset from Run #${idx + 1}?`, `Replace your current draft blocks, variables, and samplers with the exact snapshot used in Run #${idx + 1} (${targetRun.time})? (You can still Undo with Ctrl+Z.)`, "warning", "Restore Snapshot")) {
           return;
         }
         state.draft = ensureUniqueBlockIds(structuredClone(targetRun.snapshot));
@@ -4196,7 +4611,7 @@ ${snippetToInsert}` : snippetToInsert;
         }
         return;
       } else if (a === "clear-run-history") {
-        if (!await askConfirm(root, modalRef, "Clear Test History?", `Remove all ${state.runs.length} recorded test runs from history?`, "danger", "Clear History")) {
+        if (!await confirmUser("Clear Test History?", `Remove all ${state.runs.length} recorded test runs from history?`, "danger", "Clear History")) {
           return;
         }
         state.runs = [];
@@ -4387,7 +4802,7 @@ ${ent.block.content || ""}`).join(`
         moveBlock(idx, idx + (a === "move-row-up" ? -1 : 1));
         return;
       } else if (a === "quick-insert-template") {
-        openTemplatePickerModal(root, modalRef, state, insertEntries, importJsonFile, render);
+        openTemplatePickerModal(dialogHostEl, modalRef, state, insertEntries, importJsonFile, render);
         return;
       } else if (a === "quick-template-from-selected") {
         const chosen = d.prompt_order.filter((blk) => state.selectedDraft.includes(blk.id));
@@ -4410,7 +4825,7 @@ ${ent.block.content || ""}`).join(`
         state.notice = `Added ${t.entries.length} blocks from ${t.name}.`;
       } else if (a === "delete-template") {
         const t = state.templates[Number(el.dataset.index)];
-        if (!t || !await askConfirm(root, modalRef, "Delete Template?", `Delete the saved template “${t.name}”?`, "danger", "Delete"))
+        if (!t || !await confirmUser("Delete Template?", `Delete the saved template “${t.name}”?`, "danger", "Delete"))
           return;
         state.templates = await request("template-delete", { id: t.id });
         state.notice = "Template deleted.";
@@ -4553,7 +4968,7 @@ ${ent.block.content || ""}`).join(`
         const count = state.selectedDraft.length;
         if (!count)
           return;
-        if (!await askConfirm(root, modalRef, "Delete Checked Blocks?", `Delete ${count} checked block(s) from your draft?`, "danger", `Delete ${count} Block(s)`)) {
+        if (!await confirmUser("Delete Checked Blocks?", `Delete ${count} checked block(s) from your draft?`, "danger", `Delete ${count} Block(s)`)) {
           return;
         }
         const toRemove = new Set(state.selectedDraft);
@@ -4584,23 +4999,26 @@ ${ent.block.content || ""}`).join(`
         }
         persist();
       } else if (a === "save" || a === "save-copy") {
-        root.inert = true;
-        root.setAttribute("aria-busy", "true");
+        if (state.saving)
+          return;
+        state.saving = true;
+        lastLocalSaveAt = Date.now();
+        renderHeader();
         const activeIdx = state.selected;
         try {
           const saved = ensureUniqueBlockIds(await syncSaveWithNativePresetEditor(ctx, request, d, a === "save-copy"));
+          lastLocalSaveAt = Date.now();
           state.draft = saved;
           state.selected = Math.min(activeIdx, Math.max(0, (saved.prompt_order || []).length - 1));
           state.savedFingerprint = computeDraftFingerprint(saved);
           state.dirty = false;
           clearTimeout(timer);
           await saveChain;
-          await request("draft", { draft: saved });
-          await refresh();
+          await request("draft", { draft: saved }).catch(() => {});
+          await refresh(true, true);
           state.notice = saved.provider === "loom" ? `Saved "${saved.name}" live to Lumiverse.` : `Saved "${saved.name}".`;
         } finally {
-          root.inert = false;
-          root.removeAttribute("aria-busy");
+          state.saving = false;
         }
       } else if (a === "profile") {
         const peState = ctx.ui?.presetEditor?.getState?.();
@@ -4662,22 +5080,42 @@ ${ent.block.content || ""}`).join(`
         const stagedTurns = state.testTurnMode === "multi" ? state.testTurns : state.custom.trim() ? [{ role: "user", content: state.custom.trim() }] : [];
         render();
         await new Promise((resolve, reject) => {
+          let inactivityTimer = null;
+          const resetInactivity = () => {
+            if (inactivityTimer)
+              clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(() => {
+              if (pending.delete(requestId)) {
+                reject(new Error("Generation timed out while waiting for provider stream."));
+              }
+            }, 120000);
+          };
+          resetInactivity();
           pending.set(requestId, {
-            resolve,
-            reject,
+            touch: resetInactivity,
+            resolve: (val) => {
+              if (inactivityTimer)
+                clearTimeout(inactivityTimer);
+              resolve(val);
+            },
+            reject: (err) => {
+              if (inactivityTimer)
+                clearTimeout(inactivityTimer);
+              reject(err);
+            },
             onAssembled: (assembledPayload) => {
               state.assembled = assembledPayload;
-              render();
+              renderBody();
             },
             onReasoning: (token) => {
               state.reasoning += token;
-              const rbox = root.querySelector(".ps-reasoning-box");
+              const rbox = shellBodyEl.querySelector(".ps-reasoning-box");
               if (rbox)
                 rbox.textContent = state.reasoning;
             },
             onToken: (token) => {
               state.result += token;
-              const bubble = root.querySelector("#ps-chat-reply-bubble");
+              const bubble = shellBodyEl.querySelector("#ps-chat-reply-bubble");
               if (bubble) {
                 renderChatPreviewInto(bubble, state.result, state.testReplyViewMode === "raw");
               }
@@ -4720,6 +5158,10 @@ ${ent.block.content || ""}`).join(`
             });
             if (state.runs.length > 15)
               state.runs.shift();
+            for (let ri = 0;ri < state.runs.length - 5; ri++) {
+              if (state.runs[ri]?.snapshot)
+                delete state.runs[ri].snapshot;
+            }
             state.viewingRunIndex = state.runs.length - 1;
             if (state.runs.length >= 2) {
               state.compareA = state.runs.length - 2;
@@ -4735,6 +5177,8 @@ ${ent.block.content || ""}`).join(`
     } catch (err) {
       state.busy = false;
       state.activeRun = null;
+      state.saving = false;
+      state.translating = false;
       state.notice = (err.message || String(err)) + (a === "save" ? " Your draft is preserved." : "");
       render();
     }
@@ -4742,17 +5186,19 @@ ${ent.block.content || ""}`).join(`
   const unsubActivate = tab.onActivate?.(() => {
     refresh().catch((err) => {
       state.notice = err.message;
-      render();
+      renderHeader();
     });
   });
-  refresh().catch(() => {});
+  ctx.ready?.();
   render();
+  refresh(true).catch(() => {});
   return () => {
     destroyed = true;
     closeModalRef(modalRef);
     destroyMounted();
     clearTimeout(timer);
     clearTimeout(tokenTimer);
+    clearTimeout(varPreviewTimer);
     clearTimeout(longPressTimer);
     if (state.activeRun)
       request("cancel", { runId: state.activeRun }).catch(() => {});
@@ -4767,6 +5213,7 @@ ${ent.block.content || ""}`).join(`
     unsubActivate?.();
     unsubKb?.();
     cleanupLauncher();
+    resetDragState();
     document.removeEventListener("keydown", onKey);
     mount?.destroy();
     tab.destroy();

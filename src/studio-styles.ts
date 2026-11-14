@@ -1,19 +1,23 @@
 export const STUDIO_BASE_CSS = `
 .ps-root {
-  --ps-bg: var(--lumiverse-fill, #17161d);
-  --ps-bg-deep: var(--lumiverse-bg-deep, #100f15);
-  --ps-surface: var(--lumiverse-fill-subtle, #201e29);
+  --ps-bg: var(--lumiverse-fill, var(--lumiverse-bg, #17161d));
+  --ps-bg-deep: var(--lumiverse-bg-deep, var(--lumiverse-bg, #100f15));
+  --ps-surface: var(--lumiverse-fill-subtle, var(--lumiverse-bg-elevated, #201e29));
   --ps-elevated: var(--lumiverse-bg-elevated, #292734);
-  --ps-border: var(--lumiverse-border, rgba(255, 255, 255, 0.1));
-  --ps-border-hover: var(--lumiverse-border-hover, rgba(255, 255, 255, 0.22));
+  --ps-border: var(--lumiverse-border, rgba(128, 128, 160, 0.22));
+  --ps-border-hover: var(--lumiverse-border-hover, rgba(128, 128, 160, 0.38));
   --ps-text: var(--lumiverse-text, #f3f1f8);
   --ps-muted: var(--lumiverse-text-muted, #9e99b0);
   --ps-accent: var(--lumiverse-primary, #a795e8);
-  --ps-accent-soft: rgba(167, 149, 232, 0.14);
+  --ps-accent-soft: var(--lumiverse-primary-015, rgba(167, 149, 232, 0.14));
+  --ps-accent-border: var(--lumiverse-primary-050, rgba(167, 149, 232, 0.45));
   --ps-accent-contrast: var(--lumiverse-primary-contrast, #14111d);
   --ps-danger: var(--lumiverse-danger, #ef6c6c);
+  --ps-danger-soft: var(--lumiverse-danger-015, rgba(239, 108, 108, 0.14));
   --ps-success: var(--lumiverse-success, #5ec269);
+  --ps-success-soft: var(--lumiverse-success-015, rgba(94, 194, 105, 0.14));
   --ps-warning: var(--lumiverse-warning, #f5b942);
+  --ps-warning-soft: var(--lumiverse-warning-015, rgba(245, 185, 66, 0.12));
   --ps-radius: var(--lumiverse-radius, 10px);
   --ps-kb-inset: 0px;
   container-type: inline-size;
@@ -74,11 +78,11 @@ export const STUDIO_BASE_CSS = `
   color: var(--ps-accent-contrast) !important;
   border-color: transparent !important;
   font-weight: 700 !important;
-  box-shadow: 0 2px 10px rgba(167, 149, 232, 0.22);
+  box-shadow: 0 2px 10px var(--ps-accent-soft);
 }
 .ps-primary:hover:not(:disabled) { filter: brightness(1.08); }
-.ps-danger-btn { border-color: rgba(239, 108, 108, 0.38) !important; color: var(--ps-danger) !important; }
-.ps-danger-btn:hover:not(:disabled) { background: rgba(239, 108, 108, 0.12) !important; }
+.ps-danger-btn { border-color: var(--lumiverse-danger-050, rgba(239, 108, 108, 0.42)) !important; color: var(--ps-danger) !important; }
+.ps-danger-btn:hover:not(:disabled) { background: var(--ps-danger-soft) !important; }
 
 /* Surfaces & Cards */
 .ps-panel {
@@ -147,9 +151,9 @@ export const STUDIO_BASE_CSS = `
   color: var(--ps-muted);
   white-space: nowrap;
 }
-.ps-pill-accent { border-color: rgba(167, 149, 232, 0.5); color: var(--ps-accent); background: var(--ps-accent-soft); }
-.ps-pill-warn { border-color: rgba(245, 185, 66, 0.5); color: var(--ps-warning); background: rgba(245, 185, 66, 0.1); }
-.ps-pill-ok { border-color: rgba(94, 194, 105, 0.5); color: var(--ps-success); background: rgba(94, 194, 105, 0.12); }
+.ps-pill-accent { border-color: var(--ps-accent-border); color: var(--ps-accent); background: var(--ps-accent-soft); }
+.ps-pill-warn { border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.5)); color: var(--ps-warning); background: var(--ps-warning-soft); }
+.ps-pill-ok { border-color: var(--lumiverse-success-050, rgba(94, 194, 105, 0.5)); color: var(--ps-success); background: var(--ps-success-soft); }
 .ps-step-badge {
   display: inline-flex;
   align-items: center;
@@ -398,7 +402,10 @@ export const STUDIO_BASE_CSS = `
 }
 .ps-row-actions { display: flex; align-items: center; gap: 3px; flex: none; }
 .ps-row-step { display: none !important; }
-.ps-block:hover .ps-row-step, .ps-block.ps-active-row .ps-row-step { display: inline-flex !important; }
+.ps-block:hover .ps-row-step, .ps-block.ps-active-row .ps-row-step, .ps-block:focus-within .ps-row-step { display: inline-flex !important; }
+@media (hover: none) {
+  .ps-row-step { display: inline-flex !important; }
+}
 .ps-row-btn {
   min-height: 24px !important;
   min-width: 24px !important;
@@ -406,6 +413,34 @@ export const STUDIO_BASE_CSS = `
   font-size: 0.72rem !important;
   flex: none;
 }
+.ps-perm-banner {
+  border: 1px solid var(--lumiverse-warning-050, rgba(245, 185, 66, 0.45));
+  background: var(--ps-warning-soft);
+  border-radius: var(--ps-radius);
+  padding: 9px 12px;
+  margin: 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.83rem;
+}
+.ps-diff-box {
+  font-family: var(--lumiverse-font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  border: 1px solid var(--ps-border);
+  border-radius: 8px;
+  background: var(--ps-bg);
+  max-height: 440px;
+  overflow: auto;
+  padding: 6px 0;
+}
+.ps-diff-line { padding: 2px 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ps-diff-rem { background: var(--ps-danger-soft); color: var(--ps-danger); }
+.ps-diff-add { background: var(--ps-success-soft); color: var(--ps-success); }
+.ps-diff-same { color: var(--ps-muted); }
+.ps-dialog-host { display: contents; }
 
 /* Native Dialogs & Context Menu */
 .ps-native-dialog {
@@ -509,7 +544,7 @@ export const STUDIO_POLISH_CSS = `
   place-items: center;
   width: 32px;
   height: 32px;
-  border: 1px solid rgba(167, 149, 232, 0.5);
+  border: 1px solid var(--ps-accent-border);
   border-radius: 8px;
   color: var(--ps-accent);
   background: var(--ps-accent-soft);
@@ -520,7 +555,9 @@ export const STUDIO_POLISH_CSS = `
 /* Primary 4-Tab Bar */
 .ps-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: thin;
   gap: 6px;
   border-bottom: 1px solid var(--ps-border);
   padding-bottom: 8px;
@@ -534,6 +571,7 @@ export const STUDIO_POLISH_CSS = `
   padding: 6px 13px !important;
   min-height: 34px !important;
   white-space: nowrap;
+  flex: 0 0 auto;
   font-size: 0.86rem !important;
 }
 .ps-tabs button:hover:not(:disabled) {
@@ -544,7 +582,7 @@ export const STUDIO_POLISH_CSS = `
   color: var(--ps-text) !important;
   background: var(--ps-surface) !important;
   border-color: var(--ps-accent) !important;
-  box-shadow: 0 2px 10px rgba(167, 149, 232, 0.14);
+  box-shadow: 0 2px 10px var(--ps-accent-soft);
   font-weight: 700 !important;
 }
 .ps-step {

@@ -11,6 +11,7 @@ import {
   sanitizeBlockForLoom,
   resolveBlockVariablesPreview,
   renderChatPreviewInto,
+  clampSelectedIndex,
   copyToClipboard,
   exportJsonFile,
   VARIABLE_STARTER_EXAMPLES,
@@ -26,6 +27,10 @@ import {
   type ModalRef,
 } from './studio-dialogs.js';
 import {
+  renderPermissionBanner,
+  renderBlockListOnlyHtml,
+  renderRemixSourceListHtml,
+  renderXRayListOnlyHtml,
   renderArchitectTab,
   renderVariablesTab,
   renderRemixAndTranslateTab,
@@ -38,6 +43,8 @@ import {
 } from './studio-bridge.js';
 
 export function setup(ctx: SpindleFrontendContext) {
+  ctx.deferReady?.();
+
   const tab = ctx.ui.registerDrawerTab({
     id: 'studio',
     title: 'Preset Studio',
@@ -53,6 +60,16 @@ export function setup(ctx: SpindleFrontendContext) {
 
   const root = document.createElement('div');
   root.className = 'ps-root';
+  const shellEl = document.createElement('div');
+  shellEl.className = 'ps-shell';
+  const shellHeaderEl = document.createElement('div');
+  shellHeaderEl.className = 'ps-shell-header';
+  const shellBodyEl = document.createElement('div');
+  shellBodyEl.className = 'ps-shell-body';
+  const dialogHostEl = document.createElement('div');
+  dialogHostEl.className = 'ps-dialog-host';
+  shellEl.append(shellHeaderEl, shellBodyEl);
+  root.append(shellEl, dialogHostEl);
   tab.root.appendChild(root);
 
   let mount: any = null;
@@ -68,12 +85,17 @@ export function setup(ctx: SpindleFrontendContext) {
     chats: [],
     connections: [],
     permissions: { presets: true, chats: true, generation: true, app_manipulation: true, regex_scripts: false },
+    loading: false,
+    loadError: '',
+    saving: false,
     draft: null,
     recovery: null,
     selected: 0,
     view: 'blocks',
     remixSubTab: 'mixer',
+    remixSearch: '',
     testOutputTab: 'reply',
+    compareMode: 'side',
     editorMode: 'studio',
     blockFilter: 'all',
     blockSearch: '',
@@ -138,41 +160,91 @@ export function setup(ctx: SpindleFrontendContext) {
   const pending = new Map<string, any>();
   const tokenCache = new Map<string, { count: number; tokenizerName: string }>();
   const mountedHandles = new Set<{ destroy?: () => void }>();
+  const variablePreviewHandles = new Set<{ destroy?: () => void }>();
   const modalRef: ModalRef = { current: null };
   let timer: any = null;
   let tokenTimer: any = null;
+  let varPreviewTimer: any = null;
   let longPressTimer: any = null;
   let refreshPromise: Promise<void> | null = null;
+  let lastLocalSaveAt = 0;
+  let resetDragState: () => void = () => {};
   let destroyed = false;
   let saveChain = Promise.resolve();
 
-  function destroyMounted() {
-    for (const h of mountedHandles) {
+  function destroyHandleSet(set: Set<{ destroy?: () => void }>) {
+    for (const h of set) {
       try {
         h.destroy?.();
       } catch (_) {}
     }
-    mountedHandles.clear();
+    set.clear();
   }
 
-  function trackMount(fn: () => any) {
+  function destroyMounted() {
+    destroyHandleSet(variablePreviewHandles);
+    destroyHandleSet(mountedHandles);
+  }
+
+  function trackMount(fn: () => any, targetSet: Set<{ destroy?: () => void }> = mountedHandles) {
     try {
       const h = fn();
-      if (h && typeof h.destroy === 'function') mountedHandles.add(h);
+      if (h && typeof h.destroy === 'function') targetSet.add(h);
       return h;
     } catch (_) {
       return null;
     }
   }
 
+  function clampSelected() {
+    state.selected = clampSelectedIndex(state.draft, state.selected);
+  }
+
   const unsubKb = ctx.ui?.events?.onKeyboardChange?.((kb: any) => {
     root.style.setProperty('--ps-kb-inset', kb?.visible ? `${kb.insetBottom || 0}px` : '0px');
   });
 
-  function request(action: string, payload: Record<string, any> = {}, handlers: Record<string, any> = {}): Promise<any> {
+  function request(
+    action: string,
+    payload: Record<string, any> = {},
+    handlers: Record<string, any> = {},
+    timeoutMs?: number,
+  ): Promise<any> {
     const requestId = uid();
+    const resolvedTimeout =
+      timeoutMs !== undefined
+        ? timeoutMs
+        : action === 'text-editor'
+          ? 0
+          : ['preview', 'run', 'translate', 'translate-batch'].includes(action)
+            ? 120_000
+            : 18_000;
+
     return new Promise((resolve, reject) => {
-      pending.set(requestId, { resolve, reject, ...handlers });
+      const entry: any = {
+        resolve: (val: any) => {
+          if (entry.timeoutId) clearTimeout(entry.timeoutId);
+          resolve(val);
+        },
+        reject: (err: any) => {
+          if (entry.timeoutId) clearTimeout(entry.timeoutId);
+          reject(err);
+        },
+        ...handlers,
+      };
+      const armTimer = () => {
+        if (entry.timeoutId) clearTimeout(entry.timeoutId);
+        if (resolvedTimeout > 0) {
+          entry.timeoutId = setTimeout(() => {
+            if (pending.delete(requestId)) {
+              entry.reject(new Error(`Request "${action}" timed out. Check connection or retry.`));
+            }
+          }, resolvedTimeout);
+        }
+      };
+      entry.touch = armTimer;
+      armTimer();
+      pending.set(requestId, entry);
       ctx.sendToBackend({ action, requestId, ...payload });
     });
   }
@@ -204,12 +276,13 @@ export function setup(ctx: SpindleFrontendContext) {
     if (!msg) return;
     if (msg.type === 'backend-ready' || msg.type === 'permissions') {
       if (msg.permissions) state.permissions = { ...state.permissions, ...msg.permissions };
-      refresh().catch(() => {});
+      refresh(true).catch(() => {});
       return;
     }
     if (msg.type === 'host-sync') {
       if (msg.chatId) state.chatId = msg.chatId;
-      refresh().catch(() => {});
+      const silent = msg.reason === 'preset_changed' && Date.now() - lastLocalSaveAt < 2000;
+      refresh(false, silent).catch(() => {});
       return;
     }
     if (msg.type === 'command') {
@@ -217,6 +290,7 @@ export function setup(ctx: SpindleFrontendContext) {
       if (msg.commandId === 'open-studio-full') setFull(true);
       else if (msg.commandId === 'test-studio-chat') {
         if (!state.draft) state.draft = freshDraft();
+        clampSelected();
         state.view = 'test';
         if (mount) setFull(true);
         else {
@@ -229,6 +303,7 @@ export function setup(ctx: SpindleFrontendContext) {
     }
     const p = pending.get(msg.requestId);
     if (!p) return;
+    p.touch?.();
     if (msg.type === 'token') {
       p.onToken?.(msg.token);
       return;
@@ -469,7 +544,7 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       if (
         state.dirty &&
-        !(await askConfirm(root, modalRef, 'Replace Draft?', 'Replace your current unsaved draft with the imported preset?', 'warning', 'Replace'))
+        !(await confirmUser('Replace Draft?', 'Replace your current unsaved draft with the imported preset?', 'warning', 'Replace'))
       ) {
         return;
       }
@@ -506,7 +581,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const msg = b.isLocked
       ? `“${b.name || 'Untitled'}” is currently locked (🔒). Delete it from your draft anyway?`
       : `Delete “${b.name || 'Untitled'}” from your draft?`;
-    if (!(await askConfirm(root, modalRef, 'Delete Block?', msg, 'danger', 'Delete Block'))) return;
+    if (!(await confirmUser('Delete Block?', msg, 'danger', 'Delete Block'))) return;
     const removedId = b.id;
     d.prompt_order.splice(index, 1);
     state.selectedDraft = state.selectedDraft.filter((id: string) => id !== removedId);
@@ -591,12 +666,164 @@ export function setup(ctx: SpindleFrontendContext) {
     outBox.textContent = text || '(Block content is empty)';
   }
 
+  function mountVariablePreviewControls() {
+    destroyHandleSet(variablePreviewHandles);
+    const d = state.draft;
+    if (!d || !ctx.components || state.view !== 'variables') return;
+    const b = d.prompt_order?.[state.selected];
+    const controlsSlot = shellBodyEl.querySelector<HTMLElement>('#ps-var-preview-controls-slot');
+    if (!controlsSlot || !b || !Array.isArray(b.variables) || b.variables.length === 0) return;
+
+    controlsSlot.innerHTML = '';
+    d.metadata = d.metadata || {};
+    d.metadata.promptVariables = d.metadata.promptVariables || {};
+    d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
+    const savedVars = d.metadata.promptVariables[b.id];
+
+    for (const v of b.variables) {
+      if (!v?.name) continue;
+      const currentVal = savedVars[v.name] !== undefined ? savedVars[v.name] : v.defaultValue;
+      const row = document.createElement('div');
+      row.style.cssText = 'display:grid;gap:4px;';
+      controlsSlot.appendChild(row);
+
+      if (v.type === 'switch' || v.type === 'boolean') {
+        trackMount(
+          () =>
+            ctx.components.mountSwitch(row, {
+              checked: currentVal === 1 || currentVal === '1' || currentVal === true || currentVal === 'true',
+              size: 'md',
+              ariaLabel: v.label || v.name,
+              onChange: (checked: boolean) => {
+                savedVars[v.name] = checked ? 1 : 0;
+                persist();
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+        const lbl = document.createElement('span');
+        lbl.textContent = ` ${v.label || v.name}`;
+        lbl.style.cssText = 'font-size:0.84rem;font-weight:600;margin-top:2px;';
+        row.appendChild(lbl);
+      } else if (v.type === 'slider') {
+        trackMount(
+          () =>
+            ctx.components.mountRangeSlider(row, {
+              label: v.label || v.name,
+              hint: v.description || '',
+              min: Number.isFinite(Number(v.min)) ? Number(v.min) : 0,
+              max: Number.isFinite(Number(v.max)) ? Number(v.max) : 100,
+              step: Number.isFinite(Number(v.step)) ? Number(v.step) : 1,
+              value: Number.isFinite(Number(currentVal)) ? Number(currentVal) : Number(v.min || 0),
+              onCommit: (val: number) => {
+                savedVars[v.name] = val;
+                persist();
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+      } else if (v.type === 'select') {
+        const rawOpts = Array.isArray(v.options) ? v.options : [];
+        const selectOptionsList = rawOpts.map((o: any) => ({
+          value: String(o.id ?? o.label ?? ''),
+          label: String(o.label || o.id || 'Option'),
+        }));
+        const labelEl = document.createElement('span');
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
+        row.appendChild(labelEl);
+        trackMount(
+          () =>
+            ctx.components.mountSelect(row, {
+              value: String(currentVal ?? selectOptionsList[0]?.value ?? ''),
+              options: selectOptionsList,
+              placeholder: 'Choose option…',
+              onChange: (val: string) => {
+                savedVars[v.name] = val;
+                persist();
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+      } else if (v.type === 'multiselect') {
+        const rawOpts = Array.isArray(v.options) ? v.options : [];
+        const multiOptionsList = rawOpts.map((o: any) => ({
+          value: String(o.id ?? o.label ?? ''),
+          label: String(o.label || o.id || 'Option'),
+        }));
+        const labelEl = document.createElement('span');
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
+        row.appendChild(labelEl);
+        const chosenList = Array.isArray(currentVal)
+          ? currentVal.map(String)
+          : typeof currentVal === 'string' && currentVal.trim()
+            ? currentVal.split(',').map((s: string) => s.trim())
+            : [];
+        trackMount(
+          () =>
+            ctx.components.mountMultiSelect(row, {
+              value: chosenList,
+              options: multiOptionsList,
+              placeholder: 'Select items…',
+              onChange: (vals: string[]) => {
+                savedVars[v.name] = vals;
+                persist();
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+      } else if (v.type === 'textarea') {
+        const labelEl = document.createElement('span');
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
+        row.appendChild(labelEl);
+        trackMount(
+          () =>
+            ctx.components.mountTextArea(row, {
+              value: String(currentVal ?? ''),
+              rows: Number(v.rows || 3),
+              placeholder: v.description || 'Type value…',
+              onChange: (val: string) => {
+                savedVars[v.name] = val;
+                persist(false, true);
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+      } else {
+        const labelEl = document.createElement('span');
+        labelEl.textContent = v.label || v.name;
+        labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
+        row.appendChild(labelEl);
+        trackMount(
+          () =>
+            ctx.components.mountTextInput(row, {
+              value: String(currentVal ?? ''),
+              placeholder: v.description || 'Type value…',
+              onChange: (val: string) => {
+                savedVars[v.name] = val;
+                persist(false, true);
+                updateLiveVariablesPreview();
+              },
+            }),
+          variablePreviewHandles,
+        );
+      }
+    }
+  }
+
   function mountInteractiveWidgets() {
     const d = state.draft;
     if (!d || !ctx.components) return;
 
     if (state.view === 'blocks' && state.editorMode === 'native') {
-      const slot = root.querySelector<HTMLElement>('#ps-native-loom-slot');
+      const slot = shellBodyEl.querySelector<HTMLElement>('#ps-native-loom-slot');
       if (slot && ctx.components.mountLoomBlockEditor) {
         trackMount(() =>
           ctx.components.mountLoomBlockEditor(slot, {
@@ -609,6 +836,7 @@ export function setup(ctx: SpindleFrontendContext) {
               d.prompt_order = next.blocks;
               d.metadata = d.metadata || {};
               d.metadata.promptVariables = next.promptVariableValues || {};
+              clampSelected();
               persist();
             },
           }),
@@ -622,21 +850,23 @@ export function setup(ctx: SpindleFrontendContext) {
         { key: 'temperature', label: 'Temperature (Randomness)', min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: 'top_p', label: 'Top-P (Nucleus Sampling)', min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
         { key: 'min_p', label: 'Min-P', min: 0, max: 1, step: 0.01, def: 0, decimals: 2 },
-        { key: 'frequency_penalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
-        { key: 'presence_penalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
+        { key: 'frequency_penalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
+        { key: 'presence_penalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: 'repetition_penalty', label: 'Repetition Penalty', min: 1, max: 2, step: 0.01, def: 1, decimals: 2 },
       ];
       for (const s of specs) {
-        const slot = root.querySelector<HTMLElement>(`[data-slider-slot="${s.key}"]`);
+        const slot = shellBodyEl.querySelector<HTMLElement>(`[data-slider-slot="${s.key}"]`);
         if (!slot) continue;
         slot.innerHTML = '';
+        const rawNum = Number(d.parameters?.[s.key]);
+        const initVal = d.parameters?.[s.key] !== undefined && d.parameters?.[s.key] !== '' && Number.isFinite(rawNum) ? rawNum : s.def;
         trackMount(() =>
           ctx.components.mountRangeSlider(slot, {
             label: s.label,
             min: s.min,
             max: s.max,
             step: s.step,
-            value: Number(d.parameters?.[s.key] ?? s.def),
+            value: initVal,
             format: { decimals: s.decimals },
             onCommit: (val: number) => {
               d.parameters = d.parameters || {};
@@ -649,229 +879,112 @@ export function setup(ctx: SpindleFrontendContext) {
     }
 
     if (state.view === 'variables') {
-      const b = d.prompt_order?.[state.selected];
-      const controlsSlot = root.querySelector<HTMLElement>('#ps-var-preview-controls-slot');
-      if (controlsSlot && b && Array.isArray(b.variables) && b.variables.length > 0) {
-        controlsSlot.innerHTML = '';
-        d.metadata = d.metadata || {};
-        d.metadata.promptVariables = d.metadata.promptVariables || {};
-        d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
-        const savedVars = d.metadata.promptVariables[b.id];
-
-        for (const v of b.variables) {
-          if (!v?.name) continue;
-          const currentVal = savedVars[v.name] !== undefined ? savedVars[v.name] : v.defaultValue;
-          const row = document.createElement('div');
-          row.style.cssText = 'display:grid;gap:4px;';
-          controlsSlot.appendChild(row);
-
-          if (v.type === 'switch' || v.type === 'boolean') {
-            trackMount(() =>
-              ctx.components.mountSwitch(row, {
-                checked: currentVal === 1 || currentVal === '1' || currentVal === true || currentVal === 'true',
-                size: 'md',
-                ariaLabel: v.label || v.name,
-                onChange: (checked: boolean) => {
-                  savedVars[v.name] = checked ? 1 : 0;
-                  persist();
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-            const lbl = document.createElement('span');
-            lbl.textContent = ` ${v.label || v.name}`;
-            lbl.style.cssText = 'font-size:0.84rem;font-weight:600;margin-top:2px;';
-            row.appendChild(lbl);
-          } else if (v.type === 'slider') {
-            trackMount(() =>
-              ctx.components.mountRangeSlider(row, {
-                label: v.label || v.name,
-                hint: v.description || '',
-                min: Number.isFinite(Number(v.min)) ? Number(v.min) : 0,
-                max: Number.isFinite(Number(v.max)) ? Number(v.max) : 100,
-                step: Number.isFinite(Number(v.step)) ? Number(v.step) : 1,
-                value: Number.isFinite(Number(currentVal)) ? Number(currentVal) : Number(v.min || 0),
-                onCommit: (val: number) => {
-                  savedVars[v.name] = val;
-                  persist();
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-          } else if (v.type === 'select') {
-            const rawOpts = Array.isArray(v.options) ? v.options : [];
-            const selectOptionsList = rawOpts.map((o: any) => ({
-              value: String(o.id ?? o.label ?? ''),
-              label: String(o.label || o.id || 'Option'),
-            }));
-            const labelEl = document.createElement('span');
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
-            row.appendChild(labelEl);
-            trackMount(() =>
-              ctx.components.mountSelect(row, {
-                value: String(currentVal ?? selectOptionsList[0]?.value ?? ''),
-                options: selectOptionsList,
-                placeholder: 'Choose option…',
-                onChange: (val: string) => {
-                  savedVars[v.name] = val;
-                  persist();
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-          } else if (v.type === 'multiselect') {
-            const rawOpts = Array.isArray(v.options) ? v.options : [];
-            const multiOptionsList = rawOpts.map((o: any) => ({
-              value: String(o.id ?? o.label ?? ''),
-              label: String(o.label || o.id || 'Option'),
-            }));
-            const labelEl = document.createElement('span');
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
-            row.appendChild(labelEl);
-            const chosenList = Array.isArray(currentVal)
-              ? currentVal.map(String)
-              : typeof currentVal === 'string' && currentVal.trim()
-                ? currentVal.split(',').map((s: string) => s.trim())
-                : [];
-            trackMount(() =>
-              ctx.components.mountMultiSelect(row, {
-                value: chosenList,
-                options: multiOptionsList,
-                placeholder: 'Select items…',
-                onChange: (vals: string[]) => {
-                  savedVars[v.name] = vals;
-                  persist();
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-          } else if (v.type === 'textarea') {
-            const labelEl = document.createElement('span');
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
-            row.appendChild(labelEl);
-            trackMount(() =>
-              ctx.components.mountTextArea(row, {
-                value: String(currentVal ?? ''),
-                rows: Number(v.rows || 3),
-                placeholder: v.description || 'Type value…',
-                onChange: (val: string) => {
-                  savedVars[v.name] = val;
-                  persist(false, true);
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-          } else {
-            const labelEl = document.createElement('span');
-            labelEl.textContent = v.label || v.name;
-            labelEl.style.cssText = 'font-size:0.84rem;font-weight:600;';
-            row.appendChild(labelEl);
-            trackMount(() =>
-              ctx.components.mountTextInput(row, {
-                value: String(currentVal ?? ''),
-                placeholder: v.description || 'Type value…',
-                onChange: (val: string) => {
-                  savedVars[v.name] = val;
-                  persist(false, true);
-                  updateLiveVariablesPreview();
-                },
-              }),
-            );
-          }
-        }
-      }
+      mountVariablePreviewControls();
     }
   }
 
-  function render() {
+  function renderHeader() {
     if (destroyed) return;
-    const savedRootScroll = root.scrollTop;
-    const savedScrollMap = new Map<string, { top: number; left: number }>();
-    root.querySelectorAll<HTMLElement>('[data-scroll-id]').forEach((el) => {
-      if (el.dataset.scrollId) savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
-    });
-    const openDetailsIds = new Set<string>();
-    root.querySelectorAll<HTMLDetailsElement>('details[data-details-id]').forEach((el) => {
-      if (el.open && el.dataset.detailsId) openDetailsIds.add(el.dataset.detailsId);
-    });
-
-    destroyMounted();
     const d = state.draft;
     const totalVarsCount = d
       ? (d.prompt_order || []).reduce((acc: number, blk: any) => acc + (Array.isArray(blk.variables) ? blk.variables.length : 0), 0)
       : 0;
 
-    root.innerHTML = `
-      <div class="ps-shell">
-        <!-- Unified Sleek Top Header Bar -->
-        <header class="ps-topbar">
-          <div class="ps-row" style="flex:1;min-width:260px">
-            <div class="ps-brand">
-              <div class="ps-mark" aria-hidden="true">✳</div>
-              <strong style="font-size:0.95rem;white-space:nowrap">Preset Studio</strong>
-            </div>
-
-            <select data-action="open" style="max-width:260px;min-height:32px;padding:3px 10px;font-weight:600" aria-label="Select preset">
-              <option value="">${d && !d.id ? `Draft: ${esc(d.name)}` : `Open preset (${state.presets.length})…`}</option>
-              ${selectOptions(state.presets, d?.id, (x: any) => x.name)}
-            </select>
-
-            <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
-            <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">📥 Import</button>
-            ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">📤 Export</button>' : ''}
-            ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
+    shellHeaderEl.innerHTML = `
+      <header class="ps-topbar">
+        <div class="ps-row" style="flex:1;min-width:240px">
+          <div class="ps-brand">
+            <div class="ps-mark" aria-hidden="true">✳</div>
+            <strong style="font-size:0.95rem;white-space:nowrap">Preset Studio</strong>
           </div>
 
-          <div class="ps-actions">
-            ${d ? `
-              <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} tokens</span>
-              <span class="ps-pill ${state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.dirty ? '● Unsaved' : '✓ Saved'}</span>
-              <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶</button>
-              <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷</button>
-              <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.busy ? 'disabled' : ''}>Save Copy</button>
-              <button type="button" class="ps-primary ps-btn-sm" style="padding:5px 14px !important" data-action="save" ${state.busy ? 'disabled' : ''}>${d.id ? 'Save Changes' : 'Create Preset'}</button>
-            ` : ''}
-            <button type="button" class="ps-btn-sm" data-action="refresh" title="Reload presets and chats">↻</button>
-            ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full</button>' : '<button type="button" class="ps-btn-sm" data-action="full-window" title="Expand to full window">⤢ Full</button>'}
-          </div>
-        </header>
+          <select data-action="open" style="max-width:260px;min-height:32px;padding:3px 10px;font-weight:600" aria-label="Select preset">
+            <option value="">${d && !d.id ? `Draft: ${esc(d.name)}` : state.loading && !state.presets.length ? 'Loading presets…' : `Open preset (${state.presets.length})…`}</option>
+            ${selectOptions(state.presets, d?.id, (x: any) => x.name)}
+          </select>
 
-        ${state.notice ? `<div class="ps-notice" role="status"><span>${esc(state.notice)}</span><button type="button" class="ps-btn-sm ps-btn-icon" data-action="dismiss-notice" aria-label="Dismiss">✕</button></div>` : ''}
+          <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
+          <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">📥 Import</button>
+          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">📤 Export</button>' : ''}
+          ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
+        </div>
 
-        ${d ? `
-          <!-- Clean 4-Tab "Adaptive Pro" Bar -->
-          <nav class="ps-tabs" aria-label="Studio workspace tabs">
-            ${[
-              ['blocks', '01', `Build Prompts (${d.prompt_order.length})`],
-              ['variables', '02', `User Inputs${totalVarsCount ? ` (${totalVarsCount})` : ''}`],
-              ['remix', '03', 'Remix & Translate'],
-              ['test', '04', 'Test Lab & X-Ray'],
-            ].map(([id, step, label]) => `<button type="button" data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join('')}
-          </nav>
+        <div class="ps-actions">
+          ${d ? `
+            <span class="ps-pill ps-pill-accent" data-total-tokens>~${state.totalDraftTokens.toLocaleString()} tokens</span>
+            <span class="ps-pill ${state.saving ? 'ps-pill-accent' : state.dirty ? 'ps-pill-warn' : 'ps-pill-ok'}">${state.saving ? '↻ Saving…' : state.dirty ? '● Unsaved' : '✓ Saved'}</span>
+            <button type="button" class="ps-btn-sm" data-action="undo" ${state.historyPast.length < 2 ? 'disabled' : ''} title="Undo (Ctrl+Z)">↶</button>
+            <button type="button" class="ps-btn-sm" data-action="redo" ${!state.historyFuture.length ? 'disabled' : ''} title="Redo (Ctrl+Shift+Z)">↷</button>
+            <button type="button" class="ps-btn-sm" data-action="save-copy" ${state.saving ? 'disabled' : ''}>Save Copy</button>
+            <button type="button" class="ps-primary ps-btn-sm" style="padding:5px 14px !important" data-action="save" ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : d.id ? 'Save Changes' : 'Create Preset'}</button>
+          ` : ''}
+          <button type="button" class="ps-btn-sm" data-action="refresh" ${state.loading ? 'disabled' : ''} title="Reload presets and chats">${state.loading ? '…' : '↻'}</button>
+          ${full ? '<button type="button" class="ps-btn-sm" data-action="close-window">✕ Exit Full</button>' : '<button type="button" class="ps-btn-sm" data-action="full-window" title="Expand to full window">⤢ Full</button>'}
+        </div>
+      </header>
 
-          ${state.view === 'blocks' ? renderArchitectTab(ctx, state) : state.view === 'variables' ? renderVariablesTab(state) : state.view === 'remix' ? renderRemixAndTranslateTab(state) : renderTestTab(state)}
-        ` : `
-          <div class="ps-panel ps-empty-state" style="padding:42px 20px">
-            <div style="font-size:2rem;margin-bottom:8px">✳</div>
-            <h3>Welcome to Preset Studio</h3>
-            <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.</p>
-            <div class="ps-actions" style="justify-content:center">
-              <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
-              <button type="button" data-action="import-preset-json">📥 Import Preset JSON</button>
-              ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ''}
-            </div>
-          </div>
-        `}
-      </div>
+      ${renderPermissionBanner(state)}
+      ${state.loadError ? `<div class="ps-notice" style="border-left-color:var(--ps-danger)" role="alert"><span>⚠ ${esc(state.loadError)}</span><button type="button" class="ps-btn-sm ps-primary" data-action="refresh">Retry Load</button></div>` : ''}
+      ${state.notice ? `<div class="ps-notice" role="status"><span>${esc(state.notice)}</span><button type="button" class="ps-btn-sm ps-btn-icon" data-action="dismiss-notice" aria-label="Dismiss">✕</button></div>` : ''}
+
+      ${d ? `
+        <nav class="ps-tabs" aria-label="Studio workspace tabs">
+          ${[
+            ['blocks', '01', `Build Prompts (${d.prompt_order.length})`],
+            ['variables', '02', `User Inputs${totalVarsCount ? ` (${totalVarsCount})` : ''}`],
+            ['remix', '03', 'Remix & Translate'],
+            ['test', '04', 'Test Lab & X-Ray'],
+          ].map(([id, step, label]) => `<button type="button" data-action="view" data-view="${id}" aria-pressed="${state.view === id}"><span class="ps-step">${step}</span>${label}</button>`).join('')}
+        </nav>
+      ` : ''}
     `;
+  }
+
+  function renderBody() {
+    if (destroyed) return;
+    clampSelected();
+    const savedRootScroll = root.scrollTop;
+    const savedScrollMap = new Map<string, { top: number; left: number }>();
+    shellBodyEl.querySelectorAll<HTMLElement>('[data-scroll-id]').forEach((el) => {
+      if (el.dataset.scrollId) savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
+    });
+    const openDetailsIds = new Set<string>();
+    shellBodyEl.querySelectorAll<HTMLDetailsElement>('details[data-details-id]').forEach((el) => {
+      if (el.open && el.dataset.detailsId) openDetailsIds.add(el.dataset.detailsId);
+    });
+
+    destroyMounted();
+    const d = state.draft;
+
+    shellBodyEl.innerHTML = d
+      ? state.view === 'blocks'
+        ? renderArchitectTab(ctx, state)
+        : state.view === 'variables'
+          ? renderVariablesTab(state)
+          : state.view === 'remix'
+            ? renderRemixAndTranslateTab(state)
+            : renderTestTab(state)
+      : `
+        <div class="ps-panel ps-empty-state" style="padding:42px 20px">
+          <div style="font-size:2rem;margin-bottom:8px">✳</div>
+          <h3>Welcome to Preset Studio</h3>
+          <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">${
+            state.loading
+              ? 'Loading your presets, chats, and connections…'
+              : `Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.`
+          }</p>
+          <div class="ps-actions" style="justify-content:center">
+            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+            <button type="button" data-action="import-preset-json">📥 Import Preset JSON</button>
+            ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ''}
+          </div>
+        </div>
+      `;
 
     mountInteractiveWidgets();
 
     if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply') {
-      const bubbleEl = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
+      const bubbleEl = shellBodyEl.querySelector<HTMLElement>('#ps-chat-reply-bubble');
       if (bubbleEl) {
         const runs = Array.isArray(state.runs) ? state.runs : [];
         const idx =
@@ -889,11 +1002,11 @@ export function setup(ctx: SpindleFrontendContext) {
     }
 
     openDetailsIds.forEach((id) => {
-      const det = root.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
+      const det = shellBodyEl.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
       if (det) det.open = true;
     });
     savedScrollMap.forEach((pos, id) => {
-      const el = root.querySelector<HTMLElement>(`[data-scroll-id="${CSS.escape(id)}"]`);
+      const el = shellBodyEl.querySelector<HTMLElement>(`[data-scroll-id="${CSS.escape(id)}"]`);
       if (el) {
         el.scrollTop = pos.top;
         el.scrollLeft = pos.left;
@@ -902,9 +1015,20 @@ export function setup(ctx: SpindleFrontendContext) {
     root.scrollTop = savedRootScroll;
   }
 
-  function refresh(): Promise<void> {
-    if (refreshPromise) return refreshPromise;
-    refreshPromise = request('load')
+  function render() {
+    if (destroyed) return;
+    resetDragState();
+    renderHeader();
+    renderBody();
+  }
+
+  function refresh(force = false, silent = false): Promise<void> {
+    if (refreshPromise && !force) return refreshPromise;
+    state.loading = true;
+    state.loadError = '';
+    if (!silent) renderHeader();
+
+    const currentRun = request('load', {}, {}, 15_000)
       .then((data) => {
         if (destroyed || !data) return;
         state.presets = Array.isArray(data.presets) ? data.presets : [];
@@ -933,19 +1057,33 @@ export function setup(ctx: SpindleFrontendContext) {
             state.compareB = state.runs.length - 1;
           }
         }
-        // Ensure a valid chatId is selected if available
         if (!state.chatId || !state.chats.some((c: any) => c.id === state.chatId)) {
           state.chatId = data.active?.id || state.chats[0]?.id || '';
         }
         if (state.draft) {
           scheduleTokenCount();
         }
-        render();
+        state.loading = false;
+        state.loadError = '';
+        if (silent) {
+          renderHeader();
+        } else {
+          render();
+        }
+      })
+      .catch((err: any) => {
+        if (destroyed) return;
+        state.loading = false;
+        state.loadError = err?.message || 'Could not load presets from backend.';
+        renderHeader();
+        if (!state.draft) renderBody();
       })
       .finally(() => {
-        refreshPromise = null;
+        if (refreshPromise === currentRun) refreshPromise = null;
       });
-    return refreshPromise;
+
+    refreshPromise = currentRun;
+    return currentRun;
   }
 
   const cleanupLauncher = mountPresetEditorLauncher(
@@ -958,11 +1096,21 @@ export function setup(ctx: SpindleFrontendContext) {
     refresh,
     render,
   );
-  bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
+  resetDragState = bindDragAndDropListeners(root, state, moveBlock, () => clearTimeout(longPressTimer));
+
+  async function confirmUser(
+    title: string,
+    message: string,
+    variant: 'warning' | 'danger' | 'info' = 'warning',
+    confirmLabel = 'Confirm',
+  ): Promise<boolean> {
+    const showConfirmFn = typeof ctx.ui?.showConfirm === 'function' ? (opts: any) => ctx.ui.showConfirm(opts) : undefined;
+    return askConfirm(dialogHostEl, modalRef, title, message, variant, confirmLabel, showConfirmFn);
+  }
 
   async function saveEntriesAsTemplate(entries: any[], suggestedName = '') {
     if (!entries.length) throw new Error('Select at least one block first.');
-    const name = await promptTemplateName(root, modalRef, suggestedName, entries.length);
+    const name = await promptTemplateName(dialogHostEl, modalRef, suggestedName, entries.length);
     if (!name) return;
     state.templates = await request('template-save', {
       template: { id: uid(), name, entries: structuredClone(entries) },
@@ -985,7 +1133,7 @@ export function setup(ctx: SpindleFrontendContext) {
     const row = (e.target as HTMLElement).closest<HTMLElement>('[data-context-index]');
     if (!row) return;
     e.preventDefault();
-    openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), e.clientX, e.clientY, contextMenuCallbacks);
+    openBlockContextMenu(dialogHostEl, modalRef, state, Number(row.dataset.contextIndex), e.clientX, e.clientY, contextMenuCallbacks);
   });
 
   root.addEventListener(
@@ -1000,7 +1148,7 @@ export function setup(ctx: SpindleFrontendContext) {
       const y = t.clientY;
       clearTimeout(longPressTimer);
       longPressTimer = setTimeout(() => {
-        openBlockContextMenu(root, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
+        openBlockContextMenu(dialogHostEl, modalRef, state, Number(row.dataset.contextIndex), x, y, contextMenuCallbacks);
       }, 520);
     },
     { passive: true },
@@ -1013,10 +1161,17 @@ export function setup(ctx: SpindleFrontendContext) {
     if (el.tagName === 'SELECT') return;
     const d = state.draft;
     if (el.dataset.block && d) {
+      clampSelected();
+      const targetBlock = d.prompt_order?.[state.selected];
+      if (!targetBlock) return;
       let val: any = el.value;
       if (el.dataset.block === 'depth') val = Math.max(0, Number(val) || 0);
       if (el.dataset.block === 'marker' || el.dataset.block === 'categoryMode' || el.dataset.block === 'group') val = val || null;
-      d.prompt_order[state.selected][el.dataset.block] = val;
+      targetBlock[el.dataset.block] = val;
+      if (el.dataset.block === 'name') {
+        const heading = shellBodyEl.querySelector('.ps-col-detail h3');
+        if (heading) heading.textContent = val || 'Untitled';
+      }
       persist(false, true);
     } else if (el.dataset.preset && d) {
       d[el.dataset.preset] = el.value;
@@ -1031,7 +1186,8 @@ export function setup(ctx: SpindleFrontendContext) {
       if (field === 'depth') state.authorsNote.depth = Math.max(0, Number(el.value) || 0);
       else if (field === 'content') state.authorsNote.content = el.value;
     } else if (el.dataset.varIndex !== undefined && d) {
-      const b = d.prompt_order[state.selected];
+      clampSelected();
+      const b = d.prompt_order?.[state.selected];
       const idx = Number(el.dataset.varIndex);
       const v = b?.variables?.[idx];
       if (!v) return;
@@ -1044,18 +1200,22 @@ export function setup(ctx: SpindleFrontendContext) {
         else if (f === 'defaultValue' && v.type === 'multiselect') v[f] = el.value.split(',').map((s) => s.trim()).filter(Boolean);
         else v[f] = ['min', 'max', 'step', 'rows'].includes(f) ? Number(el.value) : el.value;
       }
-      b.variables[idx] = normalizeVariableDef(v, true);
+      const norm = normalizeVariableDef(v, true);
+      b.variables[idx] = norm;
+      const titleEl = shellBodyEl.querySelector(`[data-var-card-title="${idx}"]`);
+      if (titleEl) titleEl.textContent = norm.label || norm.name || 'Variable';
+      const macroEl = shellBodyEl.querySelector(`[data-var-card-macro="${idx}"]`);
+      if (macroEl) macroEl.textContent = `{{var::${norm.name || 'key'}}}`;
+      const insBtn = shellBodyEl.querySelector<HTMLElement>(`[data-var-insert-btn="${idx}"]`);
+      if (insBtn) insBtn.dataset.varName = norm.name || 'key';
+      const copyBtn = shellBodyEl.querySelector<HTMLElement>(`[data-var-copy-btn="${idx}"]`);
+      if (copyBtn) copyBtn.dataset.macro = `{{var::${norm.name || 'key'}}}`;
       persist(false, true);
       updateLiveVariablesPreview();
-    } else if (el.dataset.varRuntime && d) {
-      const b = d.prompt_order[state.selected];
-      if (!b) return;
-      d.metadata = d.metadata || {};
-      d.metadata.promptVariables = d.metadata.promptVariables || {};
-      d.metadata.promptVariables[b.id] = d.metadata.promptVariables[b.id] || {};
-      d.metadata.promptVariables[b.id][el.dataset.varRuntime] = el.value;
-      persist(false, true);
-      updateLiveVariablesPreview();
+      clearTimeout(varPreviewTimer);
+      varPreviewTimer = setTimeout(() => {
+        if (!destroyed) mountVariablePreviewControls();
+      }, 150);
     } else if (el.dataset.state === 'sourceTranslationName' && state.sourceTranslation) state.sourceTranslation.name = el.value;
     else if (el.dataset.state === 'translationName' && state.translation) state.translation.name = el.value;
     else if (el.dataset.state === 'sourceTranslationText' && state.sourceTranslation) state.sourceTranslation.content = el.value;
@@ -1068,14 +1228,22 @@ export function setup(ctx: SpindleFrontendContext) {
     } else if (el.dataset.state) {
       const key = el.dataset.state;
       state[key] = el.value;
-      if (['blockSearch', 'breakdownSearch', 'compareA', 'compareB'].includes(key)) {
-        const pos = (el as HTMLInputElement).selectionStart;
-        render();
-        const nextEl = root.querySelector<HTMLInputElement>(`[data-state="${key}"]`);
-        if (nextEl) {
-          nextEl.focus({ preventScroll: true });
-          if (typeof pos === 'number' && nextEl.setSelectionRange) nextEl.setSelectionRange(pos, pos);
+      if (key === 'blockSearch') {
+        const slot = shellBodyEl.querySelector<HTMLElement>('#ps-block-list-slot');
+        if (slot) slot.innerHTML = renderBlockListOnlyHtml(state);
+        const countEl = shellBodyEl.querySelector<HTMLElement>('[data-block-list-count]');
+        if (countEl && state.draft) {
+          const shown = slot ? slot.querySelectorAll('.ps-block').length : 0;
+          countEl.textContent = `Prompt Blocks (${shown}/${state.draft.prompt_order.length})`;
         }
+      } else if (key === 'breakdownSearch') {
+        const slot = shellBodyEl.querySelector<HTMLElement>('#ps-xray-list-slot');
+        if (slot) slot.innerHTML = renderXRayListOnlyHtml(state);
+      } else if (key === 'remixSearch') {
+        const slot = shellBodyEl.querySelector<HTMLElement>('#ps-remix-source-slot');
+        if (slot) slot.innerHTML = renderRemixSourceListHtml(state);
+      } else if (['compareA', 'compareB'].includes(key)) {
+        renderBody();
       }
     }
   });
@@ -1087,7 +1255,7 @@ export function setup(ctx: SpindleFrontendContext) {
       state[key] = el.value;
       if (['compareA', 'compareB', 'connectionId', 'chatId', 'generationType'].includes(key)) {
         if (key === 'connectionId') scheduleTokenCount();
-        render();
+        renderBody();
       }
       return;
     }
@@ -1096,16 +1264,18 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
     if (el.tagName === 'SELECT' && el.dataset.block && state.draft) {
+      clampSelected();
+      const blk = state.draft.prompt_order?.[state.selected];
+      if (!blk) return;
       let val: any = el.value;
       if (el.dataset.block === 'marker' || el.dataset.block === 'categoryMode') val = val || null;
-      const blk = state.draft.prompt_order[state.selected];
       blk[el.dataset.block] = val;
       if (el.dataset.block === 'marker') {
         if (val === 'category' && !blk.categoryMode) blk.categoryMode = 'checkbox';
         else if (val !== 'category') blk.categoryMode = null;
       }
       persist();
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.draftId !== undefined) {
@@ -1113,7 +1283,7 @@ export function setup(ctx: SpindleFrontendContext) {
       state.selectedDraft = (el as HTMLInputElement).checked
         ? [...new Set([...state.selectedDraft, id])]
         : state.selectedDraft.filter((x: string) => x !== id);
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.importIndex !== undefined) {
@@ -1121,35 +1291,37 @@ export function setup(ctx: SpindleFrontendContext) {
       state.selectedImports = (el as HTMLInputElement).checked
         ? [...new Set([...state.selectedImports, i])]
         : state.selectedImports.filter((n: number) => n !== i);
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.customCheck === 'history') {
       state.testCustomPromptIncludeHistory = (el as HTMLInputElement).checked;
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.turnIdx !== undefined && el.dataset.turnField === 'role') {
       const idx = Number(el.dataset.turnIdx);
       if (state.testTurns[idx]) {
         state.testTurns[idx].role = el.value;
-        render();
+        renderBody();
       }
       return;
     }
     if (el.dataset.varField === 'type') {
+      clampSelected();
       const b = state.draft?.prompt_order?.[state.selected];
       const idx = Number(el.dataset.varIndex);
       if (b?.variables?.[idx]) {
         b.variables[idx] = normalizeVariableDef({ ...b.variables[idx], type: el.value });
       }
       persist();
-      render();
+      renderBody();
       return;
     }
     if (el.dataset.action === 'select-block-dropdown') {
       state.selected = Number(el.value) || 0;
-      render();
+      clampSelected();
+      renderBody();
       return;
     }
     if (el.dataset.action === 'import-source') {
@@ -1168,7 +1340,7 @@ export function setup(ctx: SpindleFrontendContext) {
           state.importValues = preset.metadata?.promptVariables || {};
           state.expandedImports = state.importBlocks.map((_: any, idx: number) => idx);
         }
-        render();
+        renderBody();
       } catch (err: any) {
         state.notice = err.message;
         render();
@@ -1179,16 +1351,14 @@ export function setup(ctx: SpindleFrontendContext) {
       try {
         if (
           state.dirty &&
-          !(await askConfirm(
-            root,
-            modalRef,
+          !(await confirmUser(
             'Discard Unsaved Changes?',
             'Open this preset and discard your current unsaved draft?',
             'warning',
             'Open Preset',
           ))
         ) {
-          render();
+          renderHeader();
           return;
         }
         state.draft = ensureUniqueBlockIds(await request('get', { id: el.value }));
@@ -1227,9 +1397,14 @@ export function setup(ctx: SpindleFrontendContext) {
         state.notice = '';
         render();
         return;
+      } else if (a === 'open-extension-settings') {
+        ctx.events.emit('open-settings', { view: 'extensions' });
+        return;
       } else if (a === 'refresh') {
-        await refresh();
-        state.notice = `Synced ${state.presets.length} presets and ${state.chats.length} chats.`;
+        await refresh(true);
+        if (!state.loadError) {
+          state.notice = `Synced ${state.presets.length} presets and ${state.chats.length} chats.`;
+        }
       } else if (a === 'undo') {
         undo();
         return;
@@ -1239,7 +1414,7 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'new') {
         if (
           state.dirty &&
-          !(await askConfirm(root, modalRef, 'Start New Preset?', 'Discard your current unsaved draft and start a new preset?', 'warning', 'Start New'))
+          !(await confirmUser('Start New Preset?', 'Discard your current unsaved draft and start a new preset?', 'warning', 'Start New'))
         ) {
           return;
         }
@@ -1256,12 +1431,12 @@ export function setup(ctx: SpindleFrontendContext) {
         if (!state.recovery) throw new Error('No recovered draft is available.');
         if (
           state.dirty &&
-          !(await askConfirm(root, modalRef, 'Recover Draft?', 'Replace the current draft with the last auto-recovered draft?', 'warning', 'Recover'))
+          !(await confirmUser('Recover Draft?', 'Replace the current draft with the last auto-recovered draft?', 'warning', 'Recover'))
         ) {
           return;
         }
         state.draft = ensureUniqueBlockIds(structuredClone(state.recovery));
-        state.selected = 0;
+        clampSelected();
         state.dirty = true;
         scheduleTokenCount();
       } else if (a === 'import-preset-json') await importJsonFile('preset');
@@ -1274,16 +1449,20 @@ export function setup(ctx: SpindleFrontendContext) {
         state.view = el.dataset.view;
       } else if (a === 'set-remix-subtab') {
         state.remixSubTab = el.dataset.subtab || 'mixer';
-        render();
+        renderBody();
         return;
       } else if (a === 'set-test-output-tab') {
         state.testOutputTab = el.dataset.outtab || 'reply';
-        render();
+        renderBody();
+        return;
+      } else if (a === 'set-compare-mode') {
+        state.compareMode = el.dataset.mode === 'diff' ? 'diff' : 'side';
+        renderBody();
         return;
       } else if (a === 'editor-mode') {
         state.editorMode = el.dataset.mode;
       } else if (a === 'open-find-replace') {
-        openFindReplaceDialog(root, modalRef, state, persist, render);
+        openFindReplaceDialog(dialogHostEl, modalRef, state, persist, render);
         return;
       } else if (a === 'toggle-category-collapse') {
         const catId = el.dataset.catId!;
@@ -1309,12 +1488,13 @@ export function setup(ctx: SpindleFrontendContext) {
         }
       } else if (a === 'select-block') {
         state.selected = Number(el.dataset.index);
+        clampSelected();
         state.mobileDetailOpen = true;
         if (state.showMacroPane) await runMacroPreview(d.prompt_order[state.selected]);
       } else if (a === 'close-mobile-detail') state.mobileDetailOpen = false;
       else if (a === 'block-menu') {
         const rect = el.getBoundingClientRect();
-        openBlockContextMenu(root, modalRef, state, Number(el.dataset.index), rect.left, rect.bottom + 4, contextMenuCallbacks);
+        openBlockContextMenu(dialogHostEl, modalRef, state, Number(el.dataset.index), rect.left, rect.bottom + 4, contextMenuCallbacks);
         return;
       } else if (a === 'toggle-lock' && b) {
         b.isLocked = !b.isLocked;
@@ -1437,9 +1617,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const targetRun = state.runs[idx];
         if (!targetRun?.snapshot) return;
         if (
-          !(await askConfirm(
-            root,
-            modalRef,
+          !(await confirmUser(
             `Restore Preset from Run #${idx + 1}?`,
             `Replace your current draft blocks, variables, and samplers with the exact snapshot used in Run #${idx + 1} (${targetRun.time})? (You can still Undo with Ctrl+Z.)`,
             'warning',
@@ -1470,9 +1648,7 @@ export function setup(ctx: SpindleFrontendContext) {
         return;
       } else if (a === 'clear-run-history') {
         if (
-          !(await askConfirm(
-            root,
-            modalRef,
+          !(await confirmUser(
             'Clear Test History?',
             `Remove all ${state.runs.length} recorded test runs from history?`,
             'danger',
@@ -1666,7 +1842,7 @@ export function setup(ctx: SpindleFrontendContext) {
         moveBlock(idx, idx + (a === 'move-row-up' ? -1 : 1));
         return;
       } else if (a === 'quick-insert-template') {
-        openTemplatePickerModal(root, modalRef, state, insertEntries, importJsonFile, render);
+        openTemplatePickerModal(dialogHostEl, modalRef, state, insertEntries, importJsonFile, render);
         return;
       } else if (a === 'quick-template-from-selected') {
         const chosen = d.prompt_order.filter((blk: any) => state.selectedDraft.includes(blk.id));
@@ -1687,7 +1863,7 @@ export function setup(ctx: SpindleFrontendContext) {
         state.notice = `Added ${t.entries.length} blocks from ${t.name}.`;
       } else if (a === 'delete-template') {
         const t = state.templates[Number(el.dataset.index)];
-        if (!t || !(await askConfirm(root, modalRef, 'Delete Template?', `Delete the saved template “${t.name}”?`, 'danger', 'Delete'))) return;
+        if (!t || !(await confirmUser('Delete Template?', `Delete the saved template “${t.name}”?`, 'danger', 'Delete'))) return;
         state.templates = await request('template-delete', { id: t.id });
         state.notice = 'Template deleted.';
       } else if (a === 'toggle') {
@@ -1828,9 +2004,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const count = state.selectedDraft.length;
         if (!count) return;
         if (
-          !(await askConfirm(
-            root,
-            modalRef,
+          !(await confirmUser(
             'Delete Checked Blocks?',
             `Delete ${count} checked block(s) from your draft?`,
             'danger',
@@ -1864,23 +2038,25 @@ export function setup(ctx: SpindleFrontendContext) {
         }
         persist();
       } else if (a === 'save' || a === 'save-copy') {
-        root.inert = true;
-        root.setAttribute('aria-busy', 'true');
+        if (state.saving) return;
+        state.saving = true;
+        lastLocalSaveAt = Date.now();
+        renderHeader();
         const activeIdx = state.selected;
         try {
           const saved = ensureUniqueBlockIds(await syncSaveWithNativePresetEditor(ctx, request, d, a === 'save-copy'));
+          lastLocalSaveAt = Date.now();
           state.draft = saved;
           state.selected = Math.min(activeIdx, Math.max(0, (saved.prompt_order || []).length - 1));
           state.savedFingerprint = computeDraftFingerprint(saved);
           state.dirty = false;
           clearTimeout(timer);
           await saveChain;
-          await request('draft', { draft: saved });
-          await refresh();
+          await request('draft', { draft: saved }).catch(() => {});
+          await refresh(true, true);
           state.notice = saved.provider === 'loom' ? `Saved "${saved.name}" live to Lumiverse.` : `Saved "${saved.name}".`;
         } finally {
-          root.inert = false;
-          root.removeAttribute('aria-busy');
+          state.saving = false;
         }
       } else if (a === 'profile') {
         const peState = ctx.ui?.presetEditor?.getState?.();
@@ -1939,21 +2115,38 @@ export function setup(ctx: SpindleFrontendContext) {
               : [];
         render();
         await new Promise((resolve, reject) => {
+          let inactivityTimer: any = null;
+          const resetInactivity = () => {
+            if (inactivityTimer) clearTimeout(inactivityTimer);
+            inactivityTimer = setTimeout(() => {
+              if (pending.delete(requestId)) {
+                reject(new Error('Generation timed out while waiting for provider stream.'));
+              }
+            }, 120_000);
+          };
+          resetInactivity();
           pending.set(requestId, {
-            resolve,
-            reject,
+            touch: resetInactivity,
+            resolve: (val: any) => {
+              if (inactivityTimer) clearTimeout(inactivityTimer);
+              resolve(val);
+            },
+            reject: (err: any) => {
+              if (inactivityTimer) clearTimeout(inactivityTimer);
+              reject(err);
+            },
             onAssembled: (assembledPayload: any) => {
               state.assembled = assembledPayload;
-              render();
+              renderBody();
             },
             onReasoning: (token: string) => {
               state.reasoning += token;
-              const rbox = root.querySelector('.ps-reasoning-box');
+              const rbox = shellBodyEl.querySelector('.ps-reasoning-box');
               if (rbox) rbox.textContent = state.reasoning;
             },
             onToken: (token: string) => {
               state.result += token;
-              const bubble = root.querySelector<HTMLElement>('#ps-chat-reply-bubble');
+              const bubble = shellBodyEl.querySelector<HTMLElement>('#ps-chat-reply-bubble');
               if (bubble) {
                 renderChatPreviewInto(bubble, state.result, state.testReplyViewMode === 'raw');
               }
@@ -1997,6 +2190,9 @@ export function setup(ctx: SpindleFrontendContext) {
               snapshot,
             });
             if (state.runs.length > 15) state.runs.shift();
+            for (let ri = 0; ri < state.runs.length - 5; ri++) {
+              if (state.runs[ri]?.snapshot) delete state.runs[ri].snapshot;
+            }
             state.viewingRunIndex = state.runs.length - 1;
             if (state.runs.length >= 2) {
               state.compareA = state.runs.length - 2;
@@ -2012,6 +2208,8 @@ export function setup(ctx: SpindleFrontendContext) {
     } catch (err: any) {
       state.busy = false;
       state.activeRun = null;
+      state.saving = false;
+      state.translating = false;
       state.notice = (err.message || String(err)) + (a === 'save' ? ' Your draft is preserved.' : '');
       render();
     }
@@ -2020,13 +2218,13 @@ export function setup(ctx: SpindleFrontendContext) {
   const unsubActivate = tab.onActivate?.(() => {
     refresh().catch((err) => {
       state.notice = err.message;
-      render();
+      renderHeader();
     });
   });
 
-  // Immediate initial load so presets, chats, and connections are always populated
-  refresh().catch(() => {});
+  ctx.ready?.();
   render();
+  refresh(true).catch(() => {});
 
   return () => {
     destroyed = true;
@@ -2034,6 +2232,7 @@ export function setup(ctx: SpindleFrontendContext) {
     destroyMounted();
     clearTimeout(timer);
     clearTimeout(tokenTimer);
+    clearTimeout(varPreviewTimer);
     clearTimeout(longPressTimer);
     if (state.activeRun) request('cancel', { runId: state.activeRun }).catch(() => {});
     for (const [, p] of pending) {
@@ -2047,6 +2246,7 @@ export function setup(ctx: SpindleFrontendContext) {
     unsubActivate?.();
     unsubKb?.();
     cleanupLauncher();
+    resetDragState();
     document.removeEventListener('keydown', onKey);
     mount?.destroy();
     tab.destroy();

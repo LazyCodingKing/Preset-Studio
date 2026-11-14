@@ -9,7 +9,23 @@ import {
   selectOptions,
   buildPresetVariableDiagnostics,
   resolveBlockVariablesPreview,
+  computeLineDiff,
 } from './studio-core.js';
+
+export function renderPermissionBanner(state: any): string {
+  const perms = state.permissions || {};
+  const missing: string[] = [];
+  if (!perms.presets) missing.push('Presets');
+  if (!perms.chats) missing.push('Chats');
+  if (!perms.generation) missing.push('Generation');
+  if (!missing.length) return '';
+  return `
+    <div class="ps-perm-banner" role="alert">
+      <span>⚠ Missing permissions: <strong>${esc(missing.join(', '))}</strong>. Enable them in Extensions to load presets, chats, and test generation.</span>
+      <button type="button" class="ps-btn-sm ps-primary" data-action="open-extension-settings">Open Extension Settings</button>
+    </div>
+  `;
+}
 
 export function translationButtons(state: any, action: string, block: any, index?: number): string {
   const id = index === undefined ? '' : ` data-index="${index}"`;
@@ -96,19 +112,13 @@ export function renderInlineSamplersDrawer(state: any): string {
   `;
 }
 
-export function renderArchitectTab(ctx: any, state: any): string {
+export function getFilteredDraftBlocks(state: any) {
   const d = state.draft;
-  if (state.editorMode === 'native') {
-    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div><h3>Native Loom Block Editor</h3><p class="ps-muted">Drag-and-drop blocks, configure placement selectors, and insert macros using Lumiverse's built-in component.</p></div><button type="button" class="ps-btn-sm ps-primary" data-action="editor-mode" data-mode="studio">⇄ Return to Studio View</button></div><div id="ps-native-loom-slot"></div></div>`;
-  }
-  const b = d.prompt_order[state.selected];
-  const varDiag = buildPresetVariableDiagnostics(d.prompt_order);
-  const categoryBlocks = d.prompt_order.filter((blk: any) => blk.marker === 'category');
-  const allCatsCollapsed = categoryBlocks.length > 0 && categoryBlocks.every((c: any) => state.collapsedCategories.includes(c.id));
+  if (!d || !Array.isArray(d.prompt_order)) return [];
   let currentCatId: string | null = null;
-  const hasSearchOrFilter = Boolean(state.blockSearch.trim()) || state.blockFilter !== 'all';
+  const hasSearchOrFilter = Boolean((state.blockSearch || '').trim()) || state.blockFilter !== 'all';
 
-  const filteredBlocks = d.prompt_order
+  return d.prompt_order
     .map((block: any, index: number) => {
       if (block.marker === 'category') currentCatId = block.id;
       return {
@@ -123,12 +133,61 @@ export function renderArchitectTab(ctx: any, state: any): string {
       if (state.blockFilter === 'enabled' && !block.enabled) return false;
       if (state.blockFilter === 'categories' && block.marker !== 'category') return false;
       if (state.blockFilter === 'markers' && (!block.marker || block.marker === 'category')) return false;
-      if (state.blockSearch.trim()) {
+      if ((state.blockSearch || '').trim()) {
         const q = state.blockSearch.toLowerCase();
         return (block.name || '').toLowerCase().includes(q) || (block.content || '').toLowerCase().includes(q);
       }
       return true;
     });
+}
+
+export function renderBlockListOnlyHtml(state: any): string {
+  const d = state.draft;
+  if (!d) return '';
+  const varDiag = buildPresetVariableDiagnostics(d.prompt_order);
+  const filteredBlocks = getFilteredDraftBlocks(state);
+
+  return filteredBlocks.map(({ block, index, isChild }: any) => {
+    const tok = state.tokenCounts[block.id];
+    const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
+    const isCat = block.marker === 'category';
+    const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
+    const roleLabel = isCat ? 'folder' : block.marker ? `slot: ${block.marker}` : block.role;
+    return `
+      <div class="ps-block ${isCat ? 'ps-is-cat' : isChild ? 'ps-is-child' : ''} ${!block.enabled ? 'ps-is-off' : ''} ${index === state.selected ? 'ps-active-row' : ''}" draggable="true" data-context-index="${index}">
+        <span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>
+        ${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}">${isCatCollapsed ? '▸' : '▾'}</button>` : `<input type="checkbox" style="width:auto;min-height:16px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? 'checked' : ''}>`}
+        <button type="button" class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || 'Untitled')}">
+          <div class="ps-block-title-row">
+            ${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ''}
+            ${block.isLocked ? '<span title="Locked" style="font-size:0.7rem;opacity:0.75;flex:none">🔒</span>' : ''}
+            <span class="ps-block-title">${esc(block.name || 'Untitled')}</span>
+          </div>
+          <div class="ps-block-sub">
+            <span>${esc(roleLabel)}</span>
+            <span data-token-id="${esc(block.id)}">${block.content?.trim() && tok ? `· ${tok}t` : ''}</span>
+            ${defCnt ? `<span title="${defCnt} user variable(s) on this block" style="color:var(--ps-accent)">· 🎛 ${defCnt}</span>` : ''}
+          </div>
+        </button>
+        <div class="ps-row-actions">
+          <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button>
+          <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
+          ${!isCat ? `<button type="button" class="ps-row-btn ${block.enabled ? 'ps-toggle-on' : ''}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? 'On' : 'Off'}</button>` : ''}
+          <button type="button" class="ps-row-btn" data-action="block-menu" data-index="${index}" title="Block options">⋯</button>
+        </div>
+      </div>`;
+  }).join('') || '<div class="ps-empty-state"><p>No blocks match your filter.</p></div>';
+}
+
+export function renderArchitectTab(ctx: any, state: any): string {
+  const d = state.draft;
+  if (state.editorMode === 'native') {
+    return `<div class="ps-panel"><div class="ps-between" style="margin-bottom:10px"><div><h3>Native Loom Block Editor</h3><p class="ps-muted">Drag-and-drop blocks, configure placement selectors, and insert macros using Lumiverse's built-in component.</p></div><button type="button" class="ps-btn-sm ps-primary" data-action="editor-mode" data-mode="studio">⇄ Return to Studio View</button></div><div id="ps-native-loom-slot"></div></div>`;
+  }
+  const b = d.prompt_order[state.selected];
+  const categoryBlocks = d.prompt_order.filter((blk: any) => blk.marker === 'category');
+  const allCatsCollapsed = categoryBlocks.length > 0 && categoryBlocks.every((c: any) => state.collapsedCategories.includes(c.id));
+  const filteredBlocks = getFilteredDraftBlocks(state);
 
   const macroData = state.macroPreview?.blockId === b?.id ? state.macroPreview : null;
   const varCount = Array.isArray(b?.variables) ? b.variables.length : 0;
@@ -151,7 +210,7 @@ export function renderArchitectTab(ctx: any, state: any): string {
       <div class="ps-col-list ps-panel" style="margin:0" data-scroll-id="prompt-order-list">
         <div class="ps-between" style="margin-bottom:8px">
           <div class="ps-row">
-            <strong>Prompt Blocks (${filteredBlocks.length}/${d.prompt_order.length})</strong>
+            <strong data-block-list-count>Prompt Blocks (${filteredBlocks.length}/${d.prompt_order.length})</strong>
             ${categoryBlocks.length ? `<button type="button" class="ps-btn-sm" data-action="toggle-all-categories" title="Collapse or expand all categories">${allCatsCollapsed ? '▾ Expand' : '▸ Collapse'}</button>` : ''}
           </div>
           <div class="ps-actions">
@@ -184,37 +243,8 @@ export function renderArchitectTab(ctx: any, state: any): string {
           </div>
         ` : ''}
 
-        <div class="ps-list">
-          ${filteredBlocks.map(({ block, index, isChild }: any) => {
-            const tok = state.tokenCounts[block.id];
-            const defCnt = varDiag.defCountByBlock.get(block.id) || 0;
-            const isCat = block.marker === 'category';
-            const isCatCollapsed = isCat && state.collapsedCategories.includes(block.id);
-            const roleLabel = isCat ? 'folder' : block.marker ? `slot: ${block.marker}` : block.role;
-            return `
-              <div class="ps-block ${isCat ? 'ps-is-cat' : isChild ? 'ps-is-child' : ''} ${!block.enabled ? 'ps-is-off' : ''} ${index === state.selected ? 'ps-active-row' : ''}" draggable="true" data-context-index="${index}">
-                <span class="ps-drag-handle" data-drag-handle="${index}" title="Drag to reorder">⠿</span>
-                ${isCat ? `<button type="button" class="ps-row-btn" data-action="toggle-category-collapse" data-cat-id="${esc(block.id)}" aria-expanded="${!isCatCollapsed}">${isCatCollapsed ? '▸' : '▾'}</button>` : `<input type="checkbox" style="width:auto;min-height:16px;flex:none" data-draft-id="${esc(block.id)}" aria-label="Select ${esc(block.name)}" ${state.selectedDraft.includes(block.id) ? 'checked' : ''}>`}
-                <button type="button" class="ps-block-main" data-action="select-block" data-index="${index}" aria-current="${index === state.selected}" title="${esc(block.name || 'Untitled')}">
-                  <div class="ps-block-title-row">
-                    ${block.color ? `<span class="ps-dot" style="background:${esc(block.color)}"></span>` : ''}
-                    ${block.isLocked ? '<span title="Locked" style="font-size:0.7rem;opacity:0.75;flex:none">🔒</span>' : ''}
-                    <span class="ps-block-title">${esc(block.name || 'Untitled')}</span>
-                  </div>
-                  <div class="ps-block-sub">
-                    <span>${esc(roleLabel)}</span>
-                    <span data-token-id="${esc(block.id)}">${block.content?.trim() && tok ? `· ${tok}t` : ''}</span>
-                    ${defCnt ? `<span title="${defCnt} user variable(s) on this block" style="color:var(--ps-accent)">· 🎛 ${defCnt}</span>` : ''}
-                  </div>
-                </button>
-                <div class="ps-row-actions">
-                  <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-up" data-index="${index}" ${index === 0 ? 'disabled' : ''} title="Move up">↑</button>
-                  <button type="button" class="ps-row-btn ps-row-step" data-action="move-row-down" data-index="${index}" ${index >= d.prompt_order.length - 1 ? 'disabled' : ''} title="Move down">↓</button>
-                  ${!isCat ? `<button type="button" class="ps-row-btn ${block.enabled ? 'ps-toggle-on' : ''}" data-action="toggle" data-index="${index}" aria-pressed="${!!block.enabled}">${block.enabled ? 'On' : 'Off'}</button>` : ''}
-                  <button type="button" class="ps-row-btn" data-action="block-menu" data-index="${index}" title="Block options">⋯</button>
-                </div>
-              </div>`;
-          }).join('') || '<div class="ps-empty-state"><p>No blocks match your filter.</p></div>'}
+        <div class="ps-list" id="ps-block-list-slot">
+          ${renderBlockListOnlyHtml(state)}
         </div>
       </div>
 
@@ -486,10 +516,10 @@ export function renderVariablesTab(state: any): string {
           <div class="ps-between" style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--ps-border)">
             <div class="ps-row">
               <span class="ps-step-badge">${vi + 1}</span>
-              <strong>${esc(v.label || v.name || 'Variable')}</strong>
-              <code class="ps-pill ps-mono">{{var::${esc(v.name || 'key')}}}</code>
-              <button type="button" class="ps-btn-sm" data-action="insert-var-into-prompt" data-var-name="${esc(v.name || 'key')}">＋ Insert in Prompt</button>
-              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="copy-var-macro" data-macro="{{var::${esc(v.name || 'key')}}}" title="Copy macro">📋</button>
+              <strong data-var-card-title="${vi}">${esc(v.label || v.name || 'Variable')}</strong>
+              <code class="ps-pill ps-mono" data-var-card-macro="${vi}">{{var::${esc(v.name || 'key')}}}</code>
+              <button type="button" class="ps-btn-sm" data-action="insert-var-into-prompt" data-var-insert-btn="${vi}" data-var-name="${esc(v.name || 'key')}">＋ Insert in Prompt</button>
+              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="copy-var-macro" data-var-copy-btn="${vi}" data-macro="{{var::${esc(v.name || 'key')}}}" title="Copy macro">📋</button>
             </div>
             <button type="button" class="ps-btn-sm ps-danger-btn" data-action="delete-variable" data-vindex="${vi}">🗑 Remove</button>
           </div>
@@ -634,6 +664,7 @@ export function renderRemixAndTranslateTab(state: any): string {
               ${checkedCount ? `<span class="ps-pill ps-pill-accent">${checkedCount} checked</span>` : ''}
             </div>
             <div class="ps-actions">
+              <input style="width:180px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || '')}">
               ${checkedCount ? `
                 <button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount}) to Draft</button>
                 <button type="button" class="ps-btn-sm" data-action="collect-blocks">📦 Save Checked as Template…</button>
@@ -643,29 +674,8 @@ export function renderRemixAndTranslateTab(state: any): string {
             </div>
           </div>
 
-          <div class="ps-list">
-            ${state.importBlocks.map((block: any, i: number) => {
-              const isExpanded = state.expandedImports.includes(i);
-              return `
-                <article class="ps-card ${block.marker === 'category' ? 'ps-is-cat' : ''}" style="padding:${isExpanded ? '10px 12px' : '6px 12px'}">
-                  <div class="ps-between">
-                    <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
-                      <input style="width:auto;min-height:18px" type="checkbox" data-import-index="${i}" ${state.selectedImports.includes(i) ? 'checked' : ''}>
-                      <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-import-expand" data-index="${i}">${isExpanded ? '▾' : '▸'}</button>
-                      <button type="button" class="ps-block-main" data-action="toggle-import-expand" data-index="${i}">
-                        <strong>${esc(block.name || 'Untitled')}</strong>
-                        <span class="ps-pill">${block.marker === 'category' ? 'Folder' : esc(block.marker || block.role)}</span>
-                      </button>
-                    </div>
-                    <div class="ps-actions">
-                      <button type="button" class="ps-btn-sm" data-action="copy-source-content" data-index="${i}">📋</button>
-                      <button type="button" class="ps-primary ps-btn-sm" data-action="import-block" data-index="${i}">＋ Add to Draft</button>
-                    </div>
-                  </div>
-                  ${isExpanded ? (block.content ? `<pre class="ps-result" style="margin-top:8px;max-height:170px">${esc(block.content)}</pre>` : '<p class="ps-muted" style="margin-top:6px">Built-in data slot — injects dynamic context.</p>') : ''}
-                </article>
-              `;
-            }).join('')}
+          <div class="ps-list" id="ps-remix-source-slot">
+            ${renderRemixSourceListHtml(state)}
           </div>
         ` : ''}
       </div>
@@ -701,17 +711,78 @@ export function renderRemixAndTranslateTab(state: any): string {
   `;
 }
 
+export function renderRemixSourceListHtml(state: any): string {
+  const q = (state.remixSearch || '').trim().toLowerCase();
+  const rows = (state.importBlocks || [])
+    .map((block: any, i: number) => ({ block, i }))
+    .filter(({ block }: any) => {
+      if (!q) return true;
+      return (block.name || '').toLowerCase().includes(q) || (block.content || '').toLowerCase().includes(q);
+    });
+  if (!rows.length) return '<p class="ps-muted">No source blocks match your search.</p>';
+  return rows
+    .map(({ block, i }: any) => {
+      const isExpanded = state.expandedImports.includes(i);
+      return `
+        <article class="ps-card ${block.marker === 'category' ? 'ps-is-cat' : ''}" style="padding:${isExpanded ? '10px 12px' : '6px 12px'}">
+          <div class="ps-between">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+              <input style="width:auto;min-height:18px" type="checkbox" data-import-index="${i}" ${state.selectedImports.includes(i) ? 'checked' : ''}>
+              <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-import-expand" data-index="${i}">${isExpanded ? '▾' : '▸'}</button>
+              <button type="button" class="ps-block-main" data-action="toggle-import-expand" data-index="${i}">
+                <strong>${esc(block.name || 'Untitled')}</strong>
+                <span class="ps-pill">${block.marker === 'category' ? 'Folder' : esc(block.marker || block.role)}</span>
+              </button>
+            </div>
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="copy-source-content" data-index="${i}">📋</button>
+              <button type="button" class="ps-primary ps-btn-sm" data-action="import-block" data-index="${i}">＋ Add to Draft</button>
+            </div>
+          </div>
+          ${isExpanded ? (block.content ? `<pre class="ps-result" style="margin-top:8px;max-height:170px">${esc(block.content)}</pre>` : '<p class="ps-muted" style="margin-top:6px">Built-in data slot — injects dynamic context.</p>') : ''}
+        </article>
+      `;
+    })
+    .join('');
+}
+
+export function renderXRayListOnlyHtml(state: any): string {
+  const breakdown = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown : [];
+  const filtered = breakdown.filter((item: any) => {
+    if (state.breakdownFilter !== 'all' && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter) return false;
+    if ((state.breakdownSearch || '').trim()) {
+      const q = state.breakdownSearch.toLowerCase();
+      return (item.name || '').toLowerCase().includes(q) || (item.content || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+  return (
+    filtered
+      .map(
+        (item: any, idx: number) => `
+          <details class="ps-card" data-details-id="xray-${idx}">
+            <summary class="ps-between" style="cursor:pointer">
+              <span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
+              <span class="ps-muted">~${Math.ceil((item.content || '').length / 4)}t</span>
+            </summary>
+            <pre class="ps-result" style="margin-top:8px">${esc(item.content || '(empty)')}</pre>
+          </details>
+        `,
+      )
+      .join('') || '<p class="ps-muted">No items match filter.</p>'
+  );
+}
+
 export function renderXRayBreakdownInline(state: any): string {
   const a = state.assembled;
   if (!a) {
-    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">🔬</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>🔬 Inspect Prompt</strong> or <strong>▶ Generate Reply</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
+    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">🔬</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>🔬 Inspect Prompt X-Ray</strong> or <strong>▶ Generate Reply</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
   }
   const isCustom = a.source === 'custom';
   const d = state.draft;
   const nonCatBlocks = (d?.prompt_order || []).filter((b: any) => b.marker !== 'category');
   const enabledCount = nonCatBlocks.filter((b: any) => b.enabled).length;
   const breakdown = Array.isArray(a.breakdown) ? a.breakdown : [];
-  const messages = Array.isArray(a.messages) ? a.messages : [];
   const buckets = { block: 0, chat_history: 0, world_info: 0, memory: 0, authors_note: 0, other: 0 };
   breakdown.forEach((item: any) => {
     const est = Math.ceil((item.content || '').length / 4);
@@ -723,14 +794,6 @@ export function renderXRayBreakdownInline(state: any): string {
     else buckets.other += est;
   });
   const totalEst = Math.max(1, buckets.block + buckets.chat_history + buckets.world_info + buckets.memory + buckets.authors_note + buckets.other);
-  const filtered = breakdown.filter((item: any) => {
-    if (state.breakdownFilter !== 'all' && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter) return false;
-    if (state.breakdownSearch.trim()) {
-      const q = state.breakdownSearch.toLowerCase();
-      return (item.name || '').toLowerCase().includes(q) || (item.content || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
 
   return `
     <div>
@@ -754,16 +817,8 @@ export function renderXRayBreakdownInline(state: any): string {
         <input style="width:165px;max-width:100%;min-height:28px;padding:3px 8px;font-size:0.78rem" placeholder="Filter X-Ray…" data-state="breakdownSearch" value="${esc(state.breakdownSearch)}">
       </div>
 
-      <div class="ps-list" style="max-height:500px;overflow-y:auto" data-scroll-id="xray-list">
-        ${filtered.map((item: any, idx: number) => `
-          <details class="ps-card" data-details-id="xray-${idx}">
-            <summary class="ps-between" style="cursor:pointer">
-              <span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
-              <span class="ps-muted">~${Math.ceil((item.content || '').length / 4)}t</span>
-            </summary>
-            <pre class="ps-result" style="margin-top:8px">${esc(item.content || '(empty)')}</pre>
-          </details>
-        `).join('') || '<p class="ps-muted">No items match filter.</p>'}
+      <div class="ps-list" id="ps-xray-list-slot" style="max-height:500px;overflow-y:auto" data-scroll-id="xray-list">
+        ${renderXRayListOnlyHtml(state)}
       </div>
     </div>
   `;
@@ -1002,28 +1057,54 @@ export function renderTestTab(state: any): string {
             ${renderXRayBreakdownInline(state)}
           ` : `
             ${state.runs.length >= 2 && runA && runB ? `
-              <div class="ps-row" style="margin-bottom:10px">
-                <label>Left Run (A)
-                  <select data-state="compareA">
-                    ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareA) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
-                  </select>
-                </label>
-                <label>Right Run (B)
-                  <select data-state="compareB">
-                    ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareB) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
-                  </select>
-                </label>
-              </div>
-              <div class="ps-grid">
-                <div class="ps-card">
-                  <div class="ps-between"><strong>Run #${Number(state.compareA) + 1}</strong><span class="ps-pill">${esc(runA.connection)}</span></div>
-                  <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
+              <div class="ps-between" style="margin-bottom:10px">
+                <div class="ps-row" style="flex:1">
+                  <label>Left Run (A)
+                    <select data-state="compareA">
+                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareA) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
+                    </select>
+                  </label>
+                  <label>Right Run (B)
+                    <select data-state="compareB">
+                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareB) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
+                    </select>
+                  </label>
                 </div>
-                <div class="ps-card">
-                  <div class="ps-between"><strong>Run #${Number(state.compareB) + 1}</strong><span class="ps-pill">${esc(runB.connection)}</span></div>
-                  <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
+                <div class="ps-seg-bar">
+                  <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== 'diff'}">Side-by-Side</button>
+                  <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === 'diff'}">Line Diff</button>
                 </div>
               </div>
+              ${state.compareMode === 'diff' ? `
+                <div class="ps-diff-box">
+                  ${computeLineDiff(runA.content || '', runB.content || '')
+                    .map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === 'add' ? '+ ' : line.kind === 'rem' ? '- ' : '  '}${esc(line.text || ' ')}</div>`)
+                    .join('')}
+                </div>
+              ` : `
+                <div class="ps-grid">
+                  <div class="ps-card">
+                    <div class="ps-between">
+                      <strong>Run #${Number(state.compareA) + 1}</strong>
+                      <div class="ps-actions">
+                        <span class="ps-pill">${esc(runA.connection)}</span>
+                        ${runA.usage?.completion_tokens ? `<span class="ps-pill">${runA.usage.completion_tokens}t</span>` : ''}
+                      </div>
+                    </div>
+                    <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
+                  </div>
+                  <div class="ps-card">
+                    <div class="ps-between">
+                      <strong>Run #${Number(state.compareB) + 1}</strong>
+                      <div class="ps-actions">
+                        <span class="ps-pill">${esc(runB.connection)}</span>
+                        ${runB.usage?.completion_tokens ? `<span class="ps-pill">${runB.usage.completion_tokens}t</span>` : ''}
+                      </div>
+                    </div>
+                    <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
+                  </div>
+                </div>
+              `}
             ` : `
               <div class="ps-empty-state">
                 <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
