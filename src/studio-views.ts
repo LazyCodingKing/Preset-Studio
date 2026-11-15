@@ -1215,7 +1215,10 @@ export function renderTestTab(state: any): string {
             </label>
             <label>Model Connection
               <select data-state="connectionId">
-                <option value="">Active default connection</option>
+                <option value="">${(() => {
+                  const def = state.connections.find((c: any) => c.is_default) || state.connections[0];
+                  return def ? `Active / Default (${esc(def.name)}${cleanModelName(def.model) ? ` · ${esc(cleanModelName(def.model))}` : ''})` : 'Active default connection';
+                })()}</option>
                 ${selectOptions(state.connections, state.connectionId, (x: any) => formatConnectionLabel(x))}
               </select>
             </label>

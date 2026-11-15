@@ -90,7 +90,7 @@ function buildCleanGenerationParameters(preset: any): Record<string, unknown> {
   if (repPen !== undefined && repPen > 0 && repPen !== 1 && isAllowed('repetition_penalty')) out.repetition_penalty = repPen;
 
   const seed = num(raw.seed);
-  if (seed !== undefined && seed >= 0 && isAllowed('seed')) out.seed = Math.floor(seed);
+  if (seed !== undefined && seed > 0 && isAllowed('seed')) out.seed = Math.floor(seed);
 
   if (Array.isArray(raw.stop) && raw.stop.length > 0 && isAllowed('stop')) {
     out.stop = raw.stop.filter((s: unknown) => typeof s === 'string' && s.length > 0);
@@ -99,12 +99,19 @@ function buildCleanGenerationParameters(preset: any): Record<string, unknown> {
   return out;
 }
 
-function sanitizeProviderMessages(messages: any[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string; name?: string }> {
-  const cleaned: Array<{ role: 'system' | 'user' | 'assistant'; content: string; name?: string }> = [];
+function sanitizeProviderMessages(
+  messages: any[],
+): Array<{ role: 'system' | 'user' | 'assistant'; content: string | any[]; name?: string }> {
+  const cleaned: Array<{ role: 'system' | 'user' | 'assistant'; content: string | any[]; name?: string }> = [];
   for (const m of messages || []) {
     if (!m) continue;
-    const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
-    if (!content.trim()) continue;
+    const content = Array.isArray(m.content)
+      ? m.content
+      : typeof m.content === 'string'
+        ? m.content
+        : String(m.content ?? '');
+    const hasContent = Array.isArray(content) ? content.length > 0 : content.trim().length > 0;
+    if (!hasContent) continue;
     const role: 'system' | 'user' | 'assistant' =
       m.role === 'user' || m.role === 'assistant' || m.role === 'system' ? m.role : 'system';
     cleaned.push({
@@ -1426,6 +1433,9 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
             }
             const useRawOverride = Boolean(
               modelOverride && targetConn?.provider && sanitizeModelId(targetConn.model) !== modelOverride,
+            );
+            spindle.log?.info?.(
+              `Test Lab run: mode=${useRawOverride ? 'rawStream' : 'quietStream'} connection=${msg.connectionId || '(active/default)'} model=${modelOverride || '(connection)'} msgs=${cleanMessages.length} params=[${Object.keys(cleanParams).join(',')}]`,
             );
             const streamIter = useRawOverride
               ? spindle.generate.rawStream({
