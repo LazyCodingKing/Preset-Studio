@@ -716,6 +716,100 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
+export function downloadTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+export function computeRunMetrics(run: any): {
+  words: number;
+  chars: number;
+  promptTokens: number;
+  completionTokens: number;
+  durationSec: number | null;
+  tokPerSec: number | null;
+} {
+  const content = String(run?.content || '');
+  const chars = content.length;
+  const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+  const promptTokens = Number(run?.usage?.prompt_tokens || 0);
+  const completionTokens = Number(run?.usage?.completion_tokens || 0);
+  const durationMs = Number(run?.promptSummary?.durationMs || 0);
+  const durationSec = durationMs > 0 ? durationMs / 1000 : null;
+  const estTokens = completionTokens > 0 ? completionTokens : Math.ceil(chars / 4);
+  const tokPerSec = durationSec && durationSec >= 0.05 && estTokens > 0 ? estTokens / durationSec : null;
+  return { words, chars, promptTokens, completionTokens, durationSec, tokPerSec };
+}
+
+export function formatRunsAsText(
+  runs: any[],
+  indices?: number[],
+  title = 'Preset Studio Test Runs',
+): string {
+  const list = Array.isArray(runs) ? runs : [];
+  const chosen = (indices ? indices : list.map((_, idx) => idx))
+    .map((idx) => ({ run: list[idx], idx }))
+    .filter((item) => Boolean(item.run));
+
+  const lines: string[] = [
+    '====================================================================',
+    `${title}`,
+    `EXPORTED: ${new Date().toLocaleString()} | RUNS: ${chosen.length}`,
+    '====================================================================',
+    '',
+  ];
+
+  for (const { run, idx } of chosen) {
+    const s = run.promptSummary || {};
+    const m = computeRunMetrics(run);
+    const starTag = run.starred ? ' ★ STARRED' : '';
+    const noteTag = run.note ? ` | Note: ${run.note}` : '';
+    lines.push(`--- RUN #${idx + 1}${starTag} (${run.time || ''})${noteTag} ---`);
+    lines.push(`Source: ${s.promptSource === 'custom' ? 'Custom Prompt' : `Preset: ${s.presetName || run.presetName || 'Draft'}`}`);
+    lines.push(`Context: ${s.chatName || (s.standalone ? 'Standalone (No Chat)' : 'Chat')}`);
+    lines.push(`Model / Connection: ${s.model ? `${s.connection || ''} (${s.model})` : run.connection || 'Default'}`);
+    if (s.temperature !== undefined && s.temperature !== '') {
+      lines.push(`Temperature: ${s.temperature}`);
+    }
+    const statParts = [`${m.words} words`, `${m.chars} chars`];
+    if (m.promptTokens || m.completionTokens) statParts.push(`Tokens P:${m.promptTokens} / C:${m.completionTokens}`);
+    if (m.durationSec !== null) statParts.push(`${m.durationSec.toFixed(1)}s`);
+    if (m.tokPerSec !== null) statParts.push(`${m.tokPerSec.toFixed(1)} tok/s`);
+    lines.push(`Metrics: ${statParts.join(' | ')}`);
+
+    if (Array.isArray(s.activeBlockNames) && s.activeBlockNames.length) {
+      lines.push(`Active Blocks (${s.activeBlockNames.length}): ${s.activeBlockNames.join(', ')}`);
+    }
+    if (Array.isArray(s.messages) && s.messages.length) {
+      lines.push('', '[PROMPTS USED]');
+      for (const msg of s.messages) {
+        lines.push(`> ${String(msg.role || 'system').toUpperCase()}:`);
+        lines.push(String(msg.content || ''));
+        lines.push('');
+      }
+    } else if (s.customPrompt) {
+      lines.push('', '[CUSTOM PROMPT]', String(s.customPrompt));
+    } else if (run.userPromptPreview) {
+      lines.push('', '[USER INPUT]', String(run.userPromptPreview));
+    }
+
+    if (run.reasoning) {
+      lines.push('', '[REASONING]', String(run.reasoning));
+    }
+
+    lines.push('', '[ASSISTANT REPLY]', String(run.content || '(empty)'), '', '');
+  }
+
+  return lines.join('\n');
+}
+
 export function clampSelectedIndex(draft: any, selected: number): number {
   const len = Array.isArray(draft?.prompt_order) ? draft.prompt_order.length : 0;
   if (len <= 0) return 0;

@@ -1,6 +1,8 @@
 import type { SpindleFrontendContext } from 'lumiverse-spindle-types';
 import { STUDIO_BASE_CSS, STUDIO_POLISH_CSS } from './studio-styles.js';
 import {
+  downloadTextFile,
+  formatRunsAsText,
   esc,
   uid,
   selectOptions,
@@ -32,6 +34,7 @@ import {
   type ModalRef,
 } from './studio-dialogs.js';
 import {
+  renderAbComparisonView,
   renderPermissionBanner,
   renderBlockListOnlyHtml,
   renderRemixSourceListHtml,
@@ -140,8 +143,19 @@ export function setup(ctx: SpindleFrontendContext) {
     testReplyViewMode: 'chat',
     runs: [],
     viewingRunIndex: -1,
+    selectedRuns: [],
     compareA: 0,
     compareB: 1,
+    abFullWindow: false,
+    abReturnFull: false,
+    abViewMode: 'raw',
+    abLayoutMode: 'grid',
+    abStarredOnly: false,
+    abSearch: '',
+    matrixConnections: [],
+    matrixRunning: false,
+    matrixStatus: '',
+    matrixAborted: false,
     assembled: null,
     breakdownFilter: 'all',
     breakdownSearch: '',
@@ -173,6 +187,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const mountedHandles = new Set<{ destroy?: () => void }>();
   const variablePreviewHandles = new Set<{ destroy?: () => void }>();
   const modalRef: ModalRef = { current: null };
+  let abDialogEl: HTMLDialogElement | null = null;
   let timer: any = null;
   let tokenTimer: any = null;
   let varPreviewTimer: any = null;
@@ -274,6 +289,7 @@ export function setup(ctx: SpindleFrontendContext) {
       root.classList.add('ps-full');
       refresh().catch(() => {});
     } else {
+      state.abFullWindow = false;
       tab.root.appendChild(root);
       mount?.setVisible(false);
       root.classList.remove('ps-full');
@@ -991,13 +1007,15 @@ export function setup(ctx: SpindleFrontendContext) {
     const d = state.draft;
 
     shellBodyEl.innerHTML = d
-      ? state.view === 'blocks'
-        ? renderArchitectTab(ctx, state)
-        : state.view === 'variables'
-          ? renderVariablesTab(state)
-          : state.view === 'remix'
-            ? renderRemixAndTranslateTab(state)
-            : renderTestTab(state)
+      ? state.abFullWindow && full && state.view === 'test'
+        ? renderAbComparisonView(state, true)
+        : state.view === 'blocks'
+          ? renderArchitectTab(ctx, state)
+          : state.view === 'variables'
+            ? renderVariablesTab(state)
+            : state.view === 'remix'
+              ? renderRemixAndTranslateTab(state)
+              : renderTestTab(state)
       : `
         <div class="ps-panel ps-empty-state" style="padding:42px 20px">
           <div style="font-size:2rem;margin-bottom:8px">✳</div>
@@ -1018,7 +1036,29 @@ export function setup(ctx: SpindleFrontendContext) {
 
     mountInteractiveWidgets();
 
-    if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply') {
+    if (abDialogEl && abDialogEl.isConnected) {
+      if (state.abFullWindow && !full) {
+        const scrollTop = abDialogEl.scrollTop;
+        abDialogEl.innerHTML = renderAbComparisonView(state, true);
+        abDialogEl.scrollTop = scrollTop;
+      } else {
+        try { abDialogEl.close(); } catch (_) {}
+        abDialogEl.remove();
+        abDialogEl = null;
+      }
+    }
+
+    if (state.abViewMode === 'chat') {
+      root.querySelectorAll<HTMLElement>('.ps-ab-chat-slot[data-ab-chat-idx]').forEach((slotEl) => {
+        const rIdx = Number(slotEl.dataset.abChatIdx);
+        const targetRun = state.runs?.[rIdx];
+        if (targetRun) {
+          renderChatPreviewInto(slotEl, targetRun.displayContent || targetRun.content || '', false);
+        }
+      });
+    }
+
+    if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply' && !state.abFullWindow) {
       const bubbleEl = shellBodyEl.querySelector<HTMLElement>('#ps-chat-reply-bubble');
       if (bubbleEl) {
         const runs = Array.isArray(state.runs) ? state.runs : [];
@@ -1095,6 +1135,9 @@ export function setup(ctx: SpindleFrontendContext) {
           if (state.runs.length >= 2) {
             state.compareA = state.runs.length - 2;
             state.compareB = state.runs.length - 1;
+            state.selectedRuns = [state.runs.length - 2, state.runs.length - 1];
+          } else if (state.runs.length === 1) {
+            state.selectedRuns = [0];
           }
         }
         if (state.noContextChat) {
@@ -1274,7 +1317,13 @@ export function setup(ctx: SpindleFrontendContext) {
     else if (el.dataset.state === 'translationName' && state.translation) state.translation.name = el.value;
     else if (el.dataset.state === 'sourceTranslationText' && state.sourceTranslation) state.sourceTranslation.content = el.value;
     else if (el.dataset.state === 'translationText' && state.translation) state.translation.content = el.value;
-    else if (el.dataset.turnIdx !== undefined && el.dataset.turnField === 'content') {
+    else if (el.dataset.runNoteIdx !== undefined) {
+      const idx = Number(el.dataset.runNoteIdx);
+      if (state.runs[idx]) {
+        state.runs[idx].note = el.value;
+        request('test-history-save', { runs: state.runs }).catch(() => {});
+      }
+    } else if (el.dataset.turnIdx !== undefined && el.dataset.turnField === 'content') {
       const idx = Number(el.dataset.turnIdx);
       if (state.testTurns[idx]) {
         state.testTurns[idx].content = el.value;
@@ -1299,7 +1348,7 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (key === 'translateSearch') {
         const slot = shellBodyEl.querySelector<HTMLElement>('#ps-translate-list-slot');
         if (slot) slot.innerHTML = renderTranslateBlockListHtml(state);
-      } else if (['compareA', 'compareB'].includes(key)) {
+      } else if (['compareA', 'compareB', 'abSearch'].includes(key)) {
         renderBody();
       }
     }
@@ -1339,6 +1388,15 @@ export function setup(ctx: SpindleFrontendContext) {
         else if (val !== 'category') blk.categoryMode = null;
       }
       persist();
+      renderBody();
+      return;
+    }
+    if (el.dataset.matrixConn !== undefined) {
+      const cid = el.dataset.matrixConn;
+      const cur = Array.isArray(state.matrixConnections) ? state.matrixConnections : [];
+      state.matrixConnections = (el as HTMLInputElement).checked
+        ? [...new Set([...cur, cid])]
+        : cur.filter((x: string) => x !== cid);
       renderBody();
       return;
     }
@@ -1812,10 +1870,360 @@ export function setup(ctx: SpindleFrontendContext) {
           await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied prompts used in Run #${idx + 1}` });
         }
         return;
+      } else if (a === 'open-ab-window') {
+        state.testOutputTab = 'compare';
+        state.abFullWindow = true;
+        if (mount) {
+          state.abReturnFull = full;
+          if (!full) {
+            setFull(true);
+            return;
+          }
+          renderBody();
+        } else {
+          if (abDialogEl) {
+            try { abDialogEl.close(); } catch (_) {}
+            abDialogEl.remove();
+          }
+          const dialog = document.createElement('dialog');
+          dialog.className = 'ps-native-dialog ps-ab-dialog';
+          dialog.addEventListener('cancel', (ev) => {
+            ev.preventDefault();
+            state.abFullWindow = false;
+            abDialogEl = null;
+            try { dialog.close(); } catch (_) {}
+            dialog.remove();
+            renderBody();
+          });
+          dialogHostEl.appendChild(dialog);
+          abDialogEl = dialog;
+          if (typeof dialog.showModal === 'function') dialog.showModal();
+          else dialog.setAttribute('open', '');
+          renderBody();
+        }
+        return;
+      } else if (a === 'close-ab-window') {
+        state.abFullWindow = false;
+        if (abDialogEl) {
+          try { abDialogEl.close(); } catch (_) {}
+          abDialogEl.remove();
+          abDialogEl = null;
+          renderBody();
+          return;
+        }
+        if (full && !state.abReturnFull) {
+          setFull(false);
+          return;
+        }
+        renderBody();
+        return;
+      } else if (a === 'set-ab-view-mode') {
+        state.abViewMode = el.dataset.mode === 'chat' ? 'chat' : 'raw';
+        renderBody();
+        return;
+      } else if (a === 'set-ab-layout-mode') {
+        state.abLayoutMode = el.dataset.mode === 'scroll' ? 'scroll' : 'grid';
+        renderBody();
+        return;
+      } else if (a === 'toggle-ab-starred-only') {
+        state.abStarredOnly = !state.abStarredOnly;
+        renderBody();
+        return;
+      } else if (a === 'toggle-run-star') {
+        const idx = Number(el.dataset.runIdx);
+        if (state.runs[idx]) {
+          state.runs[idx].starred = !state.runs[idx].starred;
+          request('test-history-save', { runs: state.runs }).catch(() => {});
+          renderBody();
+        }
+        return;
+      } else if (a === 'toggle-run-select') {
+        const idx = Number(el.dataset.runIdx);
+        const cur = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
+        state.selectedRuns = cur.includes(idx) ? cur.filter((n: number) => n !== idx) : [...cur, idx].sort((x: number, y: number) => x - y);
+        renderBody();
+        return;
+      } else if (a === 'ab-select-preset') {
+        const count = Math.max(1, Number(el.dataset.count) || 2);
+        const start = Math.max(0, state.runs.length - count);
+        state.selectedRuns = Array.from({ length: state.runs.length - start }, (_, k) => start + k);
+        renderBody();
+        return;
+      } else if (a === 'ab-select-all') {
+        state.selectedRuns = state.runs.map((_: any, i: number) => i);
+        renderBody();
+        return;
+      } else if (a === 'ab-select-starred') {
+        state.selectedRuns = state.runs
+          .map((r: any, i: number) => (r.starred ? i : -1))
+          .filter((i: number) => i >= 0);
+        renderBody();
+        return;
+      } else if (a === 'ab-select-none') {
+        state.selectedRuns = [];
+        renderBody();
+        return;
+      } else if (a === 'copy-single-run-reply') {
+        const idx = Number(el.dataset.runIdx);
+        const r = state.runs?.[idx];
+        if (r) {
+          await copyToClipboard(r.content || '');
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied Run #${idx + 1} reply` });
+        }
+        return;
+      } else if (a === 'copy-runs-txt' || a === 'export-runs-txt') {
+        const scope = el.dataset.scope || 'all';
+        let indices: number[] | undefined;
+        let title = 'Preset Studio — All Test Runs';
+        let filename = 'preset-test-runs-all.txt';
+        if (scope === 'single') {
+          const idx = Number(el.dataset.runIdx);
+          indices = [idx];
+          title = `Preset Studio — Run #${idx + 1}`;
+          filename = `preset-test-run-${idx + 1}.txt`;
+        } else if (scope === 'selected') {
+          indices = [...(state.selectedRuns || [])].sort((x: number, y: number) => x - y);
+          if (!indices.length) throw new Error('Select at least one run first.');
+          title = `Preset Studio — Selected Runs (${indices.length})`;
+          filename = 'preset-test-runs-selected.txt';
+        }
+        const txt = formatRunsAsText(state.runs || [], indices, title);
+        if (a === 'copy-runs-txt') {
+          await copyToClipboard(txt);
+          await request('toast', {
+            kind: 'success',
+            title: 'Preset Studio',
+            message: scope === 'single' ? `Copied Run #${(indices?.[0] ?? 0) + 1} report` : `Copied ${indices ? indices.length : state.runs.length} run(s) as text`,
+          });
+        } else {
+          downloadTextFile(filename, txt);
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Exported ${filename}` });
+        }
+        return;
+      } else if (a === 'load-run-inputs') {
+        const idx = Number(el.dataset.runIdx);
+        const r = state.runs?.[idx];
+        if (r?.promptSummary) {
+          const s = r.promptSummary;
+          state.testPromptSource = s.promptSource === 'custom' ? 'custom' : 'preset';
+          if (s.promptSource === 'custom' && s.customPrompt) state.testCustomPrompt = s.customPrompt;
+          if (s.userInput) {
+            state.testTurnMode = 'single';
+            state.custom = s.userInput;
+          }
+          if (s.standalone) {
+            state.chatId = '';
+            state.noContextChat = true;
+          }
+          const matchedConn = state.connections.find((c: any) => c.name === s.connection || c.model === s.model);
+          if (matchedConn) state.connectionId = matchedConn.id;
+          state.abFullWindow = false;
+          if (abDialogEl) {
+            try { abDialogEl.close(); } catch (_) {}
+            abDialogEl.remove();
+            abDialogEl = null;
+          }
+          state.notice = `Loaded inputs from Run #${idx + 1} into Test Lab.`;
+          render();
+        }
+        return;
+      } else if (a === 'matrix-select-all') {
+        state.matrixConnections = state.connections.map((c: any) => c.id);
+        renderBody();
+        return;
+      } else if (a === 'matrix-select-none') {
+        state.matrixConnections = [];
+        renderBody();
+        return;
+      } else if (a === 'run-multi-swipe' || a === 'run-matrix') {
+        const isMatrix = a === 'run-matrix';
+        const targets: Array<{ connectionId: string; label: string }> = isMatrix
+          ? (state.matrixConnections || []).map((cid: string) => {
+              const c = state.connections.find((x: any) => x.id === cid);
+              return { connectionId: cid, label: c ? `${c.name} · ${c.model}` : cid };
+            })
+          : Array.from({ length: Math.max(2, Number(el.dataset.count) || 2) }, (_, k) => ({
+              connectionId: state.connectionId,
+              label: `Swipe ${k + 1}`,
+            }));
+        if (!targets.length) throw new Error('Select at least one connection first.');
+
+        const isCustomSource = state.testPromptSource === 'custom';
+        const stagedTurns =
+          state.testTurnMode === 'multi'
+            ? state.testTurns
+            : state.custom.trim()
+              ? [{ role: 'user', content: state.custom.trim() }]
+              : [];
+        const hasTurnText = stagedTurns.some((t: any) => t && typeof t.content === 'string' && t.content.trim());
+        const hasAuthorsNote = Boolean(state.authorsNote?.enabled && state.authorsNote?.content?.trim());
+
+        if (isCustomSource && !state.chatId && !state.testCustomPrompt.trim() && !hasTurnText && !hasAuthorsNote) {
+          throw new Error('Type a custom prompt, a test message, or select a Context Chat first.');
+        }
+        if (!isCustomSource && !state.chatId) {
+          const hasBlockText = (d?.prompt_order || []).some(
+            (blk: any) => blk.enabled && blk.marker !== 'category' && String(blk.content || '').trim(),
+          );
+          if (!hasBlockText && !hasTurnText && !hasAuthorsNote) {
+            throw new Error('Enable at least one block with text, enter a Test User Message, or select a Context Chat.');
+          }
+        }
+
+        state.matrixRunning = true;
+        state.matrixAborted = false;
+        state.busy = true;
+        const createdIndices: number[] = [];
+
+        try {
+          for (let ti = 0; ti < targets.length; ti++) {
+            if (state.matrixAborted) break;
+            const tgt = targets[ti];
+            state.matrixStatus = `${ti + 1}/${targets.length}: ${tgt.label}`;
+            state.result = '';
+            state.displayResult = '';
+            state.reasoning = '';
+            state.lastUsage = null;
+            state.assembled = null;
+            const snapshot = structuredClone(d);
+            const requestId = uid();
+            const runStartedAt = Date.now();
+            let runAssembled: any = null;
+            state.activeRun = requestId;
+            render();
+
+            const result: any = await new Promise((resolve, reject) => {
+              let inactivityTimer: any = null;
+              const resetInactivity = () => {
+                if (inactivityTimer) clearTimeout(inactivityTimer);
+                inactivityTimer = setTimeout(() => {
+                  if (pending.delete(requestId)) {
+                    reject(new Error('Generation timed out while waiting for provider stream.'));
+                  }
+                }, 120_000);
+              };
+              resetInactivity();
+              pending.set(requestId, {
+                touch: resetInactivity,
+                resolve: (val: any) => {
+                  if (inactivityTimer) clearTimeout(inactivityTimer);
+                  resolve(val);
+                },
+                reject: (err: any) => {
+                  if (inactivityTimer) clearTimeout(inactivityTimer);
+                  reject(err);
+                },
+                onAssembled: (assembledPayload: any) => {
+                  runAssembled = assembledPayload;
+                  state.assembled = assembledPayload;
+                },
+                onReasoning: (token: string) => {
+                  state.reasoning += token;
+                },
+                onToken: (token: string) => {
+                  state.result += token;
+                },
+              });
+              ctx.sendToBackend({
+                action: 'run',
+                requestId,
+                preset: snapshot,
+                promptSource: state.testPromptSource,
+                customPrompt: state.testCustomPrompt,
+                includeChatHistory: state.testCustomPromptIncludeHistory,
+                chatId: state.chatId,
+                connectionId: tgt.connectionId,
+                generationType: state.generationType,
+                testTurns: stagedTurns,
+                customMessage: state.custom,
+                authorsNote: state.authorsNote,
+              });
+            });
+
+            if (result?.aborted || state.matrixAborted) break;
+
+            const finalContent = result?.content || state.result;
+            const finalDisplay = result?.displayContent || finalContent;
+            const finalReasoning = result?.reasoning || state.reasoning;
+            const finalUsage = result?.usage || null;
+            const activeBlocks = (snapshot?.prompt_order || []).filter((blk: any) => blk.enabled && blk.marker !== 'category');
+            const userPromptPreview =
+              state.testTurnMode === 'multi' && state.testTurns.length
+                ? state.testTurns[state.testTurns.length - 1]?.content || ''
+                : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : '');
+            const connObj = state.connections.find((c: any) => c.id === tgt.connectionId);
+            const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
+            const promptMessages = Array.isArray(runAssembled?.messages)
+              ? runAssembled.messages.slice(-40).map((m: any) => ({
+                  role: String(m.role || 'system'),
+                  ...(m.name ? { name: String(m.name) } : {}),
+                  content:
+                    typeof m.content === 'string'
+                      ? m.content.slice(0, 4000)
+                      : JSON.stringify(m.content || '').slice(0, 4000),
+                }))
+              : [];
+
+            state.runs.push({
+              time: new Date().toLocaleTimeString(),
+              note: isMatrix ? connObj?.name || tgt.label : tgt.label,
+              connection: connObj?.name || 'Active connection',
+              presetName: isCustomSource ? 'Custom Prompt' : snapshot?.name || 'Draft',
+              activeBlocksCount: activeBlocks.length,
+              userPromptPreview: userPromptPreview.slice(0, 120),
+              content: finalContent,
+              displayContent: finalDisplay,
+              reasoning: finalReasoning,
+              usage: finalUsage,
+              promptSummary: {
+                promptSource: isCustomSource ? 'custom' : 'preset',
+                presetName: isCustomSource ? 'Custom Prompt' : snapshot?.name || 'Draft',
+                chatName: state.chatId ? chatObj?.name || state.chatId : 'Standalone (No Chat)',
+                standalone: !state.chatId,
+                connection: connObj?.name || 'Active connection',
+                model: connObj?.model || '',
+                temperature: snapshot?.parameters?.temperature,
+                generationType: state.generationType || 'normal',
+                activeBlocksCount: activeBlocks.length,
+                activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled').slice(0, 30),
+                customPrompt: isCustomSource ? String(state.testCustomPrompt || '').slice(0, 4000) : '',
+                userInput: userPromptPreview.slice(0, 500),
+                durationMs: Date.now() - runStartedAt,
+                messages: promptMessages,
+              },
+              snapshot,
+            });
+            createdIndices.push(state.runs.length - 1);
+          }
+        } finally {
+          state.matrixRunning = false;
+          state.matrixStatus = '';
+          state.busy = false;
+          state.activeRun = null;
+          if (createdIndices.length) {
+            for (let ri = 0; ri < state.runs.length - 10; ri++) {
+              if (state.runs[ri]?.snapshot) delete state.runs[ri].snapshot;
+            }
+            state.viewingRunIndex = state.runs.length - 1;
+            state.selectedRuns = createdIndices;
+            if (createdIndices.length >= 2) {
+              state.compareA = createdIndices[0];
+              state.compareB = createdIndices[createdIndices.length - 1];
+            }
+            state.testOutputTab = 'compare';
+            state.notice = `Completed ${createdIndices.length} batch test run(s) — showing side-by-side.`;
+            request('test-history-save', { runs: state.runs }).catch(() => {});
+          }
+        }
+        render();
+        return;
       } else if (a === 'delete-run-item') {
         const idx = Number(el.dataset.runIdx);
         if (idx >= 0 && idx < state.runs.length) {
           state.runs.splice(idx, 1);
+          state.selectedRuns = (state.selectedRuns || [])
+            .filter((n: number) => n !== idx)
+            .map((n: number) => (n > idx ? n - 1 : n));
           state.viewingRunIndex = Math.max(-1, Math.min(idx, state.runs.length - 1));
           state.compareA = Math.max(0, Math.min(Number(state.compareA) || 0, Math.max(0, state.runs.length - 1)));
           state.compareB = Math.max(0, Math.min(Number(state.compareB) || 0, Math.max(0, state.runs.length - 1)));
@@ -2398,6 +2806,7 @@ export function setup(ctx: SpindleFrontendContext) {
           state.notice = `Applied active block states from ${active.source || 'profile'}.`;
         }
       } else if (a === 'stop') {
+        state.matrixAborted = true;
         if (state.activeRun) await request('cancel', { runId: state.activeRun });
         state.notice = 'Generation stopped.';
       } else if (a === 'dry') {
@@ -2563,14 +2972,16 @@ export function setup(ctx: SpindleFrontendContext) {
               promptSummary,
               snapshot,
             });
-            if (state.runs.length > 15) state.runs.shift();
-            for (let ri = 0; ri < state.runs.length - 5; ri++) {
+            for (let ri = 0; ri < state.runs.length - 10; ri++) {
               if (state.runs[ri]?.snapshot) delete state.runs[ri].snapshot;
             }
             state.viewingRunIndex = state.runs.length - 1;
             if (state.runs.length >= 2) {
               state.compareA = state.runs.length - 2;
               state.compareB = state.runs.length - 1;
+              state.selectedRuns = [state.runs.length - 2, state.runs.length - 1];
+            } else {
+              state.selectedRuns = [0];
             }
             request('test-history-save', { runs: state.runs }).catch(() => {});
           }

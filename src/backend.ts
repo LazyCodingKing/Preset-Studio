@@ -854,13 +854,13 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           draft,
           templates: Array.isArray(templates) ? templates : [],
           preferences: preferences || {},
-          testHistory: Array.isArray(testHistory) ? testHistory.slice(-15) : [],
+          testHistory: Array.isArray(testHistory) ? testHistory : [],
           permissions: getPermissionSnapshot(),
         };
         break;
       }
       case 'test-history-save': {
-        const runsToSave = Array.isArray(msg.runs) ? msg.runs.slice(-15) : [];
+        const runsToSave = Array.isArray(msg.runs) ? msg.runs : [];
         await spindle.userStorage.setJson('test_history.json', runsToSave, uOpt);
         data = true;
         break;

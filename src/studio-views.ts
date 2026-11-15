@@ -5,6 +5,7 @@ import {
   MARKERS,
   VARIABLE_STARTER_EXAMPLES,
   AUTHORS_NOTE_PRESETS,
+  computeRunMetrics,
   esc,
   selectOptions,
   buildPresetVariableDiagnostics,
@@ -1296,6 +1297,49 @@ export function renderTestTab(state: any): string {
               <button type="button" class="ps-btn-sm" data-action="dry" ${state.busy || !state.draft.id || isStandalone ? 'disabled' : ''} title="${isStandalone ? 'Saved-Preset Dry Run requires a Context Chat; use Inspect X-Ray for standalone mode' : 'Run Lumiverse saved-preset dry run'}">Saved-Preset Dry Run</button>
             </div>
           </details>
+
+          <!-- Multi-Swipe & Model Matrix Runner -->
+          <details class="ps-collapsible" data-details-id="test-matrix-collapsible" ${state.matrixRunning ? 'open' : ''}>
+            <summary>
+              <span>🧪 Multi-Run &amp; Model Matrix</span>
+              <span class="ps-muted" style="font-size:0.75rem">${state.matrixRunning ? esc(state.matrixStatus || 'Running…') : 'Swipes &amp; Multi-Model'}</span>
+            </summary>
+            <div style="display:grid;gap:10px">
+              <div class="ps-between">
+                <span class="ps-muted" style="font-size:0.78rem">Test consistency with multiple swipes:</span>
+                <div class="ps-actions">
+                  ${[2, 3, 4].map((n) => `<button type="button" class="ps-btn-sm" data-action="run-multi-swipe" data-count="${n}" ${state.busy ? 'disabled' : ''}>⚡ ×${n} Swipes</button>`).join('')}
+                </div>
+              </div>
+              ${state.connections.length > 1 ? `
+                <div class="ps-card" style="padding:8px">
+                  <div class="ps-between" style="margin-bottom:6px">
+                    <strong style="font-size:0.79rem">Compare Across Connections (${(state.matrixConnections || []).length})</strong>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="matrix-select-all">All</button>
+                      <button type="button" class="ps-btn-sm" data-action="matrix-select-none">Clear</button>
+                    </div>
+                  </div>
+                  <div class="ps-chips" style="max-height:110px;overflow-y:auto">
+                    ${state.connections
+                      .map(
+                        (c: any) => `
+                          <label style="display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;font-size:0.76rem;padding:3px 7px;border:1px solid var(--ps-border);border-radius:6px;cursor:pointer;color:var(--ps-text)">
+                            <input type="checkbox" style="width:auto;min-height:14px" data-matrix-conn="${esc(c.id)}" ${(state.matrixConnections || []).includes(c.id) ? 'checked' : ''}>
+                            <span>${esc(c.name)}</span>
+                          </label>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                  <div class="ps-between" style="margin-top:8px">
+                    <span class="ps-muted" style="font-size:0.75rem">${state.matrixRunning ? esc(state.matrixStatus || 'Running matrix…') : 'Runs the same prompt on each checked model.'}</span>
+                    <button type="button" class="ps-btn-sm ps-primary" data-action="run-matrix" ${state.busy || !(state.matrixConnections || []).length ? 'disabled' : ''}>▶ Run Matrix (${(state.matrixConnections || []).length})</button>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          </details>
         </div>
       </div>
 
@@ -1347,6 +1391,9 @@ export function renderTestTab(state: any): string {
                   ` : ''}
                 </div>
                 <div class="ps-actions">
+                  <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-run-star" data-run-idx="${activeRunIdx}" aria-pressed="${Boolean(viewedRun?.starred)}" title="Star / bookmark this run">★</button>
+                  <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="single" data-run-idx="${activeRunIdx}" title="Export this run as .txt">📄 .txt</button>
+                  <button type="button" class="ps-btn-sm" data-action="open-ab-window" title="Open A/B Comparison in full window">⤢ Full A/B</button>
                   <button type="button" class="ps-btn-sm ps-primary" data-action="run" ${state.busy ? 'disabled' : ''} title="Regenerate using your latest preset/prompt edits">↻ Regenerate</button>
                   ${runs.length >= 2 ? `<button type="button" class="ps-btn-sm" data-action="compare-current-swipe" ${state.busy ? 'disabled' : ''} title="Compare this run side-by-side with the previous run">⚖️ Diff</button>` : ''}
                   ${viewedRun?.snapshot ? `<button type="button" class="ps-btn-sm" data-action="restore-run-snapshot" data-run-idx="${activeRunIdx}" ${state.busy ? 'disabled' : ''} title="Restore your preset draft to the exact blocks & samplers used in Run #${activeRunIdx + 1}">↺ Restore Preset</button>` : ''}
@@ -1379,97 +1426,247 @@ export function renderTestTab(state: any): string {
                 </div>
                 <div class="ps-actions">
                   <button type="button" class="ps-btn-sm" data-action="run">↻ Regenerate Turn</button>
-                  <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">💬 Append to Thread & Reply →</button>
+                  <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">💬 Append to Thread &amp; Reply →</button>
                 </div>
               </div>
             ` : ''}
           ` : outTab === 'xray' ? `
             ${renderXRayBreakdownInline(state)}
           ` : `
-            ${state.runs.length >= 2 && runA && runB ? `
-              <div class="ps-between" style="margin-bottom:10px">
-                <div class="ps-row" style="flex:1">
-                  <label>Left Run (A)
-                    <select data-state="compareA">
-                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${idxA === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
-                    </select>
-                  </label>
-                  <button type="button" class="ps-btn-sm" style="margin-top:18px" data-action="swap-compare-runs" title="Swap Run A and Run B">⇄</button>
-                  <label>Right Run (B)
-                    <select data-state="compareB">
-                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${idxB === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
-                    </select>
-                  </label>
-                </div>
-                <div class="ps-actions">
-                  ${runA.usage?.completion_tokens && runB.usage?.completion_tokens ? (() => {
-                    const delta = Number(runB.usage.completion_tokens) - Number(runA.usage.completion_tokens);
-                    return `<span class="ps-pill">Δ ${delta > 0 ? `+${delta}` : delta}t</span>`;
-                  })() : ''}
-                  <div class="ps-seg-bar">
-                    <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== 'diff'}">Side-by-Side</button>
-                    <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === 'diff'}">Line Diff</button>
-                  </div>
-                </div>
-              </div>
-              ${state.compareMode === 'diff' ? `
-                <div class="ps-grid" style="margin-bottom:10px">
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxA + 1} (A)</strong>
-                      <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
-                    </div>
-                    ${renderRunPromptsSection(runA, idxA, 'ab-diff-prompts-a')}
-                  </div>
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxB + 1} (B)</strong>
-                      <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
-                    </div>
-                    ${renderRunPromptsSection(runB, idxB, 'ab-diff-prompts-b')}
-                  </div>
-                </div>
-                <div class="ps-diff-box">
-                  ${computeLineDiff(runA.content || '', runB.content || '')
-                    .map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === 'add' ? '+ ' : line.kind === 'rem' ? '- ' : '  '}${esc(line.text || ' ')}</div>`)
-                    .join('')}
-                </div>
-              ` : `
-                <div class="ps-grid">
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxA + 1}</strong>
-                      <div class="ps-actions">
-                        <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
-                        ${runA.promptSummary?.durationMs ? `<span class="ps-pill">${(runA.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ''}
-                      </div>
-                    </div>
-                    ${renderRunPromptsSection(runA, idxA, 'ab-prompts-a')}
-                    <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
-                  </div>
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxB + 1}</strong>
-                      <div class="ps-actions">
-                        <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
-                        ${runB.promptSummary?.durationMs ? `<span class="ps-pill">${(runB.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ''}
-                      </div>
-                    </div>
-                    ${renderRunPromptsSection(runB, idxB, 'ab-prompts-b')}
-                    <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
-                  </div>
-                </div>
-              `}
-            ` : `
-              <div class="ps-empty-state">
-                <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
-                <strong>A/B Run Comparator (${state.runs.length}/2 runs)</strong>
-                <p class="ps-muted" style="margin-top:4px">Generate at least 2 test replies in this session to compare different presets, prompts, temperatures, or models side-by-side.</p>
-              </div>
-            `}
+            ${renderAbComparisonView(state, false)}
           `}
         </div>
       </div>
+    </div>
+  `;
+}
+
+export function getNormalizedSelectedRunIndices(state: any): number[] {
+  const runs: any[] = Array.isArray(state.runs) ? state.runs : [];
+  if (!runs.length) return [];
+  const raw: number[] = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
+  const valid = [...new Set(raw.map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < runs.length))];
+  if (valid.length) return valid.sort((a, b) => a - b);
+  return runs.length >= 2 ? [runs.length - 2, runs.length - 1] : [0];
+}
+
+export function renderAbComparisonView(state: any, isDedicatedFullWindow = false): string {
+  const runs: any[] = Array.isArray(state.runs) ? state.runs : [];
+  if (!runs.length) {
+    return `
+      <div class="ps-ab-full-wrap">
+        ${isDedicatedFullWindow ? `
+          <div class="ps-between">
+            <h3>⚖️ A/B Comparison Arena</h3>
+            <button type="button" class="ps-btn-sm ps-primary" data-action="close-ab-window">← Back to Test Lab</button>
+          </div>
+        ` : ''}
+        <div class="ps-empty-state">
+          <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
+          <strong>No Test Runs Recorded Yet</strong>
+          <p class="ps-muted" style="margin-top:4px">Generate test replies in Test Lab to compare runs side-by-side, inspect prompts, and export results.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  const selectedIndices = getNormalizedSelectedRunIndices(state);
+  const idxA = Math.max(0, Math.min(Number(state.compareA) || 0, runs.length - 1));
+  const idxB = Math.max(0, Math.min(Number(state.compareB) || 0, runs.length - 1));
+  const runA = runs[idxA];
+  const runB = runs[idxB];
+  const baselineRun = runs[selectedIndices[0]];
+  const baselineTokens = Number(baselineRun?.usage?.completion_tokens || 0);
+  const abViewMode = state.abViewMode === 'chat' ? 'chat' : 'raw';
+  const abLayoutMode = state.abLayoutMode === 'scroll' ? 'scroll' : 'grid';
+  const q = (state.abSearch || '').trim().toLowerCase();
+
+  const visibleRunItems = runs
+    .map((r, idx) => ({ r, idx }))
+    .filter(({ r }) => {
+      if (state.abStarredOnly && !r.starred) return false;
+      if (!q) return true;
+      const hay = `${r.note || ''} ${r.presetName || ''} ${r.promptSummary?.presetName || ''} ${r.connection || ''} ${r.promptSummary?.model || ''} ${r.content || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+
+  return `
+    <div class="ps-ab-full-wrap">
+      ${isDedicatedFullWindow ? `
+        <div class="ps-panel ps-between" style="margin:0;padding:10px 14px">
+          <div class="ps-row">
+            <h3>⚖️ A/B Comparison Arena</h3>
+            <span class="ps-pill ps-pill-accent">${runs.length} total run(s) · ${selectedIndices.length} in view</span>
+          </div>
+          <div class="ps-actions">
+            <button type="button" class="ps-btn-sm ps-primary" data-action="close-ab-window">← Back to Test Lab</button>
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Toolbar: View Mode, Layout, Filter & Full Window Launch -->
+      <div class="ps-between" style="gap:8px">
+        <div class="ps-actions">
+          <div class="ps-seg-bar">
+            <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== 'diff'}">Side-by-Side (${selectedIndices.length})</button>
+            <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === 'diff'}">Line Diff (2)</button>
+          </div>
+          ${state.compareMode !== 'diff' ? `
+            <div class="ps-seg-bar">
+              <button type="button" data-action="set-ab-view-mode" data-mode="raw" aria-pressed="${abViewMode === 'raw'}">Raw</button>
+              <button type="button" data-action="set-ab-view-mode" data-mode="chat" aria-pressed="${abViewMode === 'chat'}">Chat</button>
+            </div>
+            <div class="ps-seg-bar">
+              <button type="button" data-action="set-ab-layout-mode" data-mode="grid" aria-pressed="${abLayoutMode === 'grid'}" title="Wrap run columns into a responsive grid">Grid</button>
+              <button type="button" data-action="set-ab-layout-mode" data-mode="scroll" aria-pressed="${abLayoutMode === 'scroll'}" title="Keep all run columns in one horizontally scrollable row">1 Row</button>
+            </div>
+          ` : ''}
+        </div>
+        <div class="ps-actions">
+          <input style="width:140px;min-height:28px;padding:3px 8px;font-size:0.78rem" placeholder="Filter runs…" data-state="abSearch" value="${esc(state.abSearch || '')}">
+          <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-ab-starred-only" aria-pressed="${Boolean(state.abStarredOnly)}" title="Show only starred runs">★ Starred</button>
+          ${!isDedicatedFullWindow ? `<button type="button" class="ps-btn-sm ps-primary" data-action="open-ab-window" title="Expand A/B Comparison into a dedicated full window">⤢ Full A/B Window</button>` : ''}
+        </div>
+      </div>
+
+      <!-- Selection & Export Action Strip -->
+      <div class="ps-card ps-between" style="padding:8px 10px">
+        <div class="ps-actions">
+          <span class="ps-muted" style="font-size:0.76rem">Show:</span>
+          ${[2, 3, 4].filter((n) => runs.length >= n).map((n) => `<button type="button" class="ps-btn-sm" data-action="ab-select-preset" data-count="${n}">Last ${n}</button>`).join('')}
+          <button type="button" class="ps-btn-sm" data-action="ab-select-all">All (${visibleRunItems.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="ab-select-starred">★ Starred</button>
+          <button type="button" class="ps-btn-sm" data-action="ab-select-none">Clear</button>
+        </div>
+        <div class="ps-actions">
+          <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="selected" ${!selectedIndices.length ? 'disabled' : ''}>📋 Copy Selected (${selectedIndices.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="selected" ${!selectedIndices.length ? 'disabled' : ''}>📄 Export Selected .txt</button>
+          <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="all">📋 Copy All (${runs.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="all">📄 Export All .txt</button>
+          <button type="button" class="ps-btn-sm ps-danger-btn" data-action="clear-run-history" title="Clear all run history">🗑 Clear</button>
+        </div>
+      </div>
+
+      <!-- Run Picker Strip -->
+      <div class="ps-ab-run-strip">
+        ${visibleRunItems
+          .map(({ r, idx }) => {
+            const isSel = selectedIndices.includes(idx);
+            const label = r.note?.trim() || r.promptSummary?.presetName || r.presetName || 'Draft';
+            const model = r.promptSummary?.model || r.connection || '';
+            return `
+              <button type="button" class="ps-ab-chip" data-action="toggle-run-select" data-run-idx="${idx}" aria-pressed="${isSel}" title="${esc(`${label} · ${model} · ${r.time}`)}">
+                <span>${isSel ? '☑' : '☐'} #${idx + 1}</span>
+                ${r.starred ? '<span style="color:var(--ps-warning)">★</span>' : ''}
+                <span style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>
+                ${r.usage?.completion_tokens ? `<span class="ps-muted">${r.usage.completion_tokens}t</span>` : ''}
+              </button>
+            `;
+          })
+          .join('') || '<span class="ps-muted" style="font-size:0.78rem">No runs match your filter.</span>'}
+      </div>
+
+      ${state.compareMode === 'diff' ? `
+        ${runs.length >= 2 && runA && runB ? `
+          <div class="ps-between" style="margin-bottom:4px">
+            <div class="ps-row" style="flex:1">
+              <label>Left Run (A)
+                <select data-state="compareA">
+                  ${runs.map((r: any, idx: number) => `<option value="${idx}" ${idxA === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.note || r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
+                </select>
+              </label>
+              <button type="button" class="ps-btn-sm" style="margin-top:18px" data-action="swap-compare-runs" title="Swap Run A and Run B">⇄</button>
+              <label>Right Run (B)
+                <select data-state="compareB">
+                  ${runs.map((r: any, idx: number) => `<option value="${idx}" ${idxB === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.note || r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            ${runA.usage?.completion_tokens && runB.usage?.completion_tokens ? (() => {
+              const delta = Number(runB.usage.completion_tokens) - Number(runA.usage.completion_tokens);
+              return `<span class="ps-pill">Δ ${delta > 0 ? `+${delta}` : delta}t</span>`;
+            })() : ''}
+          </div>
+          <div class="ps-grid">
+            <div class="ps-card">
+              <div class="ps-between" style="margin-bottom:6px">
+                <strong>Run #${idxA + 1} (A)</strong>
+                <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
+              </div>
+              ${renderRunPromptsSection(runA, idxA, 'ab-diff-prompts-a')}
+            </div>
+            <div class="ps-card">
+              <div class="ps-between" style="margin-bottom:6px">
+                <strong>Run #${idxB + 1} (B)</strong>
+                <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
+              </div>
+              ${renderRunPromptsSection(runB, idxB, 'ab-diff-prompts-b')}
+            </div>
+          </div>
+          <div class="ps-diff-box">
+            ${computeLineDiff(runA.content || '', runB.content || '')
+              .map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === 'add' ? '+ ' : line.kind === 'rem' ? '- ' : '  '}${esc(line.text || ' ')}</div>`)
+              .join('')}
+          </div>
+        ` : '<div class="ps-empty-state"><p class="ps-muted">Generate at least 2 runs to use Line Diff.</p></div>'}
+      ` : `
+        <div class="${abLayoutMode === 'scroll' ? 'ps-ab-grid-scroll' : 'ps-ab-grid'}">
+          ${selectedIndices
+            .map((runIdx, colPos) => {
+              const r = runs[runIdx];
+              if (!r) return '';
+              const m = computeRunMetrics(r);
+              const delta = colPos > 0 && baselineTokens > 0 && m.completionTokens > 0 ? m.completionTokens - baselineTokens : null;
+              return `
+                <article class="ps-ab-run-card ${r.starred ? 'ps-ab-starred' : ''}">
+                  <div class="ps-between">
+                    <div class="ps-row" style="gap:5px">
+                      <strong>Run #${runIdx + 1}</strong>
+                      <span class="ps-muted" style="font-size:0.74rem">${esc(r.time)}</span>
+                      ${m.durationSec !== null ? `<span class="ps-pill">${m.durationSec.toFixed(1)}s${m.tokPerSec !== null ? ` · ${m.tokPerSec.toFixed(0)}t/s` : ''}</span>` : ''}
+                      ${delta !== null ? `<span class="ps-pill">${delta > 0 ? `+${delta}` : delta}t vs #${selectedIndices[0] + 1}</span>` : ''}
+                    </div>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-run-star" data-run-idx="${runIdx}" aria-pressed="${Boolean(r.starred)}" title="Star / mark as winner">★</button>
+                      <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-run-select" data-run-idx="${runIdx}" title="Hide from side-by-side view">✕</button>
+                    </div>
+                  </div>
+
+                  <input class="ps-ab-note-input" data-run-note-idx="${runIdx}" value="${esc(r.note || '')}" placeholder="Add run note (e.g. Temp 0.7, No Jailbreak)…">
+
+                  <div class="ps-muted" style="font-size:0.74rem">${m.words.toLocaleString()} words · ${m.chars.toLocaleString()} chars${m.completionTokens ? ` · ${m.completionTokens} completion tok` : ''}</div>
+
+                  ${renderRunPromptsSection(r, runIdx, `ab-prompts-${runIdx}`)}
+
+                  ${r.reasoning ? `
+                    <details class="ps-collapsible" style="margin:0;padding:6px 9px" data-details-id="ab-reason-${runIdx}">
+                      <summary><span style="font-size:0.78rem">💭 Reasoning</span></summary>
+                      <pre class="ps-result" style="max-height:140px;margin-top:6px">${esc(r.reasoning)}</pre>
+                    </details>
+                  ` : ''}
+
+                  ${abViewMode === 'chat'
+                    ? `<div class="ps-chat-bubble ps-ab-chat-slot" data-ab-chat-idx="${runIdx}" style="min-height:160px;max-height:${isDedicatedFullWindow ? '520px' : '380px'}"></div>`
+                    : `<pre class="ps-result" style="margin:0;max-height:${isDedicatedFullWindow ? '520px' : '380px'}">${esc(r.content || '(empty)')}</pre>`}
+
+                  <div class="ps-between" style="padding-top:6px;border-top:1px solid var(--ps-border)">
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="copy-single-run-reply" data-run-idx="${runIdx}" title="Copy only the reply text">📋 Reply</button>
+                      <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="single" data-run-idx="${runIdx}" title="Copy full run report (prompts + reply)">📋 Full</button>
+                      <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="single" data-run-idx="${runIdx}" title="Download this run as .txt">📄 .txt</button>
+                    </div>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="load-run-inputs" data-run-idx="${runIdx}" title="Load this run's connection and test input back into Test Lab">↺ Inputs</button>
+                      ${r.snapshot ? `<button type="button" class="ps-btn-sm" data-action="restore-run-snapshot" data-run-idx="${runIdx}" title="Restore preset draft from this run">↺ Preset</button>` : ''}
+                      <button type="button" class="ps-btn-sm ps-danger-btn ps-btn-icon" data-action="delete-run-item" data-run-idx="${runIdx}" title="Delete run">🗑</button>
+                    </div>
+                  </div>
+                </article>
+              `;
+            })
+            .join('')}
+        </div>
+      `}
     </div>
   `;
 }

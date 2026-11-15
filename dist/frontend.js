@@ -649,6 +649,79 @@ var STUDIO_POLISH_CSS = `
   background: var(--ps-accent-soft);
   margin-right: 3px;
 }
+.ps-ab-full-wrap { display: grid; gap: 12px; }
+.ps-ab-run-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 128px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--ps-border);
+  border-radius: 8px;
+  background: var(--ps-bg);
+}
+.ps-ab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px !important;
+  min-height: 28px !important;
+  font-size: 0.77rem !important;
+  border-radius: 999px !important;
+  background: var(--ps-surface) !important;
+  border: 1px solid var(--ps-border) !important;
+}
+.ps-ab-chip[aria-pressed="true"] {
+  border-color: var(--ps-accent) !important;
+  background: var(--ps-accent-soft) !important;
+  color: var(--ps-text) !important;
+  font-weight: 650 !important;
+}
+.ps-ab-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  align-items: start;
+}
+.ps-ab-grid-scroll {
+  display: grid;
+  gap: 12px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(min(90vw, 350px), 1fr);
+  overflow-x: auto;
+  padding-bottom: 6px;
+  align-items: start;
+}
+.ps-ab-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  background: var(--ps-bg);
+  border: 1px solid var(--ps-border);
+  border-radius: calc(var(--ps-radius) - 1px);
+  padding: 11px 12px;
+}
+.ps-ab-run-card.ps-ab-starred {
+  border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.65));
+  box-shadow: inset 0 0 0 1px var(--lumiverse-warning-015, rgba(245, 185, 66, 0.25));
+}
+.ps-ab-star-btn[aria-pressed="true"] {
+  color: var(--ps-warning) !important;
+  border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.55)) !important;
+  background: var(--ps-warning-soft) !important;
+}
+.ps-ab-note-input {
+  min-height: 28px !important;
+  padding: 3px 8px !important;
+  font-size: 0.77rem !important;
+  background: var(--ps-surface) !important;
+}
+.ps-ab-dialog {
+  width: min(1480px, calc(100vw - 18px)) !important;
+  max-height: calc(var(--app-scaled-viewport-height, 100vh) - 18px) !important;
+}
 .ps-columns { display: grid; gap: 12px; align-items: start; }
 .ps-mobile-back { display: none; }
 @container (max-width: 799px) {
@@ -1356,6 +1429,82 @@ async function copyToClipboard(text) {
   } catch (_) {
     return false;
   }
+}
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+function computeRunMetrics(run) {
+  const content = String(run?.content || "");
+  const chars = content.length;
+  const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+  const promptTokens = Number(run?.usage?.prompt_tokens || 0);
+  const completionTokens = Number(run?.usage?.completion_tokens || 0);
+  const durationMs = Number(run?.promptSummary?.durationMs || 0);
+  const durationSec = durationMs > 0 ? durationMs / 1000 : null;
+  const estTokens = completionTokens > 0 ? completionTokens : Math.ceil(chars / 4);
+  const tokPerSec = durationSec && durationSec >= 0.05 && estTokens > 0 ? estTokens / durationSec : null;
+  return { words, chars, promptTokens, completionTokens, durationSec, tokPerSec };
+}
+function formatRunsAsText(runs, indices, title = "Preset Studio Test Runs") {
+  const list = Array.isArray(runs) ? runs : [];
+  const chosen = (indices ? indices : list.map((_, idx) => idx)).map((idx) => ({ run: list[idx], idx })).filter((item) => Boolean(item.run));
+  const lines = [
+    "====================================================================",
+    `${title}`,
+    `EXPORTED: ${new Date().toLocaleString()} | RUNS: ${chosen.length}`,
+    "====================================================================",
+    ""
+  ];
+  for (const { run, idx } of chosen) {
+    const s = run.promptSummary || {};
+    const m = computeRunMetrics(run);
+    const starTag = run.starred ? " ★ STARRED" : "";
+    const noteTag = run.note ? ` | Note: ${run.note}` : "";
+    lines.push(`--- RUN #${idx + 1}${starTag} (${run.time || ""})${noteTag} ---`);
+    lines.push(`Source: ${s.promptSource === "custom" ? "Custom Prompt" : `Preset: ${s.presetName || run.presetName || "Draft"}`}`);
+    lines.push(`Context: ${s.chatName || (s.standalone ? "Standalone (No Chat)" : "Chat")}`);
+    lines.push(`Model / Connection: ${s.model ? `${s.connection || ""} (${s.model})` : run.connection || "Default"}`);
+    if (s.temperature !== undefined && s.temperature !== "") {
+      lines.push(`Temperature: ${s.temperature}`);
+    }
+    const statParts = [`${m.words} words`, `${m.chars} chars`];
+    if (m.promptTokens || m.completionTokens)
+      statParts.push(`Tokens P:${m.promptTokens} / C:${m.completionTokens}`);
+    if (m.durationSec !== null)
+      statParts.push(`${m.durationSec.toFixed(1)}s`);
+    if (m.tokPerSec !== null)
+      statParts.push(`${m.tokPerSec.toFixed(1)} tok/s`);
+    lines.push(`Metrics: ${statParts.join(" | ")}`);
+    if (Array.isArray(s.activeBlockNames) && s.activeBlockNames.length) {
+      lines.push(`Active Blocks (${s.activeBlockNames.length}): ${s.activeBlockNames.join(", ")}`);
+    }
+    if (Array.isArray(s.messages) && s.messages.length) {
+      lines.push("", "[PROMPTS USED]");
+      for (const msg of s.messages) {
+        lines.push(`> ${String(msg.role || "system").toUpperCase()}:`);
+        lines.push(String(msg.content || ""));
+        lines.push("");
+      }
+    } else if (s.customPrompt) {
+      lines.push("", "[CUSTOM PROMPT]", String(s.customPrompt));
+    } else if (run.userPromptPreview) {
+      lines.push("", "[USER INPUT]", String(run.userPromptPreview));
+    }
+    if (run.reasoning) {
+      lines.push("", "[REASONING]", String(run.reasoning));
+    }
+    lines.push("", "[ASSISTANT REPLY]", String(run.content || "(empty)"), "", "");
+  }
+  return lines.join(`
+`);
 }
 function clampSelectedIndex(draft, selected) {
   const len = Array.isArray(draft?.prompt_order) ? draft.prompt_order.length : 0;
@@ -3390,6 +3539,45 @@ function renderTestTab(state) {
               <button type="button" class="ps-btn-sm" data-action="dry" ${state.busy || !state.draft.id || isStandalone ? "disabled" : ""} title="${isStandalone ? "Saved-Preset Dry Run requires a Context Chat; use Inspect X-Ray for standalone mode" : "Run Lumiverse saved-preset dry run"}">Saved-Preset Dry Run</button>
             </div>
           </details>
+
+          <!-- Multi-Swipe & Model Matrix Runner -->
+          <details class="ps-collapsible" data-details-id="test-matrix-collapsible" ${state.matrixRunning ? "open" : ""}>
+            <summary>
+              <span>\uD83E\uDDEA Multi-Run &amp; Model Matrix</span>
+              <span class="ps-muted" style="font-size:0.75rem">${state.matrixRunning ? esc(state.matrixStatus || "Running…") : "Swipes &amp; Multi-Model"}</span>
+            </summary>
+            <div style="display:grid;gap:10px">
+              <div class="ps-between">
+                <span class="ps-muted" style="font-size:0.78rem">Test consistency with multiple swipes:</span>
+                <div class="ps-actions">
+                  ${[2, 3, 4].map((n) => `<button type="button" class="ps-btn-sm" data-action="run-multi-swipe" data-count="${n}" ${state.busy ? "disabled" : ""}>⚡ ×${n} Swipes</button>`).join("")}
+                </div>
+              </div>
+              ${state.connections.length > 1 ? `
+                <div class="ps-card" style="padding:8px">
+                  <div class="ps-between" style="margin-bottom:6px">
+                    <strong style="font-size:0.79rem">Compare Across Connections (${(state.matrixConnections || []).length})</strong>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="matrix-select-all">All</button>
+                      <button type="button" class="ps-btn-sm" data-action="matrix-select-none">Clear</button>
+                    </div>
+                  </div>
+                  <div class="ps-chips" style="max-height:110px;overflow-y:auto">
+                    ${state.connections.map((c) => `
+                          <label style="display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;font-size:0.76rem;padding:3px 7px;border:1px solid var(--ps-border);border-radius:6px;cursor:pointer;color:var(--ps-text)">
+                            <input type="checkbox" style="width:auto;min-height:14px" data-matrix-conn="${esc(c.id)}" ${(state.matrixConnections || []).includes(c.id) ? "checked" : ""}>
+                            <span>${esc(c.name)}</span>
+                          </label>
+                        `).join("")}
+                  </div>
+                  <div class="ps-between" style="margin-top:8px">
+                    <span class="ps-muted" style="font-size:0.75rem">${state.matrixRunning ? esc(state.matrixStatus || "Running matrix…") : "Runs the same prompt on each checked model."}</span>
+                    <button type="button" class="ps-btn-sm ps-primary" data-action="run-matrix" ${state.busy || !(state.matrixConnections || []).length ? "disabled" : ""}>▶ Run Matrix (${(state.matrixConnections || []).length})</button>
+                  </div>
+                </div>
+              ` : ""}
+            </div>
+          </details>
         </div>
       </div>
 
@@ -3441,6 +3629,9 @@ function renderTestTab(state) {
                   ` : ""}
                 </div>
                 <div class="ps-actions">
+                  <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-run-star" data-run-idx="${activeRunIdx}" aria-pressed="${Boolean(viewedRun?.starred)}" title="Star / bookmark this run">★</button>
+                  <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="single" data-run-idx="${activeRunIdx}" title="Export this run as .txt">\uD83D\uDCC4 .txt</button>
+                  <button type="button" class="ps-btn-sm" data-action="open-ab-window" title="Open A/B Comparison in full window">⤢ Full A/B</button>
                   <button type="button" class="ps-btn-sm ps-primary" data-action="run" ${state.busy ? "disabled" : ""} title="Regenerate using your latest preset/prompt edits">↻ Regenerate</button>
                   ${runs.length >= 2 ? `<button type="button" class="ps-btn-sm" data-action="compare-current-swipe" ${state.busy ? "disabled" : ""} title="Compare this run side-by-side with the previous run">⚖️ Diff</button>` : ""}
                   ${viewedRun?.snapshot ? `<button type="button" class="ps-btn-sm" data-action="restore-run-snapshot" data-run-idx="${activeRunIdx}" ${state.busy ? "disabled" : ""} title="Restore your preset draft to the exact blocks & samplers used in Run #${activeRunIdx + 1}">↺ Restore Preset</button>` : ""}
@@ -3473,95 +3664,237 @@ function renderTestTab(state) {
                 </div>
                 <div class="ps-actions">
                   <button type="button" class="ps-btn-sm" data-action="run">↻ Regenerate Turn</button>
-                  <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">\uD83D\uDCAC Append to Thread & Reply →</button>
+                  <button type="button" class="ps-primary ps-btn-sm" data-action="continue-test-dialogue">\uD83D\uDCAC Append to Thread &amp; Reply →</button>
                 </div>
               </div>
             ` : ""}
           ` : outTab === "xray" ? `
             ${renderXRayBreakdownInline(state)}
           ` : `
-            ${state.runs.length >= 2 && runA && runB ? `
-              <div class="ps-between" style="margin-bottom:10px">
-                <div class="ps-row" style="flex:1">
-                  <label>Left Run (A)
-                    <select data-state="compareA">
-                      ${state.runs.map((r, idx) => `<option value="${idx}" ${idxA === idx ? "selected" : ""}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || "Draft")} (${esc(r.time)})</option>`).join("")}
-                    </select>
-                  </label>
-                  <button type="button" class="ps-btn-sm" style="margin-top:18px" data-action="swap-compare-runs" title="Swap Run A and Run B">⇄</button>
-                  <label>Right Run (B)
-                    <select data-state="compareB">
-                      ${state.runs.map((r, idx) => `<option value="${idx}" ${idxB === idx ? "selected" : ""}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || "Draft")} (${esc(r.time)})</option>`).join("")}
-                    </select>
-                  </label>
-                </div>
-                <div class="ps-actions">
-                  ${runA.usage?.completion_tokens && runB.usage?.completion_tokens ? (() => {
-    const delta = Number(runB.usage.completion_tokens) - Number(runA.usage.completion_tokens);
-    return `<span class="ps-pill">Δ ${delta > 0 ? `+${delta}` : delta}t</span>`;
-  })() : ""}
-                  <div class="ps-seg-bar">
-                    <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== "diff"}">Side-by-Side</button>
-                    <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === "diff"}">Line Diff</button>
-                  </div>
-                </div>
-              </div>
-              ${state.compareMode === "diff" ? `
-                <div class="ps-grid" style="margin-bottom:10px">
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxA + 1} (A)</strong>
-                      <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
-                    </div>
-                    ${renderRunPromptsSection(runA, idxA, "ab-diff-prompts-a")}
-                  </div>
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxB + 1} (B)</strong>
-                      <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
-                    </div>
-                    ${renderRunPromptsSection(runB, idxB, "ab-diff-prompts-b")}
-                  </div>
-                </div>
-                <div class="ps-diff-box">
-                  ${computeLineDiff(runA.content || "", runB.content || "").map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === "add" ? "+ " : line.kind === "rem" ? "- " : "  "}${esc(line.text || " ")}</div>`).join("")}
-                </div>
-              ` : `
-                <div class="ps-grid">
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxA + 1}</strong>
-                      <div class="ps-actions">
-                        <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
-                        ${runA.promptSummary?.durationMs ? `<span class="ps-pill">${(runA.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ""}
-                      </div>
-                    </div>
-                    ${renderRunPromptsSection(runA, idxA, "ab-prompts-a")}
-                    <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
-                  </div>
-                  <div class="ps-card">
-                    <div class="ps-between" style="margin-bottom:6px">
-                      <strong>Run #${idxB + 1}</strong>
-                      <div class="ps-actions">
-                        <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
-                        ${runB.promptSummary?.durationMs ? `<span class="ps-pill">${(runB.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ""}
-                      </div>
-                    </div>
-                    ${renderRunPromptsSection(runB, idxB, "ab-prompts-b")}
-                    <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
-                  </div>
-                </div>
-              `}
-            ` : `
-              <div class="ps-empty-state">
-                <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
-                <strong>A/B Run Comparator (${state.runs.length}/2 runs)</strong>
-                <p class="ps-muted" style="margin-top:4px">Generate at least 2 test replies in this session to compare different presets, prompts, temperatures, or models side-by-side.</p>
-              </div>
-            `}
+            ${renderAbComparisonView(state, false)}
           `}
         </div>
       </div>
+    </div>
+  `;
+}
+function getNormalizedSelectedRunIndices(state) {
+  const runs = Array.isArray(state.runs) ? state.runs : [];
+  if (!runs.length)
+    return [];
+  const raw = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
+  const valid = [...new Set(raw.map(Number).filter((i) => Number.isInteger(i) && i >= 0 && i < runs.length))];
+  if (valid.length)
+    return valid.sort((a, b) => a - b);
+  return runs.length >= 2 ? [runs.length - 2, runs.length - 1] : [0];
+}
+function renderAbComparisonView(state, isDedicatedFullWindow = false) {
+  const runs = Array.isArray(state.runs) ? state.runs : [];
+  if (!runs.length) {
+    return `
+      <div class="ps-ab-full-wrap">
+        ${isDedicatedFullWindow ? `
+          <div class="ps-between">
+            <h3>⚖️ A/B Comparison Arena</h3>
+            <button type="button" class="ps-btn-sm ps-primary" data-action="close-ab-window">← Back to Test Lab</button>
+          </div>
+        ` : ""}
+        <div class="ps-empty-state">
+          <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
+          <strong>No Test Runs Recorded Yet</strong>
+          <p class="ps-muted" style="margin-top:4px">Generate test replies in Test Lab to compare runs side-by-side, inspect prompts, and export results.</p>
+        </div>
+      </div>
+    `;
+  }
+  const selectedIndices = getNormalizedSelectedRunIndices(state);
+  const idxA = Math.max(0, Math.min(Number(state.compareA) || 0, runs.length - 1));
+  const idxB = Math.max(0, Math.min(Number(state.compareB) || 0, runs.length - 1));
+  const runA = runs[idxA];
+  const runB = runs[idxB];
+  const baselineRun = runs[selectedIndices[0]];
+  const baselineTokens = Number(baselineRun?.usage?.completion_tokens || 0);
+  const abViewMode = state.abViewMode === "chat" ? "chat" : "raw";
+  const abLayoutMode = state.abLayoutMode === "scroll" ? "scroll" : "grid";
+  const q = (state.abSearch || "").trim().toLowerCase();
+  const visibleRunItems = runs.map((r, idx) => ({ r, idx })).filter(({ r }) => {
+    if (state.abStarredOnly && !r.starred)
+      return false;
+    if (!q)
+      return true;
+    const hay = `${r.note || ""} ${r.presetName || ""} ${r.promptSummary?.presetName || ""} ${r.connection || ""} ${r.promptSummary?.model || ""} ${r.content || ""}`.toLowerCase();
+    return hay.includes(q);
+  });
+  return `
+    <div class="ps-ab-full-wrap">
+      ${isDedicatedFullWindow ? `
+        <div class="ps-panel ps-between" style="margin:0;padding:10px 14px">
+          <div class="ps-row">
+            <h3>⚖️ A/B Comparison Arena</h3>
+            <span class="ps-pill ps-pill-accent">${runs.length} total run(s) · ${selectedIndices.length} in view</span>
+          </div>
+          <div class="ps-actions">
+            <button type="button" class="ps-btn-sm ps-primary" data-action="close-ab-window">← Back to Test Lab</button>
+          </div>
+        </div>
+      ` : ""}
+
+      <!-- Toolbar: View Mode, Layout, Filter & Full Window Launch -->
+      <div class="ps-between" style="gap:8px">
+        <div class="ps-actions">
+          <div class="ps-seg-bar">
+            <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== "diff"}">Side-by-Side (${selectedIndices.length})</button>
+            <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === "diff"}">Line Diff (2)</button>
+          </div>
+          ${state.compareMode !== "diff" ? `
+            <div class="ps-seg-bar">
+              <button type="button" data-action="set-ab-view-mode" data-mode="raw" aria-pressed="${abViewMode === "raw"}">Raw</button>
+              <button type="button" data-action="set-ab-view-mode" data-mode="chat" aria-pressed="${abViewMode === "chat"}">Chat</button>
+            </div>
+            <div class="ps-seg-bar">
+              <button type="button" data-action="set-ab-layout-mode" data-mode="grid" aria-pressed="${abLayoutMode === "grid"}" title="Wrap run columns into a responsive grid">Grid</button>
+              <button type="button" data-action="set-ab-layout-mode" data-mode="scroll" aria-pressed="${abLayoutMode === "scroll"}" title="Keep all run columns in one horizontally scrollable row">1 Row</button>
+            </div>
+          ` : ""}
+        </div>
+        <div class="ps-actions">
+          <input style="width:140px;min-height:28px;padding:3px 8px;font-size:0.78rem" placeholder="Filter runs…" data-state="abSearch" value="${esc(state.abSearch || "")}">
+          <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-ab-starred-only" aria-pressed="${Boolean(state.abStarredOnly)}" title="Show only starred runs">★ Starred</button>
+          ${!isDedicatedFullWindow ? `<button type="button" class="ps-btn-sm ps-primary" data-action="open-ab-window" title="Expand A/B Comparison into a dedicated full window">⤢ Full A/B Window</button>` : ""}
+        </div>
+      </div>
+
+      <!-- Selection & Export Action Strip -->
+      <div class="ps-card ps-between" style="padding:8px 10px">
+        <div class="ps-actions">
+          <span class="ps-muted" style="font-size:0.76rem">Show:</span>
+          ${[2, 3, 4].filter((n) => runs.length >= n).map((n) => `<button type="button" class="ps-btn-sm" data-action="ab-select-preset" data-count="${n}">Last ${n}</button>`).join("")}
+          <button type="button" class="ps-btn-sm" data-action="ab-select-all">All (${visibleRunItems.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="ab-select-starred">★ Starred</button>
+          <button type="button" class="ps-btn-sm" data-action="ab-select-none">Clear</button>
+        </div>
+        <div class="ps-actions">
+          <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="selected" ${!selectedIndices.length ? "disabled" : ""}>\uD83D\uDCCB Copy Selected (${selectedIndices.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="selected" ${!selectedIndices.length ? "disabled" : ""}>\uD83D\uDCC4 Export Selected .txt</button>
+          <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="all">\uD83D\uDCCB Copy All (${runs.length})</button>
+          <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="all">\uD83D\uDCC4 Export All .txt</button>
+          <button type="button" class="ps-btn-sm ps-danger-btn" data-action="clear-run-history" title="Clear all run history">\uD83D\uDDD1 Clear</button>
+        </div>
+      </div>
+
+      <!-- Run Picker Strip -->
+      <div class="ps-ab-run-strip">
+        ${visibleRunItems.map(({ r, idx }) => {
+    const isSel = selectedIndices.includes(idx);
+    const label = r.note?.trim() || r.promptSummary?.presetName || r.presetName || "Draft";
+    const model = r.promptSummary?.model || r.connection || "";
+    return `
+              <button type="button" class="ps-ab-chip" data-action="toggle-run-select" data-run-idx="${idx}" aria-pressed="${isSel}" title="${esc(`${label} · ${model} · ${r.time}`)}">
+                <span>${isSel ? "☑" : "☐"} #${idx + 1}</span>
+                ${r.starred ? '<span style="color:var(--ps-warning)">★</span>' : ""}
+                <span style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}</span>
+                ${r.usage?.completion_tokens ? `<span class="ps-muted">${r.usage.completion_tokens}t</span>` : ""}
+              </button>
+            `;
+  }).join("") || '<span class="ps-muted" style="font-size:0.78rem">No runs match your filter.</span>'}
+      </div>
+
+      ${state.compareMode === "diff" ? `
+        ${runs.length >= 2 && runA && runB ? `
+          <div class="ps-between" style="margin-bottom:4px">
+            <div class="ps-row" style="flex:1">
+              <label>Left Run (A)
+                <select data-state="compareA">
+                  ${runs.map((r, idx) => `<option value="${idx}" ${idxA === idx ? "selected" : ""}>Run #${idx + 1} · ${esc(r.note || r.promptSummary?.presetName || r.presetName || "Draft")} (${esc(r.time)})</option>`).join("")}
+                </select>
+              </label>
+              <button type="button" class="ps-btn-sm" style="margin-top:18px" data-action="swap-compare-runs" title="Swap Run A and Run B">⇄</button>
+              <label>Right Run (B)
+                <select data-state="compareB">
+                  ${runs.map((r, idx) => `<option value="${idx}" ${idxB === idx ? "selected" : ""}>Run #${idx + 1} · ${esc(r.note || r.promptSummary?.presetName || r.presetName || "Draft")} (${esc(r.time)})</option>`).join("")}
+                </select>
+              </label>
+            </div>
+            ${runA.usage?.completion_tokens && runB.usage?.completion_tokens ? (() => {
+    const delta = Number(runB.usage.completion_tokens) - Number(runA.usage.completion_tokens);
+    return `<span class="ps-pill">Δ ${delta > 0 ? `+${delta}` : delta}t</span>`;
+  })() : ""}
+          </div>
+          <div class="ps-grid">
+            <div class="ps-card">
+              <div class="ps-between" style="margin-bottom:6px">
+                <strong>Run #${idxA + 1} (A)</strong>
+                <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
+              </div>
+              ${renderRunPromptsSection(runA, idxA, "ab-diff-prompts-a")}
+            </div>
+            <div class="ps-card">
+              <div class="ps-between" style="margin-bottom:6px">
+                <strong>Run #${idxB + 1} (B)</strong>
+                <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
+              </div>
+              ${renderRunPromptsSection(runB, idxB, "ab-diff-prompts-b")}
+            </div>
+          </div>
+          <div class="ps-diff-box">
+            ${computeLineDiff(runA.content || "", runB.content || "").map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === "add" ? "+ " : line.kind === "rem" ? "- " : "  "}${esc(line.text || " ")}</div>`).join("")}
+          </div>
+        ` : '<div class="ps-empty-state"><p class="ps-muted">Generate at least 2 runs to use Line Diff.</p></div>'}
+      ` : `
+        <div class="${abLayoutMode === "scroll" ? "ps-ab-grid-scroll" : "ps-ab-grid"}">
+          ${selectedIndices.map((runIdx, colPos) => {
+    const r = runs[runIdx];
+    if (!r)
+      return "";
+    const m = computeRunMetrics(r);
+    const delta = colPos > 0 && baselineTokens > 0 && m.completionTokens > 0 ? m.completionTokens - baselineTokens : null;
+    return `
+                <article class="ps-ab-run-card ${r.starred ? "ps-ab-starred" : ""}">
+                  <div class="ps-between">
+                    <div class="ps-row" style="gap:5px">
+                      <strong>Run #${runIdx + 1}</strong>
+                      <span class="ps-muted" style="font-size:0.74rem">${esc(r.time)}</span>
+                      ${m.durationSec !== null ? `<span class="ps-pill">${m.durationSec.toFixed(1)}s${m.tokPerSec !== null ? ` · ${m.tokPerSec.toFixed(0)}t/s` : ""}</span>` : ""}
+                      ${delta !== null ? `<span class="ps-pill">${delta > 0 ? `+${delta}` : delta}t vs #${selectedIndices[0] + 1}</span>` : ""}
+                    </div>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm ps-ab-star-btn" data-action="toggle-run-star" data-run-idx="${runIdx}" aria-pressed="${Boolean(r.starred)}" title="Star / mark as winner">★</button>
+                      <button type="button" class="ps-btn-sm ps-btn-icon" data-action="toggle-run-select" data-run-idx="${runIdx}" title="Hide from side-by-side view">✕</button>
+                    </div>
+                  </div>
+
+                  <input class="ps-ab-note-input" data-run-note-idx="${runIdx}" value="${esc(r.note || "")}" placeholder="Add run note (e.g. Temp 0.7, No Jailbreak)…">
+
+                  <div class="ps-muted" style="font-size:0.74rem">${m.words.toLocaleString()} words · ${m.chars.toLocaleString()} chars${m.completionTokens ? ` · ${m.completionTokens} completion tok` : ""}</div>
+
+                  ${renderRunPromptsSection(r, runIdx, `ab-prompts-${runIdx}`)}
+
+                  ${r.reasoning ? `
+                    <details class="ps-collapsible" style="margin:0;padding:6px 9px" data-details-id="ab-reason-${runIdx}">
+                      <summary><span style="font-size:0.78rem">\uD83D\uDCAD Reasoning</span></summary>
+                      <pre class="ps-result" style="max-height:140px;margin-top:6px">${esc(r.reasoning)}</pre>
+                    </details>
+                  ` : ""}
+
+                  ${abViewMode === "chat" ? `<div class="ps-chat-bubble ps-ab-chat-slot" data-ab-chat-idx="${runIdx}" style="min-height:160px;max-height:${isDedicatedFullWindow ? "520px" : "380px"}"></div>` : `<pre class="ps-result" style="margin:0;max-height:${isDedicatedFullWindow ? "520px" : "380px"}">${esc(r.content || "(empty)")}</pre>`}
+
+                  <div class="ps-between" style="padding-top:6px;border-top:1px solid var(--ps-border)">
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="copy-single-run-reply" data-run-idx="${runIdx}" title="Copy only the reply text">\uD83D\uDCCB Reply</button>
+                      <button type="button" class="ps-btn-sm" data-action="copy-runs-txt" data-scope="single" data-run-idx="${runIdx}" title="Copy full run report (prompts + reply)">\uD83D\uDCCB Full</button>
+                      <button type="button" class="ps-btn-sm" data-action="export-runs-txt" data-scope="single" data-run-idx="${runIdx}" title="Download this run as .txt">\uD83D\uDCC4 .txt</button>
+                    </div>
+                    <div class="ps-actions">
+                      <button type="button" class="ps-btn-sm" data-action="load-run-inputs" data-run-idx="${runIdx}" title="Load this run's connection and test input back into Test Lab">↺ Inputs</button>
+                      ${r.snapshot ? `<button type="button" class="ps-btn-sm" data-action="restore-run-snapshot" data-run-idx="${runIdx}" title="Restore preset draft from this run">↺ Preset</button>` : ""}
+                      <button type="button" class="ps-btn-sm ps-danger-btn ps-btn-icon" data-action="delete-run-item" data-run-idx="${runIdx}" title="Delete run">\uD83D\uDDD1</button>
+                    </div>
+                  </div>
+                </article>
+              `;
+  }).join("")}
+        </div>
+      `}
     </div>
   `;
 }
@@ -3922,8 +4255,19 @@ function setup(ctx) {
     testReplyViewMode: "chat",
     runs: [],
     viewingRunIndex: -1,
+    selectedRuns: [],
     compareA: 0,
     compareB: 1,
+    abFullWindow: false,
+    abReturnFull: false,
+    abViewMode: "raw",
+    abLayoutMode: "grid",
+    abStarredOnly: false,
+    abSearch: "",
+    matrixConnections: [],
+    matrixRunning: false,
+    matrixStatus: "",
+    matrixAborted: false,
     assembled: null,
     breakdownFilter: "all",
     breakdownSearch: "",
@@ -3954,6 +4298,7 @@ function setup(ctx) {
   const mountedHandles = new Set;
   const variablePreviewHandles = new Set;
   const modalRef = { current: null };
+  let abDialogEl = null;
   let timer = null;
   let tokenTimer = null;
   let varPreviewTimer = null;
@@ -4039,6 +4384,7 @@ function setup(ctx) {
       root.classList.add("ps-full");
       refresh().catch(() => {});
     } else {
+      state.abFullWindow = false;
       tab.root.appendChild(root);
       mount?.setVisible(false);
       root.classList.remove("ps-full");
@@ -4706,7 +5052,7 @@ function setup(ctx) {
     });
     destroyMounted();
     const d = state.draft;
-    shellBodyEl.innerHTML = d ? state.view === "blocks" ? renderArchitectTab(ctx, state) : state.view === "variables" ? renderVariablesTab(state) : state.view === "remix" ? renderRemixAndTranslateTab(state) : renderTestTab(state) : `
+    shellBodyEl.innerHTML = d ? state.abFullWindow && full && state.view === "test" ? renderAbComparisonView(state, true) : state.view === "blocks" ? renderArchitectTab(ctx, state) : state.view === "variables" ? renderVariablesTab(state) : state.view === "remix" ? renderRemixAndTranslateTab(state) : renderTestTab(state) : `
         <div class="ps-panel ps-empty-state" style="padding:42px 20px">
           <div style="font-size:2rem;margin-bottom:8px">✳</div>
           <h3>Welcome to Preset Studio</h3>
@@ -4720,7 +5066,29 @@ function setup(ctx) {
         </div>
       `;
     mountInteractiveWidgets();
-    if (state.view === "test" && (state.testOutputTab || "reply") === "reply") {
+    if (abDialogEl && abDialogEl.isConnected) {
+      if (state.abFullWindow && !full) {
+        const scrollTop = abDialogEl.scrollTop;
+        abDialogEl.innerHTML = renderAbComparisonView(state, true);
+        abDialogEl.scrollTop = scrollTop;
+      } else {
+        try {
+          abDialogEl.close();
+        } catch (_) {}
+        abDialogEl.remove();
+        abDialogEl = null;
+      }
+    }
+    if (state.abViewMode === "chat") {
+      root.querySelectorAll(".ps-ab-chat-slot[data-ab-chat-idx]").forEach((slotEl) => {
+        const rIdx = Number(slotEl.dataset.abChatIdx);
+        const targetRun = state.runs?.[rIdx];
+        if (targetRun) {
+          renderChatPreviewInto(slotEl, targetRun.displayContent || targetRun.content || "", false);
+        }
+      });
+    }
+    if (state.view === "test" && (state.testOutputTab || "reply") === "reply" && !state.abFullWindow) {
       const bubbleEl = shellBodyEl.querySelector("#ps-chat-reply-bubble");
       if (bubbleEl) {
         const runs = Array.isArray(state.runs) ? state.runs : [];
@@ -4790,6 +5158,9 @@ function setup(ctx) {
         if (state.runs.length >= 2) {
           state.compareA = state.runs.length - 2;
           state.compareB = state.runs.length - 1;
+          state.selectedRuns = [state.runs.length - 2, state.runs.length - 1];
+        } else if (state.runs.length === 1) {
+          state.selectedRuns = [0];
         }
       }
       if (state.noContextChat) {
@@ -4967,7 +5338,13 @@ function setup(ctx) {
       state.sourceTranslation.content = el.value;
     else if (el.dataset.state === "translationText" && state.translation)
       state.translation.content = el.value;
-    else if (el.dataset.turnIdx !== undefined && el.dataset.turnField === "content") {
+    else if (el.dataset.runNoteIdx !== undefined) {
+      const idx = Number(el.dataset.runNoteIdx);
+      if (state.runs[idx]) {
+        state.runs[idx].note = el.value;
+        request("test-history-save", { runs: state.runs }).catch(() => {});
+      }
+    } else if (el.dataset.turnIdx !== undefined && el.dataset.turnField === "content") {
       const idx = Number(el.dataset.turnIdx);
       if (state.testTurns[idx]) {
         state.testTurns[idx].content = el.value;
@@ -4996,7 +5373,7 @@ function setup(ctx) {
         const slot = shellBodyEl.querySelector("#ps-translate-list-slot");
         if (slot)
           slot.innerHTML = renderTranslateBlockListHtml(state);
-      } else if (["compareA", "compareB"].includes(key)) {
+      } else if (["compareA", "compareB", "abSearch"].includes(key)) {
         renderBody();
       }
     }
@@ -5040,6 +5417,13 @@ function setup(ctx) {
           blk.categoryMode = null;
       }
       persist();
+      renderBody();
+      return;
+    }
+    if (el.dataset.matrixConn !== undefined) {
+      const cid = el.dataset.matrixConn;
+      const cur = Array.isArray(state.matrixConnections) ? state.matrixConnections : [];
+      state.matrixConnections = el.checked ? [...new Set([...cur, cid])] : cur.filter((x) => x !== cid);
       renderBody();
       return;
     }
@@ -5504,10 +5888,351 @@ ${m.content || ""}`).join(`
           await request("toast", { kind: "success", title: "Preset Studio", message: `Copied prompts used in Run #${idx + 1}` });
         }
         return;
+      } else if (a === "open-ab-window") {
+        state.testOutputTab = "compare";
+        state.abFullWindow = true;
+        if (mount) {
+          state.abReturnFull = full;
+          if (!full) {
+            setFull(true);
+            return;
+          }
+          renderBody();
+        } else {
+          if (abDialogEl) {
+            try {
+              abDialogEl.close();
+            } catch (_) {}
+            abDialogEl.remove();
+          }
+          const dialog = document.createElement("dialog");
+          dialog.className = "ps-native-dialog ps-ab-dialog";
+          dialog.addEventListener("cancel", (ev) => {
+            ev.preventDefault();
+            state.abFullWindow = false;
+            abDialogEl = null;
+            try {
+              dialog.close();
+            } catch (_) {}
+            dialog.remove();
+            renderBody();
+          });
+          dialogHostEl.appendChild(dialog);
+          abDialogEl = dialog;
+          if (typeof dialog.showModal === "function")
+            dialog.showModal();
+          else
+            dialog.setAttribute("open", "");
+          renderBody();
+        }
+        return;
+      } else if (a === "close-ab-window") {
+        state.abFullWindow = false;
+        if (abDialogEl) {
+          try {
+            abDialogEl.close();
+          } catch (_) {}
+          abDialogEl.remove();
+          abDialogEl = null;
+          renderBody();
+          return;
+        }
+        if (full && !state.abReturnFull) {
+          setFull(false);
+          return;
+        }
+        renderBody();
+        return;
+      } else if (a === "set-ab-view-mode") {
+        state.abViewMode = el.dataset.mode === "chat" ? "chat" : "raw";
+        renderBody();
+        return;
+      } else if (a === "set-ab-layout-mode") {
+        state.abLayoutMode = el.dataset.mode === "scroll" ? "scroll" : "grid";
+        renderBody();
+        return;
+      } else if (a === "toggle-ab-starred-only") {
+        state.abStarredOnly = !state.abStarredOnly;
+        renderBody();
+        return;
+      } else if (a === "toggle-run-star") {
+        const idx = Number(el.dataset.runIdx);
+        if (state.runs[idx]) {
+          state.runs[idx].starred = !state.runs[idx].starred;
+          request("test-history-save", { runs: state.runs }).catch(() => {});
+          renderBody();
+        }
+        return;
+      } else if (a === "toggle-run-select") {
+        const idx = Number(el.dataset.runIdx);
+        const cur = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
+        state.selectedRuns = cur.includes(idx) ? cur.filter((n) => n !== idx) : [...cur, idx].sort((x, y) => x - y);
+        renderBody();
+        return;
+      } else if (a === "ab-select-preset") {
+        const count = Math.max(1, Number(el.dataset.count) || 2);
+        const start = Math.max(0, state.runs.length - count);
+        state.selectedRuns = Array.from({ length: state.runs.length - start }, (_, k) => start + k);
+        renderBody();
+        return;
+      } else if (a === "ab-select-all") {
+        state.selectedRuns = state.runs.map((_, i) => i);
+        renderBody();
+        return;
+      } else if (a === "ab-select-starred") {
+        state.selectedRuns = state.runs.map((r, i) => r.starred ? i : -1).filter((i) => i >= 0);
+        renderBody();
+        return;
+      } else if (a === "ab-select-none") {
+        state.selectedRuns = [];
+        renderBody();
+        return;
+      } else if (a === "copy-single-run-reply") {
+        const idx = Number(el.dataset.runIdx);
+        const r = state.runs?.[idx];
+        if (r) {
+          await copyToClipboard(r.content || "");
+          await request("toast", { kind: "success", title: "Preset Studio", message: `Copied Run #${idx + 1} reply` });
+        }
+        return;
+      } else if (a === "copy-runs-txt" || a === "export-runs-txt") {
+        const scope = el.dataset.scope || "all";
+        let indices;
+        let title = "Preset Studio — All Test Runs";
+        let filename = "preset-test-runs-all.txt";
+        if (scope === "single") {
+          const idx = Number(el.dataset.runIdx);
+          indices = [idx];
+          title = `Preset Studio — Run #${idx + 1}`;
+          filename = `preset-test-run-${idx + 1}.txt`;
+        } else if (scope === "selected") {
+          indices = [...state.selectedRuns || []].sort((x, y) => x - y);
+          if (!indices.length)
+            throw new Error("Select at least one run first.");
+          title = `Preset Studio — Selected Runs (${indices.length})`;
+          filename = "preset-test-runs-selected.txt";
+        }
+        const txt = formatRunsAsText(state.runs || [], indices, title);
+        if (a === "copy-runs-txt") {
+          await copyToClipboard(txt);
+          await request("toast", {
+            kind: "success",
+            title: "Preset Studio",
+            message: scope === "single" ? `Copied Run #${(indices?.[0] ?? 0) + 1} report` : `Copied ${indices ? indices.length : state.runs.length} run(s) as text`
+          });
+        } else {
+          downloadTextFile(filename, txt);
+          await request("toast", { kind: "success", title: "Preset Studio", message: `Exported ${filename}` });
+        }
+        return;
+      } else if (a === "load-run-inputs") {
+        const idx = Number(el.dataset.runIdx);
+        const r = state.runs?.[idx];
+        if (r?.promptSummary) {
+          const s = r.promptSummary;
+          state.testPromptSource = s.promptSource === "custom" ? "custom" : "preset";
+          if (s.promptSource === "custom" && s.customPrompt)
+            state.testCustomPrompt = s.customPrompt;
+          if (s.userInput) {
+            state.testTurnMode = "single";
+            state.custom = s.userInput;
+          }
+          if (s.standalone) {
+            state.chatId = "";
+            state.noContextChat = true;
+          }
+          const matchedConn = state.connections.find((c) => c.name === s.connection || c.model === s.model);
+          if (matchedConn)
+            state.connectionId = matchedConn.id;
+          state.abFullWindow = false;
+          if (abDialogEl) {
+            try {
+              abDialogEl.close();
+            } catch (_) {}
+            abDialogEl.remove();
+            abDialogEl = null;
+          }
+          state.notice = `Loaded inputs from Run #${idx + 1} into Test Lab.`;
+          render();
+        }
+        return;
+      } else if (a === "matrix-select-all") {
+        state.matrixConnections = state.connections.map((c) => c.id);
+        renderBody();
+        return;
+      } else if (a === "matrix-select-none") {
+        state.matrixConnections = [];
+        renderBody();
+        return;
+      } else if (a === "run-multi-swipe" || a === "run-matrix") {
+        const isMatrix = a === "run-matrix";
+        const targets = isMatrix ? (state.matrixConnections || []).map((cid) => {
+          const c = state.connections.find((x) => x.id === cid);
+          return { connectionId: cid, label: c ? `${c.name} · ${c.model}` : cid };
+        }) : Array.from({ length: Math.max(2, Number(el.dataset.count) || 2) }, (_, k) => ({
+          connectionId: state.connectionId,
+          label: `Swipe ${k + 1}`
+        }));
+        if (!targets.length)
+          throw new Error("Select at least one connection first.");
+        const isCustomSource = state.testPromptSource === "custom";
+        const stagedTurns = state.testTurnMode === "multi" ? state.testTurns : state.custom.trim() ? [{ role: "user", content: state.custom.trim() }] : [];
+        const hasTurnText = stagedTurns.some((t) => t && typeof t.content === "string" && t.content.trim());
+        const hasAuthorsNote = Boolean(state.authorsNote?.enabled && state.authorsNote?.content?.trim());
+        if (isCustomSource && !state.chatId && !state.testCustomPrompt.trim() && !hasTurnText && !hasAuthorsNote) {
+          throw new Error("Type a custom prompt, a test message, or select a Context Chat first.");
+        }
+        if (!isCustomSource && !state.chatId) {
+          const hasBlockText = (d?.prompt_order || []).some((blk) => blk.enabled && blk.marker !== "category" && String(blk.content || "").trim());
+          if (!hasBlockText && !hasTurnText && !hasAuthorsNote) {
+            throw new Error("Enable at least one block with text, enter a Test User Message, or select a Context Chat.");
+          }
+        }
+        state.matrixRunning = true;
+        state.matrixAborted = false;
+        state.busy = true;
+        const createdIndices = [];
+        try {
+          for (let ti = 0;ti < targets.length; ti++) {
+            if (state.matrixAborted)
+              break;
+            const tgt = targets[ti];
+            state.matrixStatus = `${ti + 1}/${targets.length}: ${tgt.label}`;
+            state.result = "";
+            state.displayResult = "";
+            state.reasoning = "";
+            state.lastUsage = null;
+            state.assembled = null;
+            const snapshot = structuredClone(d);
+            const requestId = uid();
+            const runStartedAt = Date.now();
+            let runAssembled = null;
+            state.activeRun = requestId;
+            render();
+            const result = await new Promise((resolve, reject) => {
+              let inactivityTimer = null;
+              const resetInactivity = () => {
+                if (inactivityTimer)
+                  clearTimeout(inactivityTimer);
+                inactivityTimer = setTimeout(() => {
+                  if (pending.delete(requestId)) {
+                    reject(new Error("Generation timed out while waiting for provider stream."));
+                  }
+                }, 120000);
+              };
+              resetInactivity();
+              pending.set(requestId, {
+                touch: resetInactivity,
+                resolve: (val) => {
+                  if (inactivityTimer)
+                    clearTimeout(inactivityTimer);
+                  resolve(val);
+                },
+                reject: (err) => {
+                  if (inactivityTimer)
+                    clearTimeout(inactivityTimer);
+                  reject(err);
+                },
+                onAssembled: (assembledPayload) => {
+                  runAssembled = assembledPayload;
+                  state.assembled = assembledPayload;
+                },
+                onReasoning: (token) => {
+                  state.reasoning += token;
+                },
+                onToken: (token) => {
+                  state.result += token;
+                }
+              });
+              ctx.sendToBackend({
+                action: "run",
+                requestId,
+                preset: snapshot,
+                promptSource: state.testPromptSource,
+                customPrompt: state.testCustomPrompt,
+                includeChatHistory: state.testCustomPromptIncludeHistory,
+                chatId: state.chatId,
+                connectionId: tgt.connectionId,
+                generationType: state.generationType,
+                testTurns: stagedTurns,
+                customMessage: state.custom,
+                authorsNote: state.authorsNote
+              });
+            });
+            if (result?.aborted || state.matrixAborted)
+              break;
+            const finalContent = result?.content || state.result;
+            const finalDisplay = result?.displayContent || finalContent;
+            const finalReasoning = result?.reasoning || state.reasoning;
+            const finalUsage = result?.usage || null;
+            const activeBlocks = (snapshot?.prompt_order || []).filter((blk) => blk.enabled && blk.marker !== "category");
+            const userPromptPreview = state.testTurnMode === "multi" && state.testTurns.length ? state.testTurns[state.testTurns.length - 1]?.content || "" : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : "");
+            const connObj = state.connections.find((c) => c.id === tgt.connectionId);
+            const chatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
+            const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.slice(-40).map((m) => ({
+              role: String(m.role || "system"),
+              ...m.name ? { name: String(m.name) } : {},
+              content: typeof m.content === "string" ? m.content.slice(0, 4000) : JSON.stringify(m.content || "").slice(0, 4000)
+            })) : [];
+            state.runs.push({
+              time: new Date().toLocaleTimeString(),
+              note: isMatrix ? connObj?.name || tgt.label : tgt.label,
+              connection: connObj?.name || "Active connection",
+              presetName: isCustomSource ? "Custom Prompt" : snapshot?.name || "Draft",
+              activeBlocksCount: activeBlocks.length,
+              userPromptPreview: userPromptPreview.slice(0, 120),
+              content: finalContent,
+              displayContent: finalDisplay,
+              reasoning: finalReasoning,
+              usage: finalUsage,
+              promptSummary: {
+                promptSource: isCustomSource ? "custom" : "preset",
+                presetName: isCustomSource ? "Custom Prompt" : snapshot?.name || "Draft",
+                chatName: state.chatId ? chatObj?.name || state.chatId : "Standalone (No Chat)",
+                standalone: !state.chatId,
+                connection: connObj?.name || "Active connection",
+                model: connObj?.model || "",
+                temperature: snapshot?.parameters?.temperature,
+                generationType: state.generationType || "normal",
+                activeBlocksCount: activeBlocks.length,
+                activeBlockNames: activeBlocks.map((blk) => blk.name || blk.marker || "Untitled").slice(0, 30),
+                customPrompt: isCustomSource ? String(state.testCustomPrompt || "").slice(0, 4000) : "",
+                userInput: userPromptPreview.slice(0, 500),
+                durationMs: Date.now() - runStartedAt,
+                messages: promptMessages
+              },
+              snapshot
+            });
+            createdIndices.push(state.runs.length - 1);
+          }
+        } finally {
+          state.matrixRunning = false;
+          state.matrixStatus = "";
+          state.busy = false;
+          state.activeRun = null;
+          if (createdIndices.length) {
+            for (let ri = 0;ri < state.runs.length - 10; ri++) {
+              if (state.runs[ri]?.snapshot)
+                delete state.runs[ri].snapshot;
+            }
+            state.viewingRunIndex = state.runs.length - 1;
+            state.selectedRuns = createdIndices;
+            if (createdIndices.length >= 2) {
+              state.compareA = createdIndices[0];
+              state.compareB = createdIndices[createdIndices.length - 1];
+            }
+            state.testOutputTab = "compare";
+            state.notice = `Completed ${createdIndices.length} batch test run(s) — showing side-by-side.`;
+            request("test-history-save", { runs: state.runs }).catch(() => {});
+          }
+        }
+        render();
+        return;
       } else if (a === "delete-run-item") {
         const idx = Number(el.dataset.runIdx);
         if (idx >= 0 && idx < state.runs.length) {
           state.runs.splice(idx, 1);
+          state.selectedRuns = (state.selectedRuns || []).filter((n) => n !== idx).map((n) => n > idx ? n - 1 : n);
           state.viewingRunIndex = Math.max(-1, Math.min(idx, state.runs.length - 1));
           state.compareA = Math.max(0, Math.min(Number(state.compareA) || 0, Math.max(0, state.runs.length - 1)));
           state.compareB = Math.max(0, Math.min(Number(state.compareB) || 0, Math.max(0, state.runs.length - 1)));
@@ -6082,6 +6807,7 @@ ${ent.block.content || ""}`).join(`
           state.notice = `Applied active block states from ${active.source || "profile"}.`;
         }
       } else if (a === "stop") {
+        state.matrixAborted = true;
         if (state.activeRun)
           await request("cancel", { runId: state.activeRun });
         state.notice = "Generation stopped.";
@@ -6233,9 +6959,7 @@ ${ent.block.content || ""}`).join(`
               promptSummary,
               snapshot
             });
-            if (state.runs.length > 15)
-              state.runs.shift();
-            for (let ri = 0;ri < state.runs.length - 5; ri++) {
+            for (let ri = 0;ri < state.runs.length - 10; ri++) {
               if (state.runs[ri]?.snapshot)
                 delete state.runs[ri].snapshot;
             }
@@ -6243,6 +6967,9 @@ ${ent.block.content || ""}`).join(`
             if (state.runs.length >= 2) {
               state.compareA = state.runs.length - 2;
               state.compareB = state.runs.length - 1;
+              state.selectedRuns = [state.runs.length - 2, state.runs.length - 1];
+            } else {
+              state.selectedRuns = [0];
             }
             request("test-history-save", { runs: state.runs }).catch(() => {});
           }

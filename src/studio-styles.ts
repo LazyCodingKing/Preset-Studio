@@ -649,6 +649,79 @@ export const STUDIO_POLISH_CSS = `
   background: var(--ps-accent-soft);
   margin-right: 3px;
 }
+.ps-ab-full-wrap { display: grid; gap: 12px; }
+.ps-ab-run-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 128px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--ps-border);
+  border-radius: 8px;
+  background: var(--ps-bg);
+}
+.ps-ab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px !important;
+  min-height: 28px !important;
+  font-size: 0.77rem !important;
+  border-radius: 999px !important;
+  background: var(--ps-surface) !important;
+  border: 1px solid var(--ps-border) !important;
+}
+.ps-ab-chip[aria-pressed="true"] {
+  border-color: var(--ps-accent) !important;
+  background: var(--ps-accent-soft) !important;
+  color: var(--ps-text) !important;
+  font-weight: 650 !important;
+}
+.ps-ab-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr));
+  align-items: start;
+}
+.ps-ab-grid-scroll {
+  display: grid;
+  gap: 12px;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(min(90vw, 350px), 1fr);
+  overflow-x: auto;
+  padding-bottom: 6px;
+  align-items: start;
+}
+.ps-ab-run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  background: var(--ps-bg);
+  border: 1px solid var(--ps-border);
+  border-radius: calc(var(--ps-radius) - 1px);
+  padding: 11px 12px;
+}
+.ps-ab-run-card.ps-ab-starred {
+  border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.65));
+  box-shadow: inset 0 0 0 1px var(--lumiverse-warning-015, rgba(245, 185, 66, 0.25));
+}
+.ps-ab-star-btn[aria-pressed="true"] {
+  color: var(--ps-warning) !important;
+  border-color: var(--lumiverse-warning-050, rgba(245, 185, 66, 0.55)) !important;
+  background: var(--ps-warning-soft) !important;
+}
+.ps-ab-note-input {
+  min-height: 28px !important;
+  padding: 3px 8px !important;
+  font-size: 0.77rem !important;
+  background: var(--ps-surface) !important;
+}
+.ps-ab-dialog {
+  width: min(1480px, calc(100vw - 18px)) !important;
+  max-height: calc(var(--app-scaled-viewport-height, 100vh) - 18px) !important;
+}
 .ps-columns { display: grid; gap: 12px; align-items: start; }
 .ps-mobile-back { display: none; }
 @container (max-width: 799px) {
