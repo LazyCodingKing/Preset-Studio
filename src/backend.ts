@@ -135,6 +135,58 @@ const SEALED_BLOCK_KEYS = [
   'sealedSha256',
 ] as const;
 
+function prepareBlocksForHostAssemble(
+  rawBlocks: any[],
+  generationType: string,
+  rawPromptVars: Record<string, any>,
+): { blocks: any[]; promptVariables: Record<string, any> } {
+  const active = (Array.isArray(rawBlocks) ? rawBlocks : []).filter((blk: any) => {
+    if (!blk || !blk.enabled || blk.marker === 'category') return false;
+    if (Array.isArray(blk.injectionTrigger) && blk.injectionTrigger.length > 0 && !blk.injectionTrigger.includes(generationType)) {
+      return false;
+    }
+    return true;
+  });
+
+  const activeIds = new Set(active.map((b: any) => String(b.id || '')));
+  const promptVariables: Record<string, any> = {};
+  if (rawPromptVars && typeof rawPromptVars === 'object') {
+    for (const [k, v] of Object.entries(rawPromptVars)) {
+      if (activeIds.has(k)) promptVariables[k] = v;
+    }
+  }
+
+  let prepared = active.map((b: any) => sanitizeBlockForBackend(b));
+
+  // Lumiverse's spindle.assemble() enforces a host cap of 256 blocks per call.
+  // Only if >256 blocks are simultaneously active, coalesce adjacent plain blocks
+  // (no markers, no scoped variables, matching role/position/depth) so large presets still assemble.
+  if (prepared.length > 256) {
+    const coalesced: any[] = [];
+    for (const blk of prepared) {
+      const prev = coalesced[coalesced.length - 1];
+      const canMerge =
+        prev &&
+        !prev.marker &&
+        !blk.marker &&
+        !prev.variables?.length &&
+        !blk.variables?.length &&
+        prev.role === blk.role &&
+        prev.position === blk.position &&
+        prev.depth === blk.depth;
+      if (canMerge) {
+        prev.content = [prev.content, blk.content].filter((s) => String(s || '').trim()).join('\n\n');
+        prev.name = `${prev.name} + ${blk.name}`;
+      } else {
+        coalesced.push({ ...blk });
+      }
+    }
+    prepared = coalesced;
+  }
+
+  return { blocks: prepared, promptVariables };
+}
+
 function sanitizeBlockForBackend(b: any, existingBlock?: any) {
   const cleanBlock: any = {
     id: String(b?.id || uid()),
@@ -1101,7 +1153,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
         break;
       }
       case 'count-tokens': {
-        const rawTexts = Array.isArray(msg.texts) ? msg.texts.slice(0, 256) : [];
+        const rawTexts = Array.isArray(msg.texts) ? msg.texts : [];
         let explicitModel: string | undefined;
         const overrideModel = sanitizeModelId(msg.modelOverride);
         if (overrideModel) {
@@ -1114,24 +1166,32 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
         let tokenizerName = 'Approximate (chars/4)';
         let approximate = true;
         let resolvedModel = explicitModel || 'default';
-        const counts = await Promise.all(
-          rawTexts.map(async (item: unknown) => {
-            const text = typeof item === 'string' ? item.slice(0, 200_000) : '';
-            if (!text.trim()) return 0;
-            try {
-              const res = await spindle.tokens.countText(text, {
-                ...(explicitModel ? { model: explicitModel } : { modelSource: 'main' }),
-                ...uOpt,
-              });
-              tokenizerName = res.tokenizer_name || tokenizerName;
-              approximate = Boolean(res.approximate);
-              resolvedModel = res.model || resolvedModel;
-              return res.total_tokens;
-            } catch {
-              return Math.max(1, Math.ceil(text.length / 4));
-            }
-          }),
-        );
+        const counts: number[] = new Array(rawTexts.length).fill(0);
+        const batchSize = 64;
+        for (let start = 0; start < rawTexts.length; start += batchSize) {
+          const slice = rawTexts.slice(start, start + batchSize);
+          await Promise.all(
+            slice.map(async (item: unknown, offset: number) => {
+              const text = typeof item === 'string' ? item : '';
+              if (!text.trim()) {
+                counts[start + offset] = 0;
+                return;
+              }
+              try {
+                const res = await spindle.tokens.countText(text, {
+                  ...(explicitModel ? { model: explicitModel } : { modelSource: 'main' }),
+                  ...uOpt,
+                });
+                tokenizerName = res.tokenizer_name || tokenizerName;
+                approximate = Boolean(res.approximate);
+                resolvedModel = res.model || resolvedModel;
+                counts[start + offset] = res.total_tokens;
+              } catch {
+                counts[start + offset] = Math.max(1, Math.ceil(text.length / 4));
+              }
+            }),
+          );
+        }
         data = { counts, tokenizerName, approximate, model: resolvedModel };
         break;
       }
@@ -1168,7 +1228,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
         }
         const language = typeof msg.language === 'string' ? msg.language.trim() : '';
         if (!language || language.length > 80) throw new Error('Enter a target language.');
-        const blocks = Array.isArray(msg.blocks) ? msg.blocks.slice(0, 256) : [];
+        const blocks = Array.isArray(msg.blocks) ? msg.blocks : [];
         const scope = ['name', 'content', 'both'].includes(msg.scope) ? msg.scope : 'both';
         const fields = scope === 'both' ? ['name', 'content'] : [scope];
 
@@ -1358,13 +1418,19 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
               assembledData = { messages, breakdown, source: 'custom' };
             }
           } else if (hasChatId) {
+            const genType = msg.generationType || 'normal';
+            const prepared = prepareBlocksForHostAssemble(
+              msg.preset?.prompt_order || [],
+              genType,
+              msg.preset?.metadata?.promptVariables || {},
+            );
             const assembled = await (spindle.assemble as any)(
               {
                 chatId: msg.chatId,
-                blocks: msg.preset?.prompt_order || [],
+                blocks: prepared.blocks,
                 ...(msg.connectionId ? { connectionId: msg.connectionId } : {}),
-                generationType: msg.generationType || 'normal',
-                promptVariables: msg.preset?.metadata?.promptVariables || {},
+                generationType: genType,
+                promptVariables: prepared.promptVariables,
                 signal: controller.signal,
               },
               ...uArg,

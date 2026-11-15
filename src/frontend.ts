@@ -2295,13 +2295,10 @@ export function setup(ctx: SpindleFrontendContext) {
               : state.connections.find((c: any) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages)
-              ? runAssembled.messages.slice(-40).map((m: any) => ({
+              ? runAssembled.messages.map((m: any) => ({
                   role: String(m.role || 'system'),
                   ...(m.name ? { name: String(m.name) } : {}),
-                  content:
-                    typeof m.content === 'string'
-                      ? m.content.slice(0, 4000)
-                      : JSON.stringify(m.content || '').slice(0, 4000),
+                  content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content || ''),
                 }))
               : [];
 
@@ -2328,9 +2325,9 @@ export function setup(ctx: SpindleFrontendContext) {
                 temperature: snapshot?.parameters?.temperature,
                 generationType: state.generationType || 'normal',
                 activeBlocksCount: activeBlocks.length,
-                activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled').slice(0, 30),
-                customPrompt: isCustomSource ? String(state.testCustomPrompt || '').slice(0, 4000) : '',
-                userInput: userPromptPreview.slice(0, 500),
+                activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled'),
+                customPrompt: isCustomSource ? String(state.testCustomPrompt || '') : '',
+                userInput: userPromptPreview,
                 durationMs: Date.now() - runStartedAt,
                 messages: promptMessages,
               },
@@ -3078,13 +3075,10 @@ export function setup(ctx: SpindleFrontendContext) {
               : state.connections.find((c: any) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages)
-              ? runAssembled.messages.slice(-40).map((m: any) => ({
+              ? runAssembled.messages.map((m: any) => ({
                   role: String(m.role || 'system'),
                   ...(m.name ? { name: String(m.name) } : {}),
-                  content:
-                    typeof m.content === 'string'
-                      ? m.content.slice(0, 4000)
-                      : JSON.stringify(m.content || '').slice(0, 4000),
+                  content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content || ''),
                 }))
               : [];
 
@@ -3098,9 +3092,9 @@ export function setup(ctx: SpindleFrontendContext) {
               temperature: snapshot?.parameters?.temperature,
               generationType: state.generationType || 'normal',
               activeBlocksCount,
-              activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled').slice(0, 30),
-              customPrompt: isCustomSource ? String(state.testCustomPrompt || '').slice(0, 4000) : '',
-              userInput: userPromptPreview.slice(0, 500),
+              activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled'),
+              customPrompt: isCustomSource ? String(state.testCustomPrompt || '') : '',
+              userInput: userPromptPreview,
               durationMs: Date.now() - runStartedAt,
               messages: promptMessages,
             };

@@ -6371,10 +6371,10 @@ ${m.content || ""}`).join(`
             const userPromptPreview = state.testTurnMode === "multi" && state.testTurns.length ? state.testTurns[state.testTurns.length - 1]?.content || "" : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : "");
             const connObj = tgt.connectionId ? state.connections.find((c) => c.id === tgt.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
-            const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.slice(-40).map((m) => ({
+            const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.map((m) => ({
               role: String(m.role || "system"),
               ...m.name ? { name: String(m.name) } : {},
-              content: typeof m.content === "string" ? m.content.slice(0, 4000) : JSON.stringify(m.content || "").slice(0, 4000)
+              content: typeof m.content === "string" ? m.content : JSON.stringify(m.content || "")
             })) : [];
             state.runs.push({
               time: new Date().toLocaleTimeString(),
@@ -6397,9 +6397,9 @@ ${m.content || ""}`).join(`
                 temperature: snapshot?.parameters?.temperature,
                 generationType: state.generationType || "normal",
                 activeBlocksCount: activeBlocks.length,
-                activeBlockNames: activeBlocks.map((blk) => blk.name || blk.marker || "Untitled").slice(0, 30),
-                customPrompt: isCustomSource ? String(state.testCustomPrompt || "").slice(0, 4000) : "",
-                userInput: userPromptPreview.slice(0, 500),
+                activeBlockNames: activeBlocks.map((blk) => blk.name || blk.marker || "Untitled"),
+                customPrompt: isCustomSource ? String(state.testCustomPrompt || "") : "",
+                userInput: userPromptPreview,
                 durationMs: Date.now() - runStartedAt,
                 messages: promptMessages
               },
@@ -7128,10 +7128,10 @@ ${ent.block.content || ""}`).join(`
             const userPromptPreview = state.testTurnMode === "multi" && state.testTurns.length ? state.testTurns[state.testTurns.length - 1]?.content || "" : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : "");
             const connObj = state.connectionId ? state.connections.find((c) => c.id === state.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
-            const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.slice(-40).map((m) => ({
+            const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.map((m) => ({
               role: String(m.role || "system"),
               ...m.name ? { name: String(m.name) } : {},
-              content: typeof m.content === "string" ? m.content.slice(0, 4000) : JSON.stringify(m.content || "").slice(0, 4000)
+              content: typeof m.content === "string" ? m.content : JSON.stringify(m.content || "")
             })) : [];
             const promptSummary = {
               promptSource: isCustomSource ? "custom" : "preset",
@@ -7143,9 +7143,9 @@ ${ent.block.content || ""}`).join(`
               temperature: snapshot?.parameters?.temperature,
               generationType: state.generationType || "normal",
               activeBlocksCount,
-              activeBlockNames: activeBlocks.map((blk) => blk.name || blk.marker || "Untitled").slice(0, 30),
-              customPrompt: isCustomSource ? String(state.testCustomPrompt || "").slice(0, 4000) : "",
-              userInput: userPromptPreview.slice(0, 500),
+              activeBlockNames: activeBlocks.map((blk) => blk.name || blk.marker || "Untitled"),
+              customPrompt: isCustomSource ? String(state.testCustomPrompt || "") : "",
+              userInput: userPromptPreview,
               durationMs: Date.now() - runStartedAt,
               messages: promptMessages
             };
