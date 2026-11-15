@@ -664,6 +664,15 @@ var STUDIO_POLISH_CSS = `
 @container (min-width: 1220px) {
   .ps-columns.ps-with-xray { grid-template-columns: minmax(250px, 0.78fr) minmax(360px, 1.42fr) minmax(260px, 0.8fr); }
 }
+.ps-editor-lint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 22px;
+}
 `;
 
 // src/studio-core.ts
@@ -1406,6 +1415,316 @@ function exportJsonFile(filename, dataObj) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
+function exportTextFile(filename, text) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+function formatBlocksAsText(title, blocks, options = {}) {
+  const list = Array.isArray(blocks) ? blocks : [];
+  const selected = options.onlyIndices ? options.onlyIndices.map((idx) => ({ blk: list[idx], idx })).filter((x) => Boolean(x.blk)) : list.map((blk, idx) => ({ blk, idx }));
+  const enabledCount = selected.filter(({ blk }) => blk.enabled && blk.marker !== "category").length;
+  const lines = [
+    "============================================================",
+    `PRESET: ${title || "Untitled Preset"}`,
+    `BLOCKS: ${selected.length} (${enabledCount} active)`
+  ];
+  const paramEntries = Object.entries(options.parameters || {}).filter(([, v]) => v !== undefined && v !== "");
+  if (paramEntries.length) {
+    lines.push(`PARAMETERS: ${paramEntries.map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`).join(", ")}`);
+  }
+  lines.push("============================================================", "");
+  for (const { blk, idx } of selected) {
+    const isCat = blk.marker === "category";
+    const stateTag = isCat ? "FOLDER" : blk.enabled ? "ENABLED" : "DISABLED";
+    const posTag = blk.position === "in_history" ? `in_history@${blk.depth ?? 0}` : blk.position || "pre_history";
+    const meta = [stateTag, `role:${blk.role || "system"}`, `pos:${posTag}`, ...blk.marker ? [`slot:${blk.marker}`] : []].join(" | ");
+    lines.push(`[${idx + 1}] ${blk.name || "Untitled"}  (${meta})`);
+    lines.push("------------------------------------------------------------");
+    if (String(blk.content || "").trim()) {
+      lines.push(String(blk.content));
+    } else if (blk.marker && !isCat) {
+      lines.push(`(Built-in slot: ${blk.marker})`);
+    } else if (isCat) {
+      lines.push("(Category divider)");
+    } else {
+      lines.push("(Empty block)");
+    }
+    lines.push("");
+  }
+  return lines.join(`
+`);
+}
+var SCOPED_MACRO_PAIRS = {
+  if: "if",
+  unless: "unless",
+  switch: "switch",
+  foreach: "foreach",
+  "#foreach": "foreach",
+  map: "map",
+  "#map": "map",
+  collect: "collect",
+  filter: "filter",
+  "#filter": "filter",
+  some: "some",
+  "#some": "some",
+  every: "every",
+  "#every": "every",
+  let: "let",
+  withvar: "let",
+  scope: "let",
+  "#escape": "#escape"
+};
+function lintBlockMacros(text) {
+  const src = String(text || "");
+  const chars = src.length;
+  const words = src.trim() ? src.trim().split(/\s+/).length : 0;
+  const approxTokens = chars ? Math.max(1, Math.ceil(chars / 4)) : 0;
+  const warnings = [];
+  if (src.includes("{{") || src.includes("}}")) {
+    let depth = 0;
+    let strayClose = false;
+    let i = 0;
+    while (i < src.length) {
+      const pair = src.slice(i, i + 2);
+      if (pair === "{{") {
+        depth++;
+        i += 2;
+      } else if (pair === "}}") {
+        if (depth === 0)
+          strayClose = true;
+        else
+          depth--;
+        i += 2;
+      } else {
+        i++;
+      }
+    }
+    if (depth > 0)
+      warnings.push(`${depth} unclosed "{{" macro brace(s)`);
+    if (strayClose)
+      warnings.push('Unexpected "}}" without matching "{{"');
+    const stack = [];
+    const tagRe = /\{\{\s*(\/?#?[a-zA-Z]+)(?:\s*::|\s+|\s*\}\})/g;
+    let m;
+    while ((m = tagRe.exec(src)) !== null) {
+      const rawTag = m[1].toLowerCase();
+      if (rawTag.startsWith("/")) {
+        const closeName = rawTag.slice(1);
+        const canonical = closeName === "escape" ? "#escape" : closeName;
+        if (!Object.values(SCOPED_MACRO_PAIRS).includes(canonical))
+          continue;
+        const lastIdx = stack.lastIndexOf(canonical);
+        if (lastIdx === -1) {
+          warnings.push(`Unexpected {{/${closeName}}} without opening tag`);
+        } else {
+          stack.splice(lastIdx);
+        }
+      } else if (rawTag in SCOPED_MACRO_PAIRS) {
+        stack.push(SCOPED_MACRO_PAIRS[rawTag]);
+      }
+    }
+    for (const unclosed of stack) {
+      warnings.push(`Unclosed {{${unclosed}}} block (missing {{/${unclosed === "#escape" ? "escape" : unclosed}}})`);
+    }
+  }
+  return { chars, words, approxTokens, warnings: [...new Set(warnings)].slice(0, 4) };
+}
+var PRESET_BLUEPRINTS = [
+  {
+    id: "blank",
+    badge: "Minimal",
+    title: "Blank Minimal",
+    description: "Clean 3-block starter (Main Prompt, Char Description, Chat History).",
+    parameters: {},
+    blocks: [
+      { name: "Main Prompt", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "main_prompt", isLocked: false },
+      { name: "Char Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: true },
+      { name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true }
+    ]
+  },
+  {
+    id: "roleplay",
+    badge: "Recommended",
+    title: "Standard Roleplay Loom",
+    description: "Complete RP order with Style, Lorebook Before/After, Character & Persona slots, Examples, and Continuity.",
+    parameters: { temperature: 0.85, top_p: 0.95, max_tokens: 1200 },
+    blocks: [
+      {
+        name: "System & Narrative Contract",
+        content: `You are {{char}}, interacting with {{user}}.
+Stay grounded in character voice, sensory detail, and established continuity. Never speak or act for {{user}}.`,
+        role: "system",
+        enabled: true,
+        position: "pre_history",
+        depth: 0,
+        marker: "main_prompt",
+        color: "#a795e8"
+      },
+      {
+        name: "Loom Narrative Style",
+        content: `{{if::{{loomStyle}}}}
+[Style Guidance]
+{{loomStyle}}
+{{/if}}`,
+        role: "system",
+        enabled: true,
+        position: "pre_history",
+        depth: 0,
+        marker: null,
+        color: "#64b5f6"
+      },
+      { name: "World Info (Before)", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "world_info_before", isLocked: true },
+      { name: "Character Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: true },
+      { name: "Character Personality", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_personality", isLocked: true },
+      { name: "Scenario", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "scenario", isLocked: true },
+      { name: "User Persona", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "persona_description", isLocked: true },
+      { name: "Example Messages", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "dialogue_examples", isLocked: true },
+      { name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true },
+      { name: "World Info (After)", content: "", role: "system", enabled: true, position: "post_history", depth: 0, marker: "world_info_after", isLocked: true },
+      {
+        name: "Post-History Reminder",
+        content: "[Respond strictly as {{char}} in the established tone and perspective.]",
+        role: "system",
+        enabled: true,
+        position: "post_history",
+        depth: 0,
+        marker: "jailbreak",
+        color: "#81c784"
+      }
+    ]
+  },
+  {
+    id: "council_copilot",
+    badge: "Lumiverse Native",
+    title: "Council, Memory & Sovereign Hand",
+    description: "Pre-wired with conditional blocks for {{lumiaCouncilDeliberation}}, {{loomSovHand}}, {{memories}}, {{databank}}, and {{loomSummary}}.",
+    parameters: { temperature: 0.8, top_p: 0.95, max_tokens: 1500 },
+    blocks: [
+      {
+        name: "Core Roleplay Directive",
+        content: "Portray {{char}} naturally alongside {{user}}. Respect all retrieved lore, memories, and scene constraints.",
+        role: "system",
+        enabled: true,
+        position: "pre_history",
+        depth: 0,
+        marker: "main_prompt",
+        color: "#a795e8"
+      },
+      { name: "World Info (Before)", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "world_info_before", isLocked: true },
+      { name: "Character Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: true },
+      { name: "Scenario & Persona", content: "{{if::{{scenario}}}}Scenario: {{scenario}}{{newline}}{{/if}}{{if::{{persona}}}}User ({{user}}): {{persona}}{{/if}}", role: "system", enabled: true, position: "pre_history", depth: 0, marker: null },
+      {
+        name: "Summary & Long-Term Memory",
+        content: `{{if::{{loomSummary}}}}[Story Summary]
+{{loomSummary}}
+
+{{/if}}{{if::{{memoriesActive}}}}
+{{memories}}
+{{/if}}{{if::{{databankActive}}}}
+[Reference Material]
+{{databankRaw}}
+{{/if}}`,
+        role: "system",
+        enabled: true,
+        position: "pre_history",
+        depth: 0,
+        marker: null,
+        color: "#ffb74d"
+      },
+      { name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true },
+      {
+        name: "Council Deliberation",
+        content: `{{if::{{lumiaCouncilModeActive}}}}
+{{lumiaCouncilDeliberation}}
+{{/if}}`,
+        role: "system",
+        enabled: true,
+        position: "post_history",
+        depth: 0,
+        marker: null,
+        color: "#4db6ac"
+      },
+      {
+        name: "Sovereign Hand Co-Pilot",
+        content: `{{if::{{loomSovHandActive}}}}
+{{loomSovHand}}
+{{/if}}`,
+        role: "system",
+        enabled: true,
+        position: "post_history",
+        depth: 0,
+        marker: null,
+        color: "#f06292"
+      }
+    ]
+  },
+  {
+    id: "reasoning",
+    badge: "Thinking Models",
+    title: "Reasoning / CoT Ready",
+    description: "Lean instructions with generous 4096 max tokens so reasoning models never truncate mid-reply.",
+    parameters: { temperature: 0.7, max_tokens: 4096 },
+    blocks: [
+      {
+        name: "Concise System Framing",
+        content: `You are {{char}}.
+Write vivid, character-faithful prose for {{user}}. Avoid repetition and follow scene logic closely.`,
+        role: "system",
+        enabled: true,
+        position: "pre_history",
+        depth: 0,
+        marker: "main_prompt",
+        color: "#64b5f6"
+      },
+      { name: "Character Description", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "char_description", isLocked: true },
+      { name: "User Persona", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "persona_description", isLocked: true },
+      { name: "Chat History", content: "", role: "system", enabled: true, position: "pre_history", depth: 0, marker: "chat_history", isLocked: true },
+      {
+        name: "Reasoning Guide (Optional)",
+        content: `{{reasoningPrefix}}
+Consider {{char}}'s immediate motivation, subtext, and physical continuity before replying.
+{{reasoningSuffix}}`,
+        role: "system",
+        enabled: false,
+        position: "post_history",
+        depth: 0,
+        marker: null
+      }
+    ]
+  }
+];
+function createDraftFromBlueprint(blueprintId) {
+  const bp = PRESET_BLUEPRINTS.find((x) => x.id === blueprintId) || PRESET_BLUEPRINTS[0];
+  return {
+    name: bp.id === "blank" ? "New preset" : bp.title,
+    provider: "loom",
+    engine: "classic",
+    parameters: structuredClone(bp.parameters || {}),
+    prompts: {},
+    metadata: { promptVariables: {} },
+    prompt_order: bp.blocks.map((blk) => ({
+      id: uid(),
+      name: String(blk.name || "Block"),
+      content: String(blk.content || ""),
+      role: String(blk.role || "system"),
+      enabled: blk.enabled !== false,
+      position: String(blk.position || "pre_history"),
+      depth: Number(blk.depth) || 0,
+      marker: blk.marker ? String(blk.marker) : null,
+      isLocked: Boolean(blk.isLocked),
+      color: blk.color ? String(blk.color) : null,
+      injectionTrigger: [],
+      group: null
+    }))
+  };
+}
 
 // src/studio-dialogs.ts
 function closeModalRef(modalRef) {
@@ -1783,6 +2102,69 @@ function openBlockContextMenu(root, modalRef, state, index, x, y, callbacks) {
   root.appendChild(menu);
   modalRef.current = menu;
 }
+function openNewPresetModal(root, modalRef, onSelectBlueprint) {
+  closeModalRef(modalRef);
+  const returnFocus = document.activeElement;
+  const dialog = document.createElement("dialog");
+  dialog.className = "ps-native-dialog";
+  dialog.innerHTML = `
+    <div class="ps-between" style="margin-bottom:8px">
+      <h3>✨ Start From a Preset Blueprint</h3>
+      <button type="button" class="ps-btn-sm ps-btn-icon" data-bp-close aria-label="Close">✕</button>
+    </div>
+    <p class="ps-muted" style="margin-bottom:12px">Pick a ready-made Lumiverse Loom structure or start with a blank preset.</p>
+    <div class="ps-list">
+      ${PRESET_BLUEPRINTS.map((bp) => `
+          <button type="button" class="ps-starter-card" data-bp-id="${esc(bp.id)}" style="width:100%">
+            <div class="ps-between" style="width:100%;margin-bottom:4px">
+              <strong>${esc(bp.title)}</strong>
+              <div class="ps-actions">
+                <span class="ps-pill">${bp.blocks.length} blocks</span>
+                <span class="ps-pill ps-pill-accent">${esc(bp.badge)}</span>
+              </div>
+            </div>
+            <p class="ps-muted" style="font-size:0.78rem">${esc(bp.description)}</p>
+          </button>
+        `).join("")}
+    </div>
+  `;
+  const close = () => {
+    if (modalRef.current === dialog)
+      modalRef.current = null;
+    try {
+      dialog.close();
+    } catch (_) {}
+    dialog.remove();
+    returnFocus?.focus?.({ preventScroll: true });
+  };
+  dialog.addEventListener("cancel", (ev) => {
+    ev.preventDefault();
+    close();
+  });
+  dialog.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape")
+      ev.stopPropagation();
+  });
+  dialog.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (target === dialog || target.closest("[data-bp-close]")) {
+      close();
+      return;
+    }
+    const btn = target.closest("button[data-bp-id]");
+    if (btn?.dataset.bpId) {
+      const id = btn.dataset.bpId;
+      close();
+      onSelectBlueprint(id);
+    }
+  });
+  root.appendChild(dialog);
+  modalRef.current = dialog;
+  if (typeof dialog.showModal === "function")
+    dialog.showModal();
+  else
+    dialog.setAttribute("open", "");
+}
 
 // src/studio-views.ts
 function renderPermissionBanner(state) {
@@ -2027,6 +2409,7 @@ function renderArchitectTab(ctx, state) {
           <div class="ps-actions">
             <button type="button" class="ps-btn-sm ps-primary" data-action="add-block">＋ Block</button>
             <button type="button" class="ps-btn-sm" data-action="add-category" title="Add category divider">＋ Folder</button>
+            <button type="button" class="ps-btn-sm" data-action="import-txt-block" title="Import a .txt or .md file as a new prompt block">\uD83D\uDCE5 .txt</button>
             <button type="button" class="ps-btn-sm" data-action="quick-insert-template" title="Insert from template library">\uD83D\uDCE6</button>
           </div>
         </div>
@@ -2109,6 +2492,16 @@ function renderArchitectTab(ctx, state) {
             </div>
 
             <textarea class="ps-content" data-block="content" placeholder="${b.marker ? `System slot (${b.marker}) — automatically injects ${b.marker} unless you write custom override text here.` : "Write your prompt instructions here (supports {{macros}})…"}" ${b.isLocked ? "disabled" : ""}>${esc(b.content)}</textarea>
+
+            ${(() => {
+    const lint = lintBlockMacros(b.content || "");
+    return `
+                <div class="ps-editor-lint" data-block-lint>
+                  <span class="ps-muted">${lint.chars.toLocaleString()} chars · ${lint.words.toLocaleString()} words · ~${lint.approxTokens.toLocaleString()}t</span>
+                  ${lint.warnings.length ? `<span class="ps-pill ps-pill-warn">⚠ ${esc(lint.warnings.join(" · "))}</span>` : (b.content || "").includes("{{") ? '<span class="ps-pill ps-pill-ok">✓ Macro syntax OK</span>' : ""}
+                </div>
+              `;
+  })()}
 
             <!-- Collapsible Placement, Slot Marker & Color -->
             <details class="ps-collapsible" data-details-id="block-advanced-options">
@@ -2446,19 +2839,32 @@ function renderRemixAndTranslateTab(state) {
         </label>
 
         ${state.importBlocks.length ? `
-          <div class="ps-between" style="margin:12px 0 8px">
+          <div class="ps-between" style="margin:12px 0 6px">
             <div class="ps-row">
               <strong>Source Blocks (${state.importBlocks.length})</strong>
               ${checkedCount ? `<span class="ps-pill ps-pill-accent">${checkedCount} checked</span>` : ""}
             </div>
             <div class="ps-actions">
-              <input style="width:180px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || "")}">
-              ${checkedCount ? `
-                <button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount}) to Draft</button>
-                <button type="button" class="ps-btn-sm" data-action="collect-blocks">\uD83D\uDCE6 Save Checked as Template…</button>
-              ` : ""}
-              <button type="button" class="ps-btn-sm" data-action="collapse-all-imports" ${allCollapsed ? "disabled" : ""}>▸ Collapse All</button>
-              <button type="button" class="ps-btn-sm" data-action="expand-all-imports" ${allExpanded ? "disabled" : ""}>▾ Expand All</button>
+              <input style="width:170px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || "")}">
+              <button type="button" class="ps-btn-sm ${state.remixEnabledOnly ? "ps-primary" : ""}" data-action="remix-toggle-enabled-only" aria-pressed="${Boolean(state.remixEnabledOnly)}" title="Show only enabled source blocks">Enabled Only</button>
+              <button type="button" class="ps-btn-sm" data-action="collapse-all-imports" ${allCollapsed ? "disabled" : ""}>▸ Collapse</button>
+              <button type="button" class="ps-btn-sm" data-action="expand-all-imports" ${allExpanded ? "disabled" : ""}>▾ Expand</button>
+            </div>
+          </div>
+
+          <div class="ps-between" style="margin-bottom:10px;padding:7px 10px;border:1px solid var(--ps-border);border-radius:8px;background:var(--ps-bg)">
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="remix-select-all">☑ Select All</button>
+              <button type="button" class="ps-btn-sm" data-action="remix-select-enabled" title="Check only enabled non-folder source blocks">✓ Select Enabled</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-select-none">✕ Clear (${checkedCount})</button>` : ""}
+              ${checkedCount ? `<button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount})</button>` : ""}
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="collect-blocks">\uD83D\uDCE6 Save Template</button>` : ""}
+            </div>
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="remix-copy-all" title="Copy all source blocks as formatted text">\uD83D\uDCCB Copy All</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-copy-checked" title="Copy checked source blocks as text">\uD83D\uDCCB Copy (${checkedCount})</button>` : ""}
+              <button type="button" class="ps-btn-sm" data-action="remix-export-txt" data-scope="all" title="Download full source preset as a .txt file">\uD83D\uDCC4 Export .txt</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-export-txt" data-scope="checked" title="Download checked source blocks as a .txt file">\uD83D\uDCC4 Export (${checkedCount}) .txt</button>` : ""}
             </div>
           </div>
 
@@ -2628,7 +3034,10 @@ function renderTranslateBlockListHtml(state) {
 }
 function renderRemixSourceListHtml(state) {
   const q = (state.remixSearch || "").trim().toLowerCase();
+  const enabledOnly = Boolean(state.remixEnabledOnly);
   const rows = (state.importBlocks || []).map((block, i) => ({ block, i })).filter(({ block }) => {
+    if (enabledOnly && (!block.enabled || block.marker === "category"))
+      return false;
     if (!q)
       return true;
     return (block.name || "").toLowerCase().includes(q) || (block.content || "").toLowerCase().includes(q);
@@ -3473,6 +3882,7 @@ function setup(ctx) {
     view: "blocks",
     remixSubTab: "mixer",
     remixSearch: "",
+    remixEnabledOnly: false,
     testOutputTab: "reply",
     compareMode: "side",
     editorMode: "studio",
@@ -4243,8 +4653,9 @@ function setup(ctx) {
           </select>
 
           <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
+          <button type="button" class="ps-btn-sm" data-action="open-blueprints" title="Start from a curated Lumiverse preset blueprint">✨ Blueprints</button>
           <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">\uD83D\uDCE5 Import</button>
-          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">\uD83D\uDCE4 Export</button>' : ""}
+          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">\uD83D\uDCE4 JSON</button><button type="button" class="ps-btn-sm" data-action="export-draft-txt" title="Export current preset as readable .txt">\uD83D\uDCC4 .txt</button><button type="button" class="ps-btn-sm" data-action="copy-draft-txt" title="Copy full current preset as readable text">\uD83D\uDCCB Copy All</button>' : ""}
           ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ""}
         </div>
 
@@ -4301,7 +4712,8 @@ function setup(ctx) {
           <h3>Welcome to Preset Studio</h3>
           <p class="ps-muted" style="max-width:460px;margin:8px auto 18px">${state.loading ? "Loading your presets, chats, and connections…" : `Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.`}</p>
           <div class="ps-actions" style="justify-content:center">
-            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+            <button type="button" class="ps-primary" data-action="open-blueprints">✨ Start From Blueprint</button>
+            <button type="button" data-action="new">＋ Blank Preset</button>
             <button type="button" data-action="import-preset-json">\uD83D\uDCE5 Import Preset JSON</button>
             ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ""}
           </div>
@@ -4481,6 +4893,12 @@ function setup(ctx) {
         const heading = shellBodyEl.querySelector(".ps-col-detail h3");
         if (heading)
           heading.textContent = val || "Untitled";
+      } else if (el.dataset.block === "content") {
+        const lintSlot = shellBodyEl.querySelector("[data-block-lint]");
+        if (lintSlot) {
+          const lint = lintBlockMacros(String(val || ""));
+          lintSlot.innerHTML = `<span class="ps-muted">${lint.chars.toLocaleString()} chars · ${lint.words.toLocaleString()} words · ~${lint.approxTokens.toLocaleString()}t</span>${lint.warnings.length ? `<span class="ps-pill ps-pill-warn">⚠ ${esc(lint.warnings.join(" · "))}</span>` : String(val || "").includes("{{") ? '<span class="ps-pill ps-pill-ok">✓ Macro syntax OK</span>' : ""}`;
+        }
       }
       persist(false, true);
     } else if (el.dataset.preset && d) {
@@ -4676,6 +5094,7 @@ function setup(ctx) {
         state.importValues = {};
         state.selectedImports = [];
         state.expandedImports = [];
+        state.remixEnabledOnly = false;
         if (el.value) {
           const preset = await request("get", { id: el.value });
           if (!preset)
@@ -4784,7 +5203,70 @@ function setup(ctx) {
         await importJsonFile("template");
       else if (a === "export-preset-json" && d)
         exportJsonFile(`${(d.name || "preset").replace(/[^a-z0-9-_]+/gi, "_")}.json`, d);
-      else if (a === "export-template") {
+      else if (a === "export-draft-txt" && d) {
+        const txt = formatBlocksAsText(d.name || "Preset", d.prompt_order || [], { parameters: d.parameters });
+        exportTextFile(`${(d.name || "preset").replace(/[^a-z0-9-_]+/gi, "_")}.txt`, txt);
+        await request("toast", { kind: "success", title: "Preset Studio", message: `Exported “${d.name || "preset"}.txt”` });
+        return;
+      } else if (a === "copy-draft-txt" && d) {
+        const txt = formatBlocksAsText(d.name || "Preset", d.prompt_order || [], { parameters: d.parameters });
+        await copyToClipboard(txt);
+        await request("toast", { kind: "success", title: "Preset Studio", message: `Copied all ${d.prompt_order.length} blocks as text` });
+        return;
+      } else if (a === "open-blueprints") {
+        openNewPresetModal(dialogHostEl, modalRef, async (bpId) => {
+          if (state.dirty && !await confirmUser("Replace Current Draft?", "Discard your current unsaved draft and start from this blueprint?", "warning", "Start Blueprint")) {
+            return;
+          }
+          state.draft = createDraftFromBlueprint(bpId);
+          state.savedFingerprint = "";
+          state.selected = 0;
+          state.selectedDraft = [];
+          state.collapsedCategories = [];
+          state.historyPast = [structuredClone(state.draft)];
+          state.historyFuture = [];
+          state.translation = null;
+          state.sourceTranslation = null;
+          state.batchTranslation = null;
+          persist(true);
+          render();
+        });
+        return;
+      } else if (a === "import-txt-block" && d) {
+        if (!ctx.uploads?.pickFile)
+          throw new Error("File picker is not available in this host.");
+        const files = await ctx.uploads.pickFile({
+          accept: [".txt", ".md", "text/plain", "text/markdown"],
+          multiple: true,
+          maxSizeBytes: 5 * 1024 * 1024
+        });
+        if (!files?.length)
+          return;
+        const decoder = new TextDecoder;
+        const inserted = [];
+        for (const f of files) {
+          const text = decoder.decode(f.bytes);
+          inserted.push({
+            id: uid(),
+            name: f.name.replace(/\.(txt|md)$/i, "") || "Imported Text",
+            content: text,
+            role: "system",
+            enabled: true,
+            position: "pre_history",
+            depth: 0,
+            marker: null,
+            isLocked: false,
+            color: null,
+            injectionTrigger: [],
+            group: null
+          });
+        }
+        d.prompt_order.splice(state.selected + 1, 0, ...inserted);
+        state.selected += inserted.length;
+        state.mobileDetailOpen = true;
+        persist();
+        state.notice = `Imported ${inserted.length} text block(s) into your draft.`;
+      } else if (a === "export-template") {
         const t = state.templates[Number(el.dataset.index)];
         if (t)
           exportJsonFile(`template-${t.name.replace(/[^a-z0-9-_]+/gi, "_")}.json`, t);
@@ -5192,6 +5674,68 @@ ${ent.block.content || ""}`).join(`
         const v = b.variables?.[Number(el.dataset.vindex)];
         v?.options?.splice(Number(el.dataset.oindex), 1);
         persist();
+      } else if (a === "remix-toggle-enabled-only") {
+        state.remixEnabledOnly = !state.remixEnabledOnly;
+        renderBody();
+        return;
+      } else if (a === "remix-select-all") {
+        const q = (state.remixSearch || "").trim().toLowerCase();
+        state.selectedImports = (state.importBlocks || []).map((blk, idx) => ({ blk, idx })).filter(({ blk }) => {
+          if (state.remixEnabledOnly && (!blk.enabled || blk.marker === "category"))
+            return false;
+          if (!q)
+            return true;
+          return (blk.name || "").toLowerCase().includes(q) || (blk.content || "").toLowerCase().includes(q);
+        }).map(({ idx }) => idx);
+        renderBody();
+        return;
+      } else if (a === "remix-select-enabled") {
+        const q = (state.remixSearch || "").trim().toLowerCase();
+        state.selectedImports = (state.importBlocks || []).map((blk, idx) => ({ blk, idx })).filter(({ blk }) => {
+          if (!blk.enabled || blk.marker === "category")
+            return false;
+          if (!q)
+            return true;
+          return (blk.name || "").toLowerCase().includes(q) || (blk.content || "").toLowerCase().includes(q);
+        }).map(({ idx }) => idx);
+        renderBody();
+        return;
+      } else if (a === "remix-select-none") {
+        state.selectedImports = [];
+        renderBody();
+        return;
+      } else if (a === "remix-copy-all" || a === "remix-copy-checked") {
+        const srcPreset = state.presets.find((p) => p.id === state.importPreset);
+        const title = srcPreset?.name || "Source Preset";
+        const onlyIndices = a === "remix-copy-checked" ? [...state.selectedImports || []].sort((x, y) => x - y) : undefined;
+        if (onlyIndices && !onlyIndices.length)
+          throw new Error("Check at least one source block first.");
+        const txt = formatBlocksAsText(title, state.importBlocks || [], {
+          ...onlyIndices ? { onlyIndices } : {},
+          parameters: srcPreset?.parameters
+        });
+        await copyToClipboard(txt);
+        await request("toast", {
+          kind: "success",
+          title: "Preset Studio",
+          message: onlyIndices ? `Copied ${onlyIndices.length} checked block(s)` : `Copied all ${state.importBlocks.length} source blocks`
+        });
+        return;
+      } else if (a === "remix-export-txt") {
+        const srcPreset = state.presets.find((p) => p.id === state.importPreset);
+        const title = srcPreset?.name || "Source Preset";
+        const scope = el.dataset.scope === "checked" ? "checked" : "all";
+        const onlyIndices = scope === "checked" ? [...state.selectedImports || []].sort((x, y) => x - y) : undefined;
+        if (onlyIndices && !onlyIndices.length)
+          throw new Error("Check at least one source block first.");
+        const txt = formatBlocksAsText(title, state.importBlocks || [], {
+          ...onlyIndices ? { onlyIndices } : {},
+          parameters: srcPreset?.parameters
+        });
+        const safeName = title.replace(/[^a-z0-9-_]+/gi, "_") || "preset";
+        exportTextFile(scope === "checked" ? `${safeName}-selected.txt` : `${safeName}.txt`, txt);
+        await request("toast", { kind: "success", title: "Preset Studio", message: `Exported ${safeName}.txt` });
+        return;
       } else if (a === "collapse-all-imports")
         state.expandedImports = [];
       else if (a === "expand-all-imports")

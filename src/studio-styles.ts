@@ -664,4 +664,13 @@ export const STUDIO_POLISH_CSS = `
 @container (min-width: 1220px) {
   .ps-columns.ps-with-xray { grid-template-columns: minmax(250px, 0.78fr) minmax(360px, 1.42fr) minmax(260px, 0.8fr); }
 }
+.ps-editor-lint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+  min-height: 22px;
+}
 `;

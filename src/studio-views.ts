@@ -10,6 +10,7 @@ import {
   buildPresetVariableDiagnostics,
   resolveBlockVariablesPreview,
   computeLineDiff,
+  lintBlockMacros,
 } from './studio-core.js';
 
 export function renderPermissionBanner(state: any): string {
@@ -258,6 +259,7 @@ export function renderArchitectTab(ctx: any, state: any): string {
           <div class="ps-actions">
             <button type="button" class="ps-btn-sm ps-primary" data-action="add-block">＋ Block</button>
             <button type="button" class="ps-btn-sm" data-action="add-category" title="Add category divider">＋ Folder</button>
+            <button type="button" class="ps-btn-sm" data-action="import-txt-block" title="Import a .txt or .md file as a new prompt block">📥 .txt</button>
             <button type="button" class="ps-btn-sm" data-action="quick-insert-template" title="Insert from template library">📦</button>
           </div>
         </div>
@@ -338,6 +340,20 @@ export function renderArchitectTab(ctx: any, state: any): string {
             </div>
 
             <textarea class="ps-content" data-block="content" placeholder="${b.marker ? `System slot (${b.marker}) — automatically injects ${b.marker} unless you write custom override text here.` : 'Write your prompt instructions here (supports {{macros}})…'}" ${b.isLocked ? 'disabled' : ''}>${esc(b.content)}</textarea>
+
+            ${(() => {
+              const lint = lintBlockMacros(b.content || '');
+              return `
+                <div class="ps-editor-lint" data-block-lint>
+                  <span class="ps-muted">${lint.chars.toLocaleString()} chars · ${lint.words.toLocaleString()} words · ~${lint.approxTokens.toLocaleString()}t</span>
+                  ${lint.warnings.length
+                    ? `<span class="ps-pill ps-pill-warn">⚠ ${esc(lint.warnings.join(' · '))}</span>`
+                    : (b.content || '').includes('{{')
+                      ? '<span class="ps-pill ps-pill-ok">✓ Macro syntax OK</span>'
+                      : ''}
+                </div>
+              `;
+            })()}
 
             <!-- Collapsible Placement, Slot Marker & Color -->
             <details class="ps-collapsible" data-details-id="block-advanced-options">
@@ -677,19 +693,32 @@ export function renderRemixAndTranslateTab(state: any): string {
         </label>
 
         ${state.importBlocks.length ? `
-          <div class="ps-between" style="margin:12px 0 8px">
+          <div class="ps-between" style="margin:12px 0 6px">
             <div class="ps-row">
               <strong>Source Blocks (${state.importBlocks.length})</strong>
               ${checkedCount ? `<span class="ps-pill ps-pill-accent">${checkedCount} checked</span>` : ''}
             </div>
             <div class="ps-actions">
-              <input style="width:180px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || '')}">
-              ${checkedCount ? `
-                <button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount}) to Draft</button>
-                <button type="button" class="ps-btn-sm" data-action="collect-blocks">📦 Save Checked as Template…</button>
-              ` : ''}
-              <button type="button" class="ps-btn-sm" data-action="collapse-all-imports" ${allCollapsed ? 'disabled' : ''}>▸ Collapse All</button>
-              <button type="button" class="ps-btn-sm" data-action="expand-all-imports" ${allExpanded ? 'disabled' : ''}>▾ Expand All</button>
+              <input style="width:170px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter source blocks…" data-state="remixSearch" value="${esc(state.remixSearch || '')}">
+              <button type="button" class="ps-btn-sm ${state.remixEnabledOnly ? 'ps-primary' : ''}" data-action="remix-toggle-enabled-only" aria-pressed="${Boolean(state.remixEnabledOnly)}" title="Show only enabled source blocks">Enabled Only</button>
+              <button type="button" class="ps-btn-sm" data-action="collapse-all-imports" ${allCollapsed ? 'disabled' : ''}>▸ Collapse</button>
+              <button type="button" class="ps-btn-sm" data-action="expand-all-imports" ${allExpanded ? 'disabled' : ''}>▾ Expand</button>
+            </div>
+          </div>
+
+          <div class="ps-between" style="margin-bottom:10px;padding:7px 10px;border:1px solid var(--ps-border);border-radius:8px;background:var(--ps-bg)">
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="remix-select-all">☑ Select All</button>
+              <button type="button" class="ps-btn-sm" data-action="remix-select-enabled" title="Check only enabled non-folder source blocks">✓ Select Enabled</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-select-none">✕ Clear (${checkedCount})</button>` : ''}
+              ${checkedCount ? `<button type="button" class="ps-btn-sm ps-primary" data-action="add-checked-imports">＋ Add Checked (${checkedCount})</button>` : ''}
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="collect-blocks">📦 Save Template</button>` : ''}
+            </div>
+            <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="remix-copy-all" title="Copy all source blocks as formatted text">📋 Copy All</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-copy-checked" title="Copy checked source blocks as text">📋 Copy (${checkedCount})</button>` : ''}
+              <button type="button" class="ps-btn-sm" data-action="remix-export-txt" data-scope="all" title="Download full source preset as a .txt file">📄 Export .txt</button>
+              ${checkedCount ? `<button type="button" class="ps-btn-sm" data-action="remix-export-txt" data-scope="checked" title="Download checked source blocks as a .txt file">📄 Export (${checkedCount}) .txt</button>` : ''}
             </div>
           </div>
 
@@ -881,9 +910,11 @@ export function renderTranslateBlockListHtml(state: any): string {
 
 export function renderRemixSourceListHtml(state: any): string {
   const q = (state.remixSearch || '').trim().toLowerCase();
+  const enabledOnly = Boolean(state.remixEnabledOnly);
   const rows = (state.importBlocks || [])
     .map((block: any, i: number) => ({ block, i }))
     .filter(({ block }: any) => {
+      if (enabledOnly && (!block.enabled || block.marker === 'category')) return false;
       if (!q) return true;
       return (block.name || '').toLowerCase().includes(q) || (block.content || '').toLowerCase().includes(q);
     });

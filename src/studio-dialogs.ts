@@ -1,4 +1,4 @@
-import { esc, uid } from './studio-core.js';
+import { esc, uid, PRESET_BLUEPRINTS } from './studio-core.js';
 
 export interface ModalRef {
   current: any;
@@ -363,4 +363,63 @@ export function openBlockContextMenu(
   });
   root.appendChild(menu);
   modalRef.current = menu;
+}
+
+export function openNewPresetModal(
+  root: HTMLElement,
+  modalRef: ModalRef,
+  onSelectBlueprint: (blueprintId: string) => void | Promise<void>,
+): void {
+  closeModalRef(modalRef);
+  const returnFocus = document.activeElement as HTMLElement | null;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'ps-native-dialog';
+  dialog.innerHTML = `
+    <div class="ps-between" style="margin-bottom:8px">
+      <h3>✨ Start From a Preset Blueprint</h3>
+      <button type="button" class="ps-btn-sm ps-btn-icon" data-bp-close aria-label="Close">✕</button>
+    </div>
+    <p class="ps-muted" style="margin-bottom:12px">Pick a ready-made Lumiverse Loom structure or start with a blank preset.</p>
+    <div class="ps-list">
+      ${PRESET_BLUEPRINTS.map(
+        (bp) => `
+          <button type="button" class="ps-starter-card" data-bp-id="${esc(bp.id)}" style="width:100%">
+            <div class="ps-between" style="width:100%;margin-bottom:4px">
+              <strong>${esc(bp.title)}</strong>
+              <div class="ps-actions">
+                <span class="ps-pill">${bp.blocks.length} blocks</span>
+                <span class="ps-pill ps-pill-accent">${esc(bp.badge)}</span>
+              </div>
+            </div>
+            <p class="ps-muted" style="font-size:0.78rem">${esc(bp.description)}</p>
+          </button>
+        `,
+      ).join('')}
+    </div>
+  `;
+  const close = () => {
+    if (modalRef.current === dialog) modalRef.current = null;
+    try { dialog.close(); } catch (_) {}
+    dialog.remove();
+    returnFocus?.focus?.({ preventScroll: true });
+  };
+  dialog.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
+  dialog.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') ev.stopPropagation(); });
+  dialog.addEventListener('click', (ev) => {
+    const target = ev.target as HTMLElement;
+    if (target === dialog || target.closest('[data-bp-close]')) {
+      close();
+      return;
+    }
+    const btn = target.closest<HTMLButtonElement>('button[data-bp-id]');
+    if (btn?.dataset.bpId) {
+      const id = btn.dataset.bpId;
+      close();
+      void onSelectBlueprint(id);
+    }
+  });
+  root.appendChild(dialog);
+  modalRef.current = dialog;
+  if (typeof dialog.showModal === 'function') dialog.showModal();
+  else dialog.setAttribute('open', '');
 }

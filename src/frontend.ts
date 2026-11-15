@@ -14,6 +14,10 @@ import {
   clampSelectedIndex,
   copyToClipboard,
   exportJsonFile,
+  exportTextFile,
+  formatBlocksAsText,
+  lintBlockMacros,
+  createDraftFromBlueprint,
   VARIABLE_STARTER_EXAMPLES,
   AUTHORS_NOTE_PRESETS,
 } from './studio-core.js';
@@ -24,6 +28,7 @@ import {
   openFindReplaceDialog,
   openTemplatePickerModal,
   openBlockContextMenu,
+  openNewPresetModal,
   type ModalRef,
 } from './studio-dialogs.js';
 import {
@@ -95,6 +100,7 @@ export function setup(ctx: SpindleFrontendContext) {
     view: 'blocks',
     remixSubTab: 'mixer',
     remixSearch: '',
+    remixEnabledOnly: false,
     testOutputTab: 'reply',
     compareMode: 'side',
     editorMode: 'studio',
@@ -931,8 +937,9 @@ export function setup(ctx: SpindleFrontendContext) {
           </select>
 
           <button type="button" class="ps-btn-sm" data-action="new" title="Create a new blank preset">＋ New</button>
+          <button type="button" class="ps-btn-sm" data-action="open-blueprints" title="Start from a curated Lumiverse preset blueprint">✨ Blueprints</button>
           <button type="button" class="ps-btn-sm" data-action="import-preset-json" title="Import a preset JSON file">📥 Import</button>
-          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">📤 Export</button>' : ''}
+          ${d ? '<button type="button" class="ps-btn-sm" data-action="export-preset-json" title="Export current preset as JSON">📤 JSON</button><button type="button" class="ps-btn-sm" data-action="export-draft-txt" title="Export current preset as readable .txt">📄 .txt</button><button type="button" class="ps-btn-sm" data-action="copy-draft-txt" title="Copy full current preset as readable text">📋 Copy All</button>' : ''}
           ${state.recovery && !d ? '<button type="button" class="ps-btn-sm" data-action="restore">Recover Draft</button>' : ''}
         </div>
 
@@ -1001,7 +1008,8 @@ export function setup(ctx: SpindleFrontendContext) {
               : `Select one of your ${state.presets.length} saved presets from the top menu, import a JSON preset, or start a fresh Loom preset.`
           }</p>
           <div class="ps-actions" style="justify-content:center">
-            <button type="button" class="ps-primary" data-action="new">＋ Create New Preset</button>
+            <button type="button" class="ps-primary" data-action="open-blueprints">✨ Start From Blueprint</button>
+            <button type="button" data-action="new">＋ Blank Preset</button>
             <button type="button" data-action="import-preset-json">📥 Import Preset JSON</button>
             ${state.recovery ? '<button type="button" data-action="restore">↺ Recover Unsaved Draft</button>' : ''}
           </div>
@@ -1205,6 +1213,18 @@ export function setup(ctx: SpindleFrontendContext) {
       if (el.dataset.block === 'name') {
         const heading = shellBodyEl.querySelector('.ps-col-detail h3');
         if (heading) heading.textContent = val || 'Untitled';
+      } else if (el.dataset.block === 'content') {
+        const lintSlot = shellBodyEl.querySelector<HTMLElement>('[data-block-lint]');
+        if (lintSlot) {
+          const lint = lintBlockMacros(String(val || ''));
+          lintSlot.innerHTML = `<span class="ps-muted">${lint.chars.toLocaleString()} chars · ${lint.words.toLocaleString()} words · ~${lint.approxTokens.toLocaleString()}t</span>${
+            lint.warnings.length
+              ? `<span class="ps-pill ps-pill-warn">⚠ ${esc(lint.warnings.join(' · '))}</span>`
+              : String(val || '').includes('{{')
+                ? '<span class="ps-pill ps-pill-ok">✓ Macro syntax OK</span>'
+                : ''
+          }`;
+        }
       }
       persist(false, true);
     } else if (el.dataset.preset && d) {
@@ -1377,6 +1397,7 @@ export function setup(ctx: SpindleFrontendContext) {
         state.importValues = {};
         state.selectedImports = [];
         state.expandedImports = [];
+        state.remixEnabledOnly = false;
         if (el.value) {
           const preset = await request('get', { id: el.value });
           if (!preset) throw new Error('Source preset is no longer available.');
@@ -1494,7 +1515,71 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (a === 'import-preset-json') await importJsonFile('preset');
       else if (a === 'import-template-json') await importJsonFile('template');
       else if (a === 'export-preset-json' && d) exportJsonFile(`${(d.name || 'preset').replace(/[^a-z0-9-_]+/gi, '_')}.json`, d);
-      else if (a === 'export-template') {
+      else if (a === 'export-draft-txt' && d) {
+        const txt = formatBlocksAsText(d.name || 'Preset', d.prompt_order || [], { parameters: d.parameters });
+        exportTextFile(`${(d.name || 'preset').replace(/[^a-z0-9-_]+/gi, '_')}.txt`, txt);
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Exported “${d.name || 'preset'}.txt”` });
+        return;
+      } else if (a === 'copy-draft-txt' && d) {
+        const txt = formatBlocksAsText(d.name || 'Preset', d.prompt_order || [], { parameters: d.parameters });
+        await copyToClipboard(txt);
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied all ${d.prompt_order.length} blocks as text` });
+        return;
+      } else if (a === 'open-blueprints') {
+        openNewPresetModal(dialogHostEl, modalRef, async (bpId: string) => {
+          if (
+            state.dirty &&
+            !(await confirmUser('Replace Current Draft?', 'Discard your current unsaved draft and start from this blueprint?', 'warning', 'Start Blueprint'))
+          ) {
+            return;
+          }
+          state.draft = createDraftFromBlueprint(bpId);
+          state.savedFingerprint = '';
+          state.selected = 0;
+          state.selectedDraft = [];
+          state.collapsedCategories = [];
+          state.historyPast = [structuredClone(state.draft)];
+          state.historyFuture = [];
+          state.translation = null;
+          state.sourceTranslation = null;
+          state.batchTranslation = null;
+          persist(true);
+          render();
+        });
+        return;
+      } else if (a === 'import-txt-block' && d) {
+        if (!ctx.uploads?.pickFile) throw new Error('File picker is not available in this host.');
+        const files = await ctx.uploads.pickFile({
+          accept: ['.txt', '.md', 'text/plain', 'text/markdown'],
+          multiple: true,
+          maxSizeBytes: 5 * 1024 * 1024,
+        });
+        if (!files?.length) return;
+        const decoder = new TextDecoder();
+        const inserted: any[] = [];
+        for (const f of files) {
+          const text = decoder.decode(f.bytes);
+          inserted.push({
+            id: uid(),
+            name: f.name.replace(/\.(txt|md)$/i, '') || 'Imported Text',
+            content: text,
+            role: 'system',
+            enabled: true,
+            position: 'pre_history',
+            depth: 0,
+            marker: null,
+            isLocked: false,
+            color: null,
+            injectionTrigger: [],
+            group: null,
+          });
+        }
+        d.prompt_order.splice(state.selected + 1, 0, ...inserted);
+        state.selected += inserted.length;
+        state.mobileDetailOpen = true;
+        persist();
+        state.notice = `Imported ${inserted.length} text block(s) into your draft.`;
+      } else if (a === 'export-template') {
         const t = state.templates[Number(el.dataset.index)];
         if (t) exportJsonFile(`template-${t.name.replace(/[^a-z0-9-_]+/gi, '_')}.json`, t);
       } else if (a === 'view') {
@@ -1898,6 +1983,72 @@ export function setup(ctx: SpindleFrontendContext) {
         const v = b.variables?.[Number(el.dataset.vindex)];
         v?.options?.splice(Number(el.dataset.oindex), 1);
         persist();
+      } else if (a === 'remix-toggle-enabled-only') {
+        state.remixEnabledOnly = !state.remixEnabledOnly;
+        renderBody();
+        return;
+      } else if (a === 'remix-select-all') {
+        const q = (state.remixSearch || '').trim().toLowerCase();
+        state.selectedImports = (state.importBlocks || [])
+          .map((blk: any, idx: number) => ({ blk, idx }))
+          .filter(({ blk }: any) => {
+            if (state.remixEnabledOnly && (!blk.enabled || blk.marker === 'category')) return false;
+            if (!q) return true;
+            return (blk.name || '').toLowerCase().includes(q) || (blk.content || '').toLowerCase().includes(q);
+          })
+          .map(({ idx }: any) => idx);
+        renderBody();
+        return;
+      } else if (a === 'remix-select-enabled') {
+        const q = (state.remixSearch || '').trim().toLowerCase();
+        state.selectedImports = (state.importBlocks || [])
+          .map((blk: any, idx: number) => ({ blk, idx }))
+          .filter(({ blk }: any) => {
+            if (!blk.enabled || blk.marker === 'category') return false;
+            if (!q) return true;
+            return (blk.name || '').toLowerCase().includes(q) || (blk.content || '').toLowerCase().includes(q);
+          })
+          .map(({ idx }: any) => idx);
+        renderBody();
+        return;
+      } else if (a === 'remix-select-none') {
+        state.selectedImports = [];
+        renderBody();
+        return;
+      } else if (a === 'remix-copy-all' || a === 'remix-copy-checked') {
+        const srcPreset = state.presets.find((p: any) => p.id === state.importPreset);
+        const title = srcPreset?.name || 'Source Preset';
+        const onlyIndices =
+          a === 'remix-copy-checked'
+            ? [...(state.selectedImports || [])].sort((x: number, y: number) => x - y)
+            : undefined;
+        if (onlyIndices && !onlyIndices.length) throw new Error('Check at least one source block first.');
+        const txt = formatBlocksAsText(title, state.importBlocks || [], {
+          ...(onlyIndices ? { onlyIndices } : {}),
+          parameters: srcPreset?.parameters,
+        });
+        await copyToClipboard(txt);
+        await request('toast', {
+          kind: 'success',
+          title: 'Preset Studio',
+          message: onlyIndices ? `Copied ${onlyIndices.length} checked block(s)` : `Copied all ${state.importBlocks.length} source blocks`,
+        });
+        return;
+      } else if (a === 'remix-export-txt') {
+        const srcPreset = state.presets.find((p: any) => p.id === state.importPreset);
+        const title = srcPreset?.name || 'Source Preset';
+        const scope = el.dataset.scope === 'checked' ? 'checked' : 'all';
+        const onlyIndices =
+          scope === 'checked' ? [...(state.selectedImports || [])].sort((x: number, y: number) => x - y) : undefined;
+        if (onlyIndices && !onlyIndices.length) throw new Error('Check at least one source block first.');
+        const txt = formatBlocksAsText(title, state.importBlocks || [], {
+          ...(onlyIndices ? { onlyIndices } : {}),
+          parameters: srcPreset?.parameters,
+        });
+        const safeName = title.replace(/[^a-z0-9-_]+/gi, '_') || 'preset';
+        exportTextFile(scope === 'checked' ? `${safeName}-selected.txt` : `${safeName}.txt`, txt);
+        await request('toast', { kind: 'success', title: 'Preset Studio', message: `Exported ${safeName}.txt` });
+        return;
       } else if (a === 'collapse-all-imports') state.expandedImports = [];
       else if (a === 'expand-all-imports') state.expandedImports = state.importBlocks.map((_: any, idx: number) => idx);
       else if (a === 'toggle-import-expand') {

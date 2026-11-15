@@ -774,3 +774,321 @@ export function exportJsonFile(filename: string, dataObj: unknown): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
+
+export function exportTextFile(filename: string, text: string): void {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+export function formatBlocksAsText(
+  title: string,
+  blocks: any[],
+  options: { parameters?: Record<string, unknown>; onlyIndices?: number[] } = {},
+): string {
+  const list = Array.isArray(blocks) ? blocks : [];
+  const selected = options.onlyIndices
+    ? options.onlyIndices.map((idx) => ({ blk: list[idx], idx })).filter((x) => Boolean(x.blk))
+    : list.map((blk, idx) => ({ blk, idx }));
+
+  const enabledCount = selected.filter(({ blk }) => blk.enabled && blk.marker !== 'category').length;
+  const lines: string[] = [
+    '============================================================',
+    `PRESET: ${title || 'Untitled Preset'}`,
+    `BLOCKS: ${selected.length} (${enabledCount} active)`,
+  ];
+
+  const paramEntries = Object.entries(options.parameters || {}).filter(([, v]) => v !== undefined && v !== '');
+  if (paramEntries.length) {
+    lines.push(`PARAMETERS: ${paramEntries.map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(', ')}`);
+  }
+  lines.push('============================================================', '');
+
+  for (const { blk, idx } of selected) {
+    const isCat = blk.marker === 'category';
+    const stateTag = isCat ? 'FOLDER' : blk.enabled ? 'ENABLED' : 'DISABLED';
+    const posTag = blk.position === 'in_history' ? `in_history@${blk.depth ?? 0}` : blk.position || 'pre_history';
+    const meta = [stateTag, `role:${blk.role || 'system'}`, `pos:${posTag}`, ...(blk.marker ? [`slot:${blk.marker}`] : [])].join(' | ');
+    lines.push(`[${idx + 1}] ${blk.name || 'Untitled'}  (${meta})`);
+    lines.push('------------------------------------------------------------');
+    if (String(blk.content || '').trim()) {
+      lines.push(String(blk.content));
+    } else if (blk.marker && !isCat) {
+      lines.push(`(Built-in slot: ${blk.marker})`);
+    } else if (isCat) {
+      lines.push('(Category divider)');
+    } else {
+      lines.push('(Empty block)');
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+const SCOPED_MACRO_PAIRS: Record<string, string> = {
+  if: 'if',
+  unless: 'unless',
+  switch: 'switch',
+  foreach: 'foreach',
+  '#foreach': 'foreach',
+  map: 'map',
+  '#map': 'map',
+  collect: 'collect',
+  filter: 'filter',
+  '#filter': 'filter',
+  some: 'some',
+  '#some': 'some',
+  every: 'every',
+  '#every': 'every',
+  let: 'let',
+  withvar: 'let',
+  scope: 'let',
+  '#escape': '#escape',
+};
+
+export function lintBlockMacros(text: string): {
+  chars: number;
+  words: number;
+  approxTokens: number;
+  warnings: string[];
+} {
+  const src = String(text || '');
+  const chars = src.length;
+  const words = src.trim() ? src.trim().split(/\s+/).length : 0;
+  const approxTokens = chars ? Math.max(1, Math.ceil(chars / 4)) : 0;
+  const warnings: string[] = [];
+
+  if (src.includes('{{') || src.includes('}}')) {
+    let depth = 0;
+    let strayClose = false;
+    let i = 0;
+    while (i < src.length) {
+      const pair = src.slice(i, i + 2);
+      if (pair === '{{') {
+        depth++;
+        i += 2;
+      } else if (pair === '}}') {
+        if (depth === 0) strayClose = true;
+        else depth--;
+        i += 2;
+      } else {
+        i++;
+      }
+    }
+    if (depth > 0) warnings.push(`${depth} unclosed "{{" macro brace(s)`);
+    if (strayClose) warnings.push('Unexpected "}}" without matching "{{"');
+
+    const stack: string[] = [];
+    const tagRe = /\{\{\s*(\/?#?[a-zA-Z]+)(?:\s*::|\s+|\s*\}\})/g;
+    let m: RegExpExecArray | null;
+    while ((m = tagRe.exec(src)) !== null) {
+      const rawTag = m[1].toLowerCase();
+      if (rawTag.startsWith('/')) {
+        const closeName = rawTag.slice(1);
+        const canonical = closeName === 'escape' ? '#escape' : closeName;
+        if (!Object.values(SCOPED_MACRO_PAIRS).includes(canonical)) continue;
+        const lastIdx = stack.lastIndexOf(canonical);
+        if (lastIdx === -1) {
+          warnings.push(`Unexpected {{/${closeName}}} without opening tag`);
+        } else {
+          stack.splice(lastIdx);
+        }
+      } else if (rawTag in SCOPED_MACRO_PAIRS) {
+        stack.push(SCOPED_MACRO_PAIRS[rawTag]);
+      }
+    }
+    for (const unclosed of stack) {
+      warnings.push(`Unclosed {{${unclosed}}} block (missing {{/${unclosed === '#escape' ? 'escape' : unclosed}}})`);
+    }
+  }
+
+  return { chars, words, approxTokens, warnings: [...new Set(warnings)].slice(0, 4) };
+}
+
+export interface PresetBlueprint {
+  id: string;
+  badge: string;
+  title: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  blocks: Array<Record<string, unknown>>;
+}
+
+export const PRESET_BLUEPRINTS: PresetBlueprint[] = [
+  {
+    id: 'blank',
+    badge: 'Minimal',
+    title: 'Blank Minimal',
+    description: 'Clean 3-block starter (Main Prompt, Char Description, Chat History).',
+    parameters: {},
+    blocks: [
+      { name: 'Main Prompt', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'main_prompt', isLocked: false },
+      { name: 'Char Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: true },
+      { name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: true },
+    ],
+  },
+  {
+    id: 'roleplay',
+    badge: 'Recommended',
+    title: 'Standard Roleplay Loom',
+    description: 'Complete RP order with Style, Lorebook Before/After, Character & Persona slots, Examples, and Continuity.',
+    parameters: { temperature: 0.85, top_p: 0.95, max_tokens: 1200 },
+    blocks: [
+      {
+        name: 'System & Narrative Contract',
+        content: 'You are {{char}}, interacting with {{user}}.\nStay grounded in character voice, sensory detail, and established continuity. Never speak or act for {{user}}.',
+        role: 'system',
+        enabled: true,
+        position: 'pre_history',
+        depth: 0,
+        marker: 'main_prompt',
+        color: '#a795e8',
+      },
+      {
+        name: 'Loom Narrative Style',
+        content: '{{if::{{loomStyle}}}}\n[Style Guidance]\n{{loomStyle}}\n{{/if}}',
+        role: 'system',
+        enabled: true,
+        position: 'pre_history',
+        depth: 0,
+        marker: null,
+        color: '#64b5f6',
+      },
+      { name: 'World Info (Before)', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'world_info_before', isLocked: true },
+      { name: 'Character Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: true },
+      { name: 'Character Personality', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_personality', isLocked: true },
+      { name: 'Scenario', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'scenario', isLocked: true },
+      { name: 'User Persona', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'persona_description', isLocked: true },
+      { name: 'Example Messages', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'dialogue_examples', isLocked: true },
+      { name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: true },
+      { name: 'World Info (After)', content: '', role: 'system', enabled: true, position: 'post_history', depth: 0, marker: 'world_info_after', isLocked: true },
+      {
+        name: 'Post-History Reminder',
+        content: '[Respond strictly as {{char}} in the established tone and perspective.]',
+        role: 'system',
+        enabled: true,
+        position: 'post_history',
+        depth: 0,
+        marker: 'jailbreak',
+        color: '#81c784',
+      },
+    ],
+  },
+  {
+    id: 'council_copilot',
+    badge: 'Lumiverse Native',
+    title: 'Council, Memory & Sovereign Hand',
+    description: 'Pre-wired with conditional blocks for {{lumiaCouncilDeliberation}}, {{loomSovHand}}, {{memories}}, {{databank}}, and {{loomSummary}}.',
+    parameters: { temperature: 0.8, top_p: 0.95, max_tokens: 1500 },
+    blocks: [
+      {
+        name: 'Core Roleplay Directive',
+        content: 'Portray {{char}} naturally alongside {{user}}. Respect all retrieved lore, memories, and scene constraints.',
+        role: 'system',
+        enabled: true,
+        position: 'pre_history',
+        depth: 0,
+        marker: 'main_prompt',
+        color: '#a795e8',
+      },
+      { name: 'World Info (Before)', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'world_info_before', isLocked: true },
+      { name: 'Character Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: true },
+      { name: 'Scenario & Persona', content: '{{if::{{scenario}}}}Scenario: {{scenario}}{{newline}}{{/if}}{{if::{{persona}}}}User ({{user}}): {{persona}}{{/if}}', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: null },
+      {
+        name: 'Summary & Long-Term Memory',
+        content: '{{if::{{loomSummary}}}}[Story Summary]\n{{loomSummary}}\n\n{{/if}}{{if::{{memoriesActive}}}}\n{{memories}}\n{{/if}}{{if::{{databankActive}}}}\n[Reference Material]\n{{databankRaw}}\n{{/if}}',
+        role: 'system',
+        enabled: true,
+        position: 'pre_history',
+        depth: 0,
+        marker: null,
+        color: '#ffb74d',
+      },
+      { name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: true },
+      {
+        name: 'Council Deliberation',
+        content: '{{if::{{lumiaCouncilModeActive}}}}\n{{lumiaCouncilDeliberation}}\n{{/if}}',
+        role: 'system',
+        enabled: true,
+        position: 'post_history',
+        depth: 0,
+        marker: null,
+        color: '#4db6ac',
+      },
+      {
+        name: 'Sovereign Hand Co-Pilot',
+        content: '{{if::{{loomSovHandActive}}}}\n{{loomSovHand}}\n{{/if}}',
+        role: 'system',
+        enabled: true,
+        position: 'post_history',
+        depth: 0,
+        marker: null,
+        color: '#f06292',
+      },
+    ],
+  },
+  {
+    id: 'reasoning',
+    badge: 'Thinking Models',
+    title: 'Reasoning / CoT Ready',
+    description: 'Lean instructions with generous 4096 max tokens so reasoning models never truncate mid-reply.',
+    parameters: { temperature: 0.7, max_tokens: 4096 },
+    blocks: [
+      {
+        name: 'Concise System Framing',
+        content: 'You are {{char}}.\nWrite vivid, character-faithful prose for {{user}}. Avoid repetition and follow scene logic closely.',
+        role: 'system',
+        enabled: true,
+        position: 'pre_history',
+        depth: 0,
+        marker: 'main_prompt',
+        color: '#64b5f6',
+      },
+      { name: 'Character Description', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'char_description', isLocked: true },
+      { name: 'User Persona', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'persona_description', isLocked: true },
+      { name: 'Chat History', content: '', role: 'system', enabled: true, position: 'pre_history', depth: 0, marker: 'chat_history', isLocked: true },
+      {
+        name: 'Reasoning Guide (Optional)',
+        content: '{{reasoningPrefix}}\nConsider {{char}}\'s immediate motivation, subtext, and physical continuity before replying.\n{{reasoningSuffix}}',
+        role: 'system',
+        enabled: false,
+        position: 'post_history',
+        depth: 0,
+        marker: null,
+      },
+    ],
+  },
+];
+
+export function createDraftFromBlueprint(blueprintId: string) {
+  const bp = PRESET_BLUEPRINTS.find((x) => x.id === blueprintId) || PRESET_BLUEPRINTS[0];
+  return {
+    name: bp.id === 'blank' ? 'New preset' : bp.title,
+    provider: 'loom',
+    engine: 'classic',
+    parameters: structuredClone(bp.parameters || {}),
+    prompts: {},
+    metadata: { promptVariables: {} },
+    prompt_order: bp.blocks.map((blk) => ({
+      id: uid(),
+      name: String(blk.name || 'Block'),
+      content: String(blk.content || ''),
+      role: String(blk.role || 'system'),
+      enabled: blk.enabled !== false,
+      position: String(blk.position || 'pre_history'),
+      depth: Number(blk.depth) || 0,
+      marker: blk.marker ? String(blk.marker) : null,
+      isLocked: Boolean(blk.isLocked),
+      color: blk.color ? String(blk.color) : null,
+      injectionTrigger: [],
+      group: null,
+    })),
+  };
+}
