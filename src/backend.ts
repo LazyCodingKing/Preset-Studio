@@ -265,6 +265,224 @@ async function translatePackedChunk(
   }
 }
 
+function resolveStandalonePromptVarRendered(v: any, rawSelection: any): { rendered: string; selectedKeys: Set<string> } {
+  const active = rawSelection !== undefined && rawSelection !== '' ? rawSelection : v.defaultValue;
+  const selectedKeys = new Set<string>();
+  const type = v?.type === 'boolean' ? 'switch' : v?.type;
+
+  if (type === 'switch') {
+    const isOn = active === 1 || active === '1' || active === true || active === 'true';
+    if (isOn) selectedKeys.add('1');
+    return { rendered: isOn ? '1' : '0', selectedKeys };
+  }
+  if (type === 'select') {
+    const opts = Array.isArray(v.options) ? v.options : [];
+    const key = String(active ?? '');
+    const found = opts.find((o: any) => o.id === key || o.label === key) || opts[0];
+    if (found) {
+      selectedKeys.add(String(found.id));
+      return { rendered: String(found.value ?? ''), selectedKeys };
+    }
+    return { rendered: key, selectedKeys };
+  }
+  if (type === 'multiselect') {
+    const opts = Array.isArray(v.options) ? v.options : [];
+    const chosenList = Array.isArray(active)
+      ? active.map(String)
+      : typeof active === 'string' && active.trim()
+        ? active.split(',').map((s) => s.trim())
+        : [];
+    for (const k of chosenList) selectedKeys.add(k);
+    const pieces = opts
+      .filter((o: any) => selectedKeys.has(String(o.id)))
+      .map((o: any) => String(o.value ?? ''))
+      .filter(Boolean);
+    const sep = typeof v.separator === 'string' ? v.separator : '\n\n';
+    return { rendered: pieces.join(sep), selectedKeys };
+  }
+  return { rendered: String(active ?? ''), selectedKeys };
+}
+
+function applyStandaloneBlockPromptVars(content: string, block: any, savedBlockVars: Record<string, any>): string {
+  const vars: any[] = Array.isArray(block?.variables) ? block.variables : [];
+  if (!vars.length || !content.includes('{{')) return content;
+
+  const varMap = new Map<string, { rendered: string; defaultRendered: string; selectedKeys: Set<string> }>();
+  for (const v of vars) {
+    if (!v?.name) continue;
+    const { rendered, selectedKeys } = resolveStandalonePromptVarRendered(v, savedBlockVars[v.name]);
+    const { rendered: defaultRendered } = resolveStandalonePromptVarRendered(v, undefined);
+    varMap.set(v.name, { rendered, defaultRendered, selectedKeys });
+  }
+
+  let text = content;
+  text = text.replace(/\{\{\s*(?:var|promptVar|presetVar)::([a-zA-Z0-9_.-]+)::ison::([^}]*)\}\}/gi, (_m, name, keysRaw) => {
+    const entry = varMap.get(name);
+    if (!entry) return 'false';
+    const keys = String(keysRaw || '')
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+    if (!keys.length) return 'true';
+    return keys.every((k) => entry.selectedKeys.has(k)) ? 'true' : 'false';
+  });
+  text = text.replace(/\{\{\s*(?:varDefault|promptVarDefault|presetVarDefault)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi, (_m, name) => {
+    return varMap.get(name)?.defaultRendered ?? '';
+  });
+  text = text.replace(/\{\{\s*(?:hasVar|hasPromptVar|hasPresetVar)(?:::|\s+)([a-zA-Z0-9_.-]+)\s*\}\}/gi, (_m, name) => {
+    return varMap.has(name) ? 'true' : 'false';
+  });
+  text = text.replace(/\{\{\s*(?:(?:var|promptVar|presetVar|getvar)(?:::|\s+)([a-zA-Z0-9_.-]+)|\.([a-zA-Z0-9_]+))\s*\}\}/gi, (full, n1, n2) => {
+    const name = n1 || n2;
+    return varMap.has(name) ? varMap.get(name)!.rendered : full;
+  });
+  return text;
+}
+
+function pushStandaloneMessage(
+  messages: any[],
+  breakdown: any[],
+  entry: { role: string; content: string; name: string; type: string; blockId?: string },
+) {
+  const { role, content, name, type, blockId } = entry;
+  if (role === 'user_append' || role === 'assistant_append') {
+    const targetRole = role === 'user_append' ? 'user' : 'assistant';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === targetRole) {
+        messages[i].content = `${messages[i].content}\n\n${content}`;
+        breakdown.push({ type: 'append', name, role, content, ...(blockId ? { blockId } : {}) });
+        return;
+      }
+    }
+    messages.push({ role: targetRole, content });
+    breakdown.push({ type, name, role: targetRole, content, ...(blockId ? { blockId } : {}) });
+    return;
+  }
+  const safeRole = ['system', 'user', 'assistant'].includes(role) ? role : 'system';
+  messages.push({ role: safeRole, content });
+  breakdown.push({ type, name, role: safeRole, content, ...(blockId ? { blockId } : {}) });
+}
+
+async function assembleStandalonePreset(
+  preset: any,
+  generationType: string,
+  extraTurns: Array<{ role: string; content: string }>,
+  userId: string | undefined,
+  signal?: AbortSignal,
+) {
+  const blocks = Array.isArray(preset?.prompt_order) ? preset.prompt_order : [];
+  const promptVarsAll = preset?.metadata?.promptVariables || {};
+  const macroOpts = { commit: false as const, ...(userId ? { userId } : {}) };
+
+  const activeBlocks = blocks.filter((blk: any) => {
+    if (!blk || !blk.enabled || blk.marker === 'category') return false;
+    if (Array.isArray(blk.injectionTrigger) && blk.injectionTrigger.length > 0 && !blk.injectionTrigger.includes(generationType)) {
+      return false;
+    }
+    return true;
+  });
+
+  const resolvedContentByBlockId = new Map<string, string>();
+  for (const blk of activeBlocks) {
+    signal?.throwIfAborted?.();
+    const raw = typeof blk.content === 'string' ? blk.content : '';
+    if (!raw.trim()) {
+      resolvedContentByBlockId.set(String(blk.id), '');
+      continue;
+    }
+    const withPromptVars = applyStandaloneBlockPromptVars(raw, blk, promptVarsAll[blk.id] || {});
+    let finalText = withPromptVars;
+    if (finalText.includes('{{')) {
+      try {
+        const res = await spindle.macros.resolve(finalText, macroOpts);
+        if (typeof res?.text === 'string') finalText = res.text;
+      } catch (_) {}
+    }
+    resolvedContentByBlockId.set(String(blk.id), finalText.trim());
+  }
+
+  const turnEntries: Array<{ role: string; content: string; name: string; type: string; blockId?: string }> = extraTurns.map(
+    (t, idx) => ({
+      role: ['system', 'user', 'assistant'].includes(t.role) ? t.role : 'user',
+      content: t.content.trim(),
+      name: `Test Turn #${idx + 1} (${t.role})`,
+      type: 'chat_history',
+    }),
+  );
+
+  const inHistoryBlocks = activeBlocks
+    .filter((b: any) => b.position === 'in_history' && resolvedContentByBlockId.get(String(b.id)))
+    .sort((a: any, b: any) => (Number(b.depth) || 0) - (Number(a.depth) || 0));
+
+  for (const ib of inHistoryBlocks) {
+    const text = resolvedContentByBlockId.get(String(ib.id)) || '';
+    if (!text) continue;
+    const depth = Math.max(0, Math.floor(Number(ib.depth) || 0));
+    const idx = Math.max(0, turnEntries.length - depth);
+    turnEntries.splice(idx, 0, {
+      role: ib.role || 'system',
+      content: text,
+      name: ib.name || 'In-History Block',
+      type: 'block',
+      blockId: String(ib.id),
+    });
+  }
+
+  const messages: any[] = [];
+  const breakdown: any[] = [];
+  let turnsInserted = false;
+  const postHistoryQueue: any[] = [];
+
+  for (const blk of activeBlocks) {
+    if (blk.position === 'in_history') continue;
+    if (blk.marker === 'chat_history') {
+      for (const te of turnEntries) pushStandaloneMessage(messages, breakdown, te);
+      turnsInserted = true;
+      const customText = resolvedContentByBlockId.get(String(blk.id)) || '';
+      if (customText) {
+        pushStandaloneMessage(messages, breakdown, {
+          role: blk.role || 'system',
+          content: customText,
+          name: blk.name || 'Chat History',
+          type: 'block',
+          blockId: String(blk.id),
+        });
+      }
+      continue;
+    }
+    if (blk.position === 'post_history') {
+      postHistoryQueue.push(blk);
+      continue;
+    }
+    const text = resolvedContentByBlockId.get(String(blk.id)) || '';
+    if (!text) continue;
+    pushStandaloneMessage(messages, breakdown, {
+      role: blk.role || 'system',
+      content: text,
+      name: blk.name || blk.marker || 'Block',
+      type: 'block',
+      blockId: String(blk.id),
+    });
+  }
+
+  if (!turnsInserted) {
+    for (const te of turnEntries) pushStandaloneMessage(messages, breakdown, te);
+  }
+  for (const blk of postHistoryQueue) {
+    const text = resolvedContentByBlockId.get(String(blk.id)) || '';
+    if (!text) continue;
+    pushStandaloneMessage(messages, breakdown, {
+      role: blk.role || 'system',
+      content: text,
+      name: blk.name || blk.marker || 'Block',
+      type: 'block',
+      blockId: String(blk.id),
+    });
+  }
+
+  return { messages, breakdown, source: 'preset-standalone' };
+}
+
 async function injectAuthorsNote(
   messages: any[],
   breakdown: any[],
@@ -848,7 +1066,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           throw new Error('Enable the "generation" permission to preview or generate test replies.');
         }
         const isCustomSource = msg.promptSource === 'custom';
-        if (!isCustomSource && !msg.chatId) throw new Error('Select a chat for context.');
+        const hasChatId = Boolean(typeof msg.chatId === 'string' && msg.chatId.trim());
         const controller = new AbortController();
         const key = (userId || 'owner') + ':' + id;
         runs.set(key, controller);
@@ -856,10 +1074,20 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           let messages: any[] = [];
           let breakdown: any[] = [];
           let assembledData: any = {};
+          let assembledSource = isCustomSource ? 'custom' : hasChatId ? 'draft' : 'preset-standalone';
+
+          const extraTurns =
+            Array.isArray(msg.testTurns) && msg.testTurns.length
+              ? msg.testTurns.filter((t: any) => t && typeof t.content === 'string' && t.content.trim())
+              : msg.customMessage?.trim()
+                ? [{ role: 'user', content: msg.customMessage.trim() }]
+                : [];
+
+          let turnsHandledInAssembly = false;
 
           if (isCustomSource) {
             const customText = typeof msg.customPrompt === 'string' ? msg.customPrompt : '';
-            if (msg.chatId) {
+            if (hasChatId) {
               const customBlocks = [
                 {
                   id: 'test_custom_prompt',
@@ -902,17 +1130,26 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
               breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
             } else {
               if (customText.trim()) {
-                messages.push({ role: 'system', content: customText.trim() });
-                breakdown.push({
-                  type: 'block',
-                  name: 'Custom Prompt',
-                  role: 'system',
-                  content: customText.trim(),
-                });
+                let resolvedCustom = customText.trim();
+                if (resolvedCustom.includes('{{')) {
+                  try {
+                    const res = await spindle.macros.resolve(resolvedCustom, { commit: false, ...uOpt });
+                    if (typeof res?.text === 'string') resolvedCustom = res.text.trim();
+                  } catch (_) {}
+                }
+                if (resolvedCustom) {
+                  messages.push({ role: 'system', content: resolvedCustom });
+                  breakdown.push({
+                    type: 'block',
+                    name: 'Custom Prompt',
+                    role: 'system',
+                    content: resolvedCustom,
+                  });
+                }
               }
               assembledData = { messages, breakdown, source: 'custom' };
             }
-          } else {
+          } else if (hasChatId) {
             const assembled = await (spindle.assemble as any)(
               {
                 chatId: msg.chatId,
@@ -927,33 +1164,48 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
             assembledData = assembled;
             messages = [...assembled.messages];
             breakdown = Array.isArray(assembled.breakdown) ? [...assembled.breakdown] : [];
+          } else {
+            const standalone = await assembleStandalonePreset(
+              msg.preset,
+              msg.generationType || 'normal',
+              extraTurns,
+              userId,
+              controller.signal,
+            );
+            assembledData = standalone;
+            messages = standalone.messages;
+            breakdown = standalone.breakdown;
+            turnsHandledInAssembly = true;
           }
 
-          const extraTurns =
-            Array.isArray(msg.testTurns) && msg.testTurns.length
-              ? msg.testTurns.filter((t: any) => t && typeof t.content === 'string' && t.content.trim())
-              : msg.customMessage?.trim()
-                ? [{ role: 'user', content: msg.customMessage.trim() }]
-                : [];
-          for (let ti = 0; ti < extraTurns.length; ti++) {
-            const turn = extraTurns[ti];
-            const r = ['system', 'user', 'assistant'].includes(turn.role) ? turn.role : 'user';
-            messages.push({ role: r, content: turn.content.trim() });
-            breakdown.push({
-              type: 'block',
-              name: `Test Turn #${ti + 1} (${r})`,
-              role: r,
-              content: turn.content.trim(),
-            });
+          if (!turnsHandledInAssembly) {
+            for (let ti = 0; ti < extraTurns.length; ti++) {
+              const turn = extraTurns[ti];
+              const r = ['system', 'user', 'assistant'].includes(turn.role) ? turn.role : 'user';
+              let turnContent = turn.content.trim();
+              if (!hasChatId && turnContent.includes('{{')) {
+                try {
+                  const res = await spindle.macros.resolve(turnContent, { commit: false, ...uOpt });
+                  if (typeof res?.text === 'string') turnContent = res.text.trim();
+                } catch (_) {}
+              }
+              messages.push({ role: r, content: turnContent });
+              breakdown.push({
+                type: 'block',
+                name: `Test Turn #${ti + 1} (${r})`,
+                role: r,
+                content: turnContent,
+              });
+            }
           }
 
-          await injectAuthorsNote(messages, breakdown, msg.authorsNote, msg.chatId, userId);
+          await injectAuthorsNote(messages, breakdown, msg.authorsNote, hasChatId ? msg.chatId : undefined, userId);
 
           reply(
             userId,
             id,
             'assembled',
-            { data: { ...assembledData, messages, breakdown, source: isCustomSource ? 'custom' : 'draft' } },
+            { data: { ...assembledData, messages, breakdown, source: assembledSource } },
             frontendSessionId,
           );
 

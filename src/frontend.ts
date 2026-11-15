@@ -111,6 +111,7 @@ export function setup(ctx: SpindleFrontendContext) {
     historyPast: [],
     historyFuture: [],
     chatId: '',
+    noContextChat: false,
     connectionId: '',
     generationType: 'normal',
     custom: '',
@@ -280,13 +281,16 @@ export function setup(ctx: SpindleFrontendContext) {
       return;
     }
     if (msg.type === 'host-sync') {
-      if (msg.chatId) state.chatId = msg.chatId;
+      if (msg.chatId && !state.noContextChat) state.chatId = msg.chatId;
       const silent = msg.reason === 'preset_changed' && Date.now() - lastLocalSaveAt < 2000;
       refresh(false, silent).catch(() => {});
       return;
     }
     if (msg.type === 'command') {
-      if (msg.chatId) state.chatId = msg.chatId;
+      if (msg.chatId) {
+        state.chatId = msg.chatId;
+        state.noContextChat = false;
+      }
       if (msg.commandId === 'open-studio-full') setFull(true);
       else if (msg.commandId === 'test-studio-chat') {
         if (!state.draft) state.draft = freshDraft();
@@ -463,7 +467,23 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }
     if (!root.contains(document.activeElement)) return;
-    const tag = (document.activeElement as HTMLElement)?.tagName;
+    const activeEl = document.activeElement as HTMLElement | null;
+    const tag = activeEl?.tagName;
+    if (
+      state.view === 'test' &&
+      (e.ctrlKey || e.metaKey) &&
+      e.key === 'Enter' &&
+      tag === 'TEXTAREA' &&
+      (activeEl?.dataset?.state === 'custom' ||
+        activeEl?.dataset?.state === 'testCustomPrompt' ||
+        activeEl?.dataset?.turnField === 'content')
+    ) {
+      if (!state.busy) {
+        e.preventDefault();
+        root.querySelector<HTMLButtonElement>('button[data-action="run"]')?.click();
+      }
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
       e.preventDefault();
       e.shiftKey ? redo() : undo();
@@ -992,12 +1012,17 @@ export function setup(ctx: SpindleFrontendContext) {
             ? state.viewingRunIndex
             : runs.length - 1;
         const viewed = !state.busy && idx >= 0 ? runs[idx] : null;
-        const textToRender = state.busy
-          ? state.displayResult || state.result
-          : viewed
-            ? viewed.displayContent || viewed.content || ''
-            : state.displayResult || state.result;
-        renderChatPreviewInto(bubbleEl, textToRender, state.testReplyViewMode === 'raw');
+        if (state.busy && !state.result) {
+          bubbleEl.innerHTML =
+            '<div class="ps-empty-state"><div style="font-size:1.35rem;margin-bottom:6px">⏳</div><strong>Assembling prompt &amp; waiting for first token…</strong><p class="ps-muted" style="margin-top:4px">Streaming will appear here live. Click <strong>■ Stop</strong> anytime to abort.</p></div>';
+        } else {
+          const textToRender = state.busy
+            ? state.displayResult || state.result
+            : viewed
+              ? viewed.displayContent || viewed.content || ''
+              : state.displayResult || state.result;
+          renderChatPreviewInto(bubbleEl, textToRender, state.testReplyViewMode === 'raw');
+        }
       }
     }
 
@@ -1057,7 +1082,9 @@ export function setup(ctx: SpindleFrontendContext) {
             state.compareB = state.runs.length - 1;
           }
         }
-        if (!state.chatId || !state.chats.some((c: any) => c.id === state.chatId)) {
+        if (state.noContextChat) {
+          state.chatId = '';
+        } else if (!state.chatId || !state.chats.some((c: any) => c.id === state.chatId)) {
           state.chatId = data.active?.id || state.chats[0]?.id || '';
         }
         if (state.draft) {
@@ -1252,7 +1279,14 @@ export function setup(ctx: SpindleFrontendContext) {
     const el = e.target as HTMLInputElement | HTMLSelectElement;
     if (el.tagName === 'SELECT' && el.dataset.state) {
       const key = el.dataset.state;
-      state[key] = el.value;
+      if (key === 'compareA' || key === 'compareB') {
+        state[key] = Number(el.value) || 0;
+      } else {
+        state[key] = el.value;
+      }
+      if (key === 'chatId') {
+        state.noContextChat = !el.value;
+      }
       if (['compareA', 'compareB', 'connectionId', 'chatId', 'generationType'].includes(key)) {
         if (key === 'connectionId') scheduleTokenCount();
         renderBody();
@@ -1632,11 +1666,56 @@ export function setup(ctx: SpindleFrontendContext) {
         state.notice = `Restored preset draft to Run #${idx + 1} (${targetRun.time}).`;
         render();
         return;
+      } else if (a === 'use-standalone-chat') {
+        state.chatId = '';
+        state.noContextChat = true;
+        renderBody();
+        return;
+      } else if (a === 'swap-compare-runs') {
+        const prevA = Number(state.compareA) || 0;
+        state.compareA = Number(state.compareB) || 0;
+        state.compareB = prevA;
+        renderBody();
+        return;
+      } else if (a === 'toggle-xray-expand-all') {
+        const items = Array.from(shellBodyEl.querySelectorAll<HTMLDetailsElement>('#ps-xray-list-slot details'));
+        const anyClosed = items.some((det) => !det.open);
+        for (const det of items) det.open = anyClosed;
+        return;
+      } else if (a === 'copy-xray-entry') {
+        const idx = Number(el.dataset.xrayIdx);
+        const item = state.assembled?.breakdown?.[idx];
+        if (item) {
+          await copyToClipboard(item.content || '');
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied “${item.name || item.type}”` });
+        }
+        return;
+      } else if (a === 'copy-run-prompts') {
+        const idx = Number(el.dataset.runIdx);
+        const targetRun = state.runs?.[idx];
+        const summary = targetRun?.promptSummary;
+        let payloadText = '';
+        if (summary?.messages?.length) {
+          payloadText = summary.messages
+            .map((m: any) => `[${String(m.role || 'system').toUpperCase()}]\n${m.content || ''}`)
+            .join('\n\n---\n\n');
+        } else if (summary?.customPrompt) {
+          payloadText = summary.customPrompt;
+        } else if (targetRun?.userPromptPreview) {
+          payloadText = targetRun.userPromptPreview;
+        }
+        if (payloadText) {
+          await copyToClipboard(payloadText);
+          await request('toast', { kind: 'success', title: 'Preset Studio', message: `Copied prompts used in Run #${idx + 1}` });
+        }
+        return;
       } else if (a === 'delete-run-item') {
         const idx = Number(el.dataset.runIdx);
         if (idx >= 0 && idx < state.runs.length) {
           state.runs.splice(idx, 1);
           state.viewingRunIndex = Math.max(-1, Math.min(idx, state.runs.length - 1));
+          state.compareA = Math.max(0, Math.min(Number(state.compareA) || 0, Math.max(0, state.runs.length - 1)));
+          state.compareB = Math.max(0, Math.min(Number(state.compareB) || 0, Math.max(0, state.runs.length - 1)));
           const curRun = state.viewingRunIndex >= 0 ? state.runs[state.viewingRunIndex] : null;
           state.result = curRun?.content || '';
           state.displayResult = curRun?.displayContent || curRun?.content || '';
@@ -2078,7 +2157,7 @@ export function setup(ctx: SpindleFrontendContext) {
         if (state.activeRun) await request('cancel', { runId: state.activeRun });
         state.notice = 'Generation stopped.';
       } else if (a === 'dry') {
-        if (!state.chatId) throw new Error('Choose a chat first.');
+        if (!state.chatId) throw new Error('Saved-Preset Dry Run requires a Context Chat. Use "Inspect X-Ray" for standalone presets.');
         state.busy = true;
         render();
         const result = await request('dry', {
@@ -2093,10 +2172,29 @@ export function setup(ctx: SpindleFrontendContext) {
         state.busy = false;
       } else if (a === 'preview' || a === 'run') {
         const isCustomSource = state.testPromptSource === 'custom';
-        if (!isCustomSource && !state.chatId) throw new Error('Choose a Context Chat on the left first.');
-        if (isCustomSource && !state.testCustomPrompt.trim() && !state.custom.trim()) {
-          throw new Error('Type your custom prompt text or a custom test turn first.');
+        const stagedTurns =
+          state.testTurnMode === 'multi'
+            ? state.testTurns
+            : state.custom.trim()
+              ? [{ role: 'user', content: state.custom.trim() }]
+              : [];
+        const hasTurnText = stagedTurns.some((t: any) => t && typeof t.content === 'string' && t.content.trim());
+        const hasAuthorsNote = Boolean(state.authorsNote?.enabled && state.authorsNote?.content?.trim());
+
+        if (isCustomSource && !state.chatId && !state.testCustomPrompt.trim() && !hasTurnText && !hasAuthorsNote) {
+          throw new Error('Type a custom prompt, a test message, or select a Context Chat first.');
         }
+        if (!isCustomSource && !state.chatId) {
+          const hasBlockText = (d?.prompt_order || []).some(
+            (blk: any) => blk.enabled && blk.marker !== 'category' && String(blk.content || '').trim(),
+          );
+          if (!hasBlockText && !hasTurnText && !hasAuthorsNote) {
+            throw new Error(
+              'Enable at least one block with text, enter a Test User Message, or select a Context Chat to generate.',
+            );
+          }
+        }
+
         state.busy = true;
         state.result = '';
         state.displayResult = '';
@@ -2106,13 +2204,9 @@ export function setup(ctx: SpindleFrontendContext) {
         state.testOutputTab = a === 'preview' ? 'xray' : 'reply';
         const snapshot = structuredClone(d);
         const requestId = uid();
+        const runStartedAt = Date.now();
+        let runAssembled: any = null;
         state.activeRun = requestId;
-        const stagedTurns =
-          state.testTurnMode === 'multi'
-            ? state.testTurns
-            : state.custom.trim()
-              ? [{ role: 'user', content: state.custom.trim() }]
-              : [];
         render();
         await new Promise((resolve, reject) => {
           let inactivityTimer: any = null;
@@ -2136,6 +2230,7 @@ export function setup(ctx: SpindleFrontendContext) {
               reject(err);
             },
             onAssembled: (assembledPayload: any) => {
+              runAssembled = assembledPayload;
               state.assembled = assembledPayload;
               renderBody();
             },
@@ -2146,6 +2241,8 @@ export function setup(ctx: SpindleFrontendContext) {
             },
             onToken: (token: string) => {
               state.result += token;
+              const counterEl = shellBodyEl.querySelector('[data-stream-counter]');
+              if (counterEl) counterEl.textContent = `${state.result.length.toLocaleString()} chars`;
               const bubble = shellBodyEl.querySelector<HTMLElement>('#ps-chat-reply-bubble');
               if (bubble) {
                 renderChatPreviewInto(bubble, state.result, state.testReplyViewMode === 'raw');
@@ -2172,21 +2269,54 @@ export function setup(ctx: SpindleFrontendContext) {
             if (result?.reasoning && !state.reasoning) state.reasoning = result.reasoning;
             state.result = result?.content || state.result;
             state.displayResult = result?.displayContent || state.result;
-            const activeBlocksCount = (snapshot?.prompt_order || []).filter((blk: any) => blk.enabled && blk.marker !== 'category').length;
+
+            const activeBlocks = (snapshot?.prompt_order || []).filter((blk: any) => blk.enabled && blk.marker !== 'category');
+            const activeBlocksCount = activeBlocks.length;
             const userPromptPreview =
               state.testTurnMode === 'multi' && state.testTurns.length
                 ? state.testTurns[state.testTurns.length - 1]?.content || ''
-                : state.custom.trim() || (state.testPromptSource === 'custom' ? state.testCustomPrompt.trim() : '');
+                : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : '');
+            const connObj = state.connections.find((c: any) => c.id === state.connectionId);
+            const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
+            const promptMessages = Array.isArray(runAssembled?.messages)
+              ? runAssembled.messages.slice(-40).map((m: any) => ({
+                  role: String(m.role || 'system'),
+                  ...(m.name ? { name: String(m.name) } : {}),
+                  content:
+                    typeof m.content === 'string'
+                      ? m.content.slice(0, 4000)
+                      : JSON.stringify(m.content || '').slice(0, 4000),
+                }))
+              : [];
+
+            const promptSummary = {
+              promptSource: isCustomSource ? 'custom' : 'preset',
+              presetName: isCustomSource ? 'Custom Prompt' : snapshot?.name || 'Draft',
+              chatName: state.chatId ? chatObj?.name || state.chatId : 'Standalone (No Chat)',
+              standalone: !state.chatId,
+              connection: connObj?.name || 'Active connection',
+              model: connObj?.model || '',
+              temperature: snapshot?.parameters?.temperature,
+              generationType: state.generationType || 'normal',
+              activeBlocksCount,
+              activeBlockNames: activeBlocks.map((blk: any) => blk.name || blk.marker || 'Untitled').slice(0, 30),
+              customPrompt: isCustomSource ? String(state.testCustomPrompt || '').slice(0, 4000) : '',
+              userInput: userPromptPreview.slice(0, 500),
+              durationMs: Date.now() - runStartedAt,
+              messages: promptMessages,
+            };
+
             state.runs.push({
               time: new Date().toLocaleTimeString(),
-              connection: state.connections.find((c: any) => c.id === state.connectionId)?.name || 'Active connection',
-              presetName: snapshot?.name || 'Draft',
+              connection: promptSummary.connection,
+              presetName: promptSummary.presetName,
               activeBlocksCount,
               userPromptPreview: userPromptPreview.slice(0, 120),
               content: state.result,
               displayContent: state.displayResult,
               reasoning: state.reasoning,
               usage: state.lastUsage,
+              promptSummary,
               snapshot,
             });
             if (state.runs.length > 15) state.runs.shift();

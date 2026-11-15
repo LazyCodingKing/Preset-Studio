@@ -624,29 +624,6 @@ export function renderRemixAndTranslateTab(state: any): string {
 
     ${subTab === 'mixer' ? `
       <div class="ps-panel">
-        <div class="ps-between">
-          <div>
-            <h3>📦 Saved Block Templates (${state.templates.length})</h3>
-            <p class="ps-muted">Reusable prompt modules you can drop into any preset with one click.</p>
-          </div>
-        </div>
-        <div class="ps-list" style="margin-top:10px">
-          ${state.templates.map((t: any, i: number) => `
-            <div class="ps-block">
-              <span style="flex:1">
-                <strong>${esc(t.name)}</strong>
-                <span class="ps-pill ps-pill-accent">${t.entries.length} block${t.entries.length === 1 ? '' : 's'}</span>
-              </span>
-              <button type="button" class="ps-btn-sm" data-action="copy-template-text" data-index="${i}">📋 Copy</button>
-              <button type="button" class="ps-btn-sm ps-primary" data-action="insert-template" data-index="${i}">＋ Insert into Draft</button>
-              <button type="button" class="ps-btn-sm" data-action="export-template" data-index="${i}">📤 Export</button>
-              <button type="button" class="ps-btn-sm ps-danger-btn" data-action="delete-template" data-index="${i}">🗑</button>
-            </div>
-          `).join('') || '<p class="ps-muted">No saved templates yet. Check blocks in Tab 01 or from another preset below and click “📦 Save as Template”.</p>'}
-        </div>
-      </div>
-
-      <div class="ps-panel">
         <h3>🔀 Copy & Mix Blocks from Another Preset</h3>
         <p class="ps-muted" style="margin-bottom:10px">Pick any preset in your Lumiverse library to preview its blocks and copy them into your active draft.</p>
 
@@ -678,6 +655,30 @@ export function renderRemixAndTranslateTab(state: any): string {
             ${renderRemixSourceListHtml(state)}
           </div>
         ` : ''}
+      </div>
+
+      <div class="ps-panel">
+        <div class="ps-between">
+          <div>
+            <h3>📦 Saved Block Templates (${state.templates.length})</h3>
+            <p class="ps-muted">Reusable prompt modules you can drop into any preset with one click.</p>
+          </div>
+          <button type="button" class="ps-btn-sm" data-action="import-template-json">📥 Import JSON</button>
+        </div>
+        <div class="ps-list" style="margin-top:10px">
+          ${state.templates.map((t: any, i: number) => `
+            <div class="ps-block">
+              <span style="flex:1">
+                <strong>${esc(t.name)}</strong>
+                <span class="ps-pill ps-pill-accent">${t.entries.length} block${t.entries.length === 1 ? '' : 's'}</span>
+              </span>
+              <button type="button" class="ps-btn-sm" data-action="copy-template-text" data-index="${i}">📋 Copy</button>
+              <button type="button" class="ps-btn-sm ps-primary" data-action="insert-template" data-index="${i}">＋ Insert into Draft</button>
+              <button type="button" class="ps-btn-sm" data-action="export-template" data-index="${i}">📤 Export</button>
+              <button type="button" class="ps-btn-sm ps-danger-btn" data-action="delete-template" data-index="${i}">🗑</button>
+            </div>
+          `).join('') || '<p class="ps-muted">No saved templates yet. Check blocks in Tab 01 or from another preset below and click “📦 Save as Template”.</p>'}
+        </div>
       </div>
     ` : `
       <div class="ps-panel">
@@ -748,24 +749,30 @@ export function renderRemixSourceListHtml(state: any): string {
 
 export function renderXRayListOnlyHtml(state: any): string {
   const breakdown = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown : [];
-  const filtered = breakdown.filter((item: any) => {
-    if (state.breakdownFilter !== 'all' && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter) return false;
-    if ((state.breakdownSearch || '').trim()) {
-      const q = state.breakdownSearch.toLowerCase();
-      return (item.name || '').toLowerCase().includes(q) || (item.content || '').toLowerCase().includes(q);
-    }
-    return true;
-  });
+  const filtered = breakdown
+    .map((item: any, origIdx: number) => ({ item, origIdx }))
+    .filter(({ item }: any) => {
+      if (state.breakdownFilter !== 'all' && item.type !== state.breakdownFilter && item.role !== state.breakdownFilter) return false;
+      if ((state.breakdownSearch || '').trim()) {
+        const q = state.breakdownSearch.toLowerCase();
+        return (item.name || '').toLowerCase().includes(q) || (item.content || '').toLowerCase().includes(q);
+      }
+      return true;
+    });
   return (
     filtered
       .map(
-        (item: any, idx: number) => `
-          <details class="ps-card" data-details-id="xray-${idx}">
+        ({ item, origIdx }: any) => `
+          <details class="ps-card" data-details-id="xray-${origIdx}">
             <summary class="ps-between" style="cursor:pointer">
-              <span><strong>${esc(item.name || item.type || `Entry ${idx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
+              <span><strong>${esc(item.name || item.type || `Entry ${origIdx + 1}`)}</strong> <span class="ps-pill">${esc(item.role)}</span></span>
               <span class="ps-muted">~${Math.ceil((item.content || '').length / 4)}t</span>
             </summary>
-            <pre class="ps-result" style="margin-top:8px">${esc(item.content || '(empty)')}</pre>
+            <div class="ps-between" style="margin-top:6px">
+              <span class="ps-muted" style="font-size:0.74rem">Type: ${esc(item.type || 'block')}</span>
+              <button type="button" class="ps-btn-sm" data-action="copy-xray-entry" data-xray-idx="${origIdx}">📋 Copy</button>
+            </div>
+            <pre class="ps-result" style="margin-top:6px">${esc(item.content || '(empty)')}</pre>
           </details>
         `,
       )
@@ -776,9 +783,16 @@ export function renderXRayListOnlyHtml(state: any): string {
 export function renderXRayBreakdownInline(state: any): string {
   const a = state.assembled;
   if (!a) {
-    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">🔬</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>🔬 Inspect Prompt X-Ray</strong> or <strong>▶ Generate Reply</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
+    return `<div class="ps-empty-state"><div style="font-size:1.5rem;margin-bottom:6px">🔬</div><strong>No Prompt Assembled Yet</strong><p class="ps-muted" style="margin-top:4px">Click <strong>🔬 Inspect Prompt X-Ray</strong> or <strong>▶ Run Test</strong> on the left to inspect every assembled block, World Info entry, and token distribution.</p></div>`;
   }
-  const isCustom = a.source === 'custom';
+  const sourceLabel =
+    a.source === 'custom'
+      ? 'Custom Prompt'
+      : a.source === 'preset-standalone'
+        ? 'Preset Draft (Standalone)'
+        : a.source === 'saved'
+          ? 'Saved Preset'
+          : 'Preset Draft';
   const d = state.draft;
   const nonCatBlocks = (d?.prompt_order || []).filter((b: any) => b.marker !== 'category');
   const enabledCount = nonCatBlocks.filter((b: any) => b.enabled).length;
@@ -786,7 +800,7 @@ export function renderXRayBreakdownInline(state: any): string {
   const buckets = { block: 0, chat_history: 0, world_info: 0, memory: 0, authors_note: 0, other: 0 };
   breakdown.forEach((item: any) => {
     const est = Math.ceil((item.content || '').length / 4);
-    if (item.type === 'block') buckets.block += est;
+    if (item.type === 'block' || item.type === 'append') buckets.block += est;
     else if (item.type === 'chat_history') buckets.chat_history += est;
     else if (item.type === 'world_info') buckets.world_info += est;
     else if (item.type === 'long_term_memory') buckets.memory += est;
@@ -794,12 +808,22 @@ export function renderXRayBreakdownInline(state: any): string {
     else buckets.other += est;
   });
   const totalEst = Math.max(1, buckets.block + buckets.chat_history + buckets.world_info + buckets.memory + buckets.authors_note + buckets.other);
+  const legendItems = [
+    { label: 'Blocks', color: '#a795e8', tokens: buckets.block },
+    { label: 'History', color: '#64b5f6', tokens: buckets.chat_history },
+    { label: 'Lore', color: '#81c784', tokens: buckets.world_info },
+    { label: 'Memory', color: '#ffb74d', tokens: buckets.memory },
+    { label: "Author's Note", color: '#f06292', tokens: buckets.authors_note },
+  ];
 
   return `
     <div>
       <div class="ps-between" style="margin-bottom:8px">
-        <span class="ps-muted">Source: <strong>${isCustom ? 'Custom Prompt' : 'Preset Draft'}</strong> (${enabledCount} active blocks · ~${totalEst.toLocaleString()} est. tokens)</span>
-        <button type="button" class="ps-btn-sm" data-action="copy-xray-messages">📋 Copy Messages JSON</button>
+        <span class="ps-muted">Source: <strong>${sourceLabel}</strong> (${enabledCount} active blocks · ~${totalEst.toLocaleString()} est. tokens)</span>
+        <div class="ps-actions">
+          <button type="button" class="ps-btn-sm" data-action="toggle-xray-expand-all">↕ Expand/Collapse</button>
+          <button type="button" class="ps-btn-sm" data-action="copy-xray-messages">📋 Copy JSON</button>
+        </div>
       </div>
 
       <div class="ps-bar-stack" title="Token distribution">
@@ -808,6 +832,14 @@ export function renderXRayBreakdownInline(state: any): string {
         <div class="ps-bar-seg" style="width:${(buckets.world_info / totalEst) * 100}%;background:#81c784"></div>
         <div class="ps-bar-seg" style="width:${(buckets.memory / totalEst) * 100}%;background:#ffb74d"></div>
         <div class="ps-bar-seg" style="width:${(buckets.authors_note / totalEst) * 100}%;background:#f06292"></div>
+      </div>
+
+      <div class="ps-xray-legend">
+        ${legendItems
+          .map(
+            (lg) => `<span class="ps-xray-legend-item" style="opacity:${lg.tokens > 0 ? 1 : 0.45}"><span class="ps-dot" style="background:${lg.color}"></span>${esc(lg.label)} <strong>${lg.tokens}t</strong></span>`,
+          )
+          .join('')}
       </div>
 
       <div class="ps-between" style="margin:8px 0">
@@ -824,6 +856,65 @@ export function renderXRayBreakdownInline(state: any): string {
   `;
 }
 
+function renderRunPromptsSection(run: any, runIdx: number, detailsId: string): string {
+  const s = run?.promptSummary;
+  const msgs: any[] = Array.isArray(s?.messages) ? s.messages : [];
+  const blockNames: string[] = Array.isArray(s?.activeBlockNames) ? s.activeBlockNames : [];
+  const customPrompt = s?.customPrompt || '';
+  const presetName = s?.presetName || run?.presetName || 'Draft';
+  const chatLabel = s?.chatName || (s?.standalone ? 'Standalone (No Chat)' : '');
+  const modelLabel = s?.model || run?.connection || '';
+  const hasPromptDetails = msgs.length > 0 || Boolean(customPrompt) || blockNames.length > 0 || Boolean(run?.userPromptPreview);
+
+  return `
+    <div class="ps-run-meta-strip">
+      <span class="ps-pill ps-pill-accent">${s?.promptSource === 'custom' ? '✍️ Custom Prompt' : `📋 ${esc(presetName)}`}</span>
+      ${chatLabel ? `<span class="ps-pill">${s?.standalone ? '⚡ ' : '💬 '}${esc(chatLabel)}</span>` : ''}
+      ${modelLabel ? `<span class="ps-pill">${esc(modelLabel)}</span>` : ''}
+      ${s?.temperature !== undefined && s?.temperature !== '' ? `<span class="ps-pill">Temp ${esc(s.temperature)}</span>` : ''}
+      ${run?.activeBlocksCount !== undefined && s?.promptSource !== 'custom' ? `<span class="ps-pill">${run.activeBlocksCount} blk</span>` : ''}
+      ${run?.usage?.prompt_tokens || run?.usage?.completion_tokens ? `<span class="ps-pill ps-pill-ok">P:${run.usage.prompt_tokens || 0}t · C:${run.usage.completion_tokens || 0}t</span>` : ''}
+    </div>
+    ${hasPromptDetails ? `
+      <details class="ps-collapsible" data-details-id="${esc(detailsId)}" style="margin-top:8px;padding:7px 10px">
+        <summary>
+          <span>🧾 Prompts Used ${msgs.length ? `(${msgs.length} msgs)` : ''}</span>
+          <span class="ps-muted" style="font-size:0.74rem">${s?.promptSource === 'custom' ? 'Custom' : `${blockNames.length || run?.activeBlocksCount || 0} active blocks`}</span>
+        </summary>
+        <div class="ps-between" style="margin-bottom:6px">
+          <span class="ps-muted" style="font-size:0.74rem">${s?.generationType ? `Trigger: ${esc(s.generationType)}` : ''}</span>
+          ${msgs.length || customPrompt ? `<button type="button" class="ps-btn-sm" data-action="copy-run-prompts" data-run-idx="${runIdx}">📋 Copy Prompts</button>` : ''}
+        </div>
+        ${blockNames.length ? `
+          <div class="ps-chips" style="margin-bottom:8px">
+            ${blockNames.map((n) => `<span class="ps-pill">${esc(n)}</span>`).join('')}
+          </div>
+        ` : ''}
+        ${customPrompt && !msgs.length ? `<pre class="ps-result" style="max-height:150px;margin-bottom:6px">${esc(customPrompt)}</pre>` : ''}
+        ${msgs.length ? `
+          <div class="ps-list" style="max-height:220px;overflow-y:auto">
+            ${msgs
+              .map(
+                (m) => `
+                  <div class="ps-ab-prompt-msg">
+                    <div class="ps-between" style="margin-bottom:3px">
+                      <span class="ps-pill">${esc(String(m.role || 'system').toUpperCase())}</span>
+                      <span class="ps-muted" style="font-size:0.72rem">~${Math.ceil(String(m.content || '').length / 4)}t</span>
+                    </div>
+                    <div style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(m.content || '')}</div>
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+        ` : run?.userPromptPreview ? `
+          <div class="ps-muted" style="font-size:0.76rem"><strong>Input:</strong> ${esc(run.userPromptPreview)}</div>
+        ` : '<p class="ps-muted">Detailed prompt snapshot not recorded for this legacy run.</p>'}
+      </details>
+    ` : ''}
+  `;
+}
+
 export function renderTestTab(state: any): string {
   const runs: any[] = Array.isArray(state.runs) ? state.runs : [];
   const activeRunIdx =
@@ -835,8 +926,10 @@ export function renderTestTab(state: any): string {
   const activeUsage = state.busy ? state.lastUsage : (viewedRun?.usage ?? state.lastUsage);
   const hasReplyContent = Boolean(state.busy ? state.result : (viewedRun?.content || state.result));
 
-  const runA = runs[state.compareA];
-  const runB = runs[state.compareB];
+  const idxA = Math.max(0, Math.min(Number(state.compareA) || 0, Math.max(0, runs.length - 1)));
+  const idxB = Math.max(0, Math.min(Number(state.compareB) || 0, Math.max(0, runs.length - 1)));
+  const runA = runs[idxA];
+  const runB = runs[idxB];
   const isCustomPromptMode = state.testPromptSource === 'custom';
   const isMultiTurn = state.testTurnMode === 'multi';
   const turns = Array.isArray(state.testTurns) ? state.testTurns : [];
@@ -844,6 +937,9 @@ export function renderTestTab(state: any): string {
   const isChatView = (state.testReplyViewMode || 'chat') === 'chat';
   const outTab = state.testOutputTab || 'reply';
   const breakdownCount = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown.length : 0;
+  const isStandalone = !state.chatId;
+  const selectedChatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
+  const selectedConnObj = state.connections.find((c: any) => c.id === state.connectionId);
 
   return `
     <div class="ps-test-columns">
@@ -862,7 +958,7 @@ export function renderTestTab(state: any): string {
             <div class="ps-card" style="margin-bottom:10px">
               <div class="ps-between" style="margin-bottom:6px">
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.78rem;cursor:pointer;color:var(--ps-text)">
-                  <input type="checkbox" style="width:auto;min-height:16px" data-custom-check="history" ${state.testCustomPromptIncludeHistory ? 'checked' : ''}>
+                  <input type="checkbox" style="width:auto;min-height:16px" data-custom-check="history" ${state.testCustomPromptIncludeHistory ? 'checked' : ''} ${isStandalone ? 'disabled' : ''}>
                   <span>Include Chat History</span>
                 </label>
                 <div class="ps-actions">
@@ -870,14 +966,20 @@ export function renderTestTab(state: any): string {
                   <button type="button" class="ps-btn-sm" data-action="open-test-custom-prompt-editor">⤢ Fullscreen</button>
                 </div>
               </div>
-              <textarea data-state="testCustomPrompt" class="ps-content" style="min-height:100px" placeholder="Write custom system instructions to test…">${esc(state.testCustomPrompt)}</textarea>
+              <textarea data-state="testCustomPrompt" class="ps-content" style="min-height:100px" placeholder="Write custom system instructions to test… (Ctrl+Enter to run)">${esc(state.testCustomPrompt)}</textarea>
             </div>
           ` : ''}
 
-          <div class="ps-grid" style="margin-bottom:10px">
-            <label>Context Chat ${!state.chats.length ? '<span class="ps-pill ps-pill-warn">No chats found</span>' : `(${state.chats.length})`}
+          <div class="ps-grid" style="margin-bottom:8px">
+            <label>
+              <span class="ps-between" style="width:100%">
+                <span>Context Chat ${state.chats.length ? `(${state.chats.length})` : ''}</span>
+                ${isStandalone
+                  ? '<span class="ps-pill ps-pill-accent" style="font-size:0.68rem">Standalone</span>'
+                  : '<button type="button" class="ps-btn-sm" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important" data-action="use-standalone-chat" title="Run without any context chat">✕ No Chat</button>'}
+              </span>
               <select data-state="chatId">
-                <option value="">${isCustomPromptMode ? 'None (Standalone prompt)' : 'Select a chat for character & lore…'}</option>
+                <option value="" ${isStandalone ? 'selected' : ''}>None — No Context Chat (Standalone)</option>
                 ${selectOptions(state.chats, state.chatId, (x: any) => x.name || x.id)}
               </select>
             </label>
@@ -889,10 +991,16 @@ export function renderTestTab(state: any): string {
             </label>
           </div>
 
+          ${isStandalone ? `
+            <div class="ps-standalone-hint">
+              ⚡ <strong>Standalone mode (no context chat):</strong> Character, lorebook, and chat history slots are omitted. Enabled prompt blocks, variables, test turns, and Author's Note run directly.
+            </div>
+          ` : ''}
+
           <!-- Test Message or Multi-Turn Thread -->
           <div style="margin-bottom:10px">
             <div class="ps-between" style="margin-bottom:6px">
-              <strong style="font-size:0.84rem">Test User Message</strong>
+              <strong style="font-size:0.84rem">Test User Message <span class="ps-muted" style="font-weight:400;font-size:0.74rem">(Ctrl+Enter to run)</span></strong>
               <div class="ps-seg-bar">
                 <button type="button" data-action="set-test-turn-mode" data-mode="single" aria-pressed="${!isMultiTurn}">Single Turn</button>
                 <button type="button" data-action="set-test-turn-mode" data-mode="multi" aria-pressed="${isMultiTurn}">Thread (${turns.length})</button>
@@ -900,7 +1008,7 @@ export function renderTestTab(state: any): string {
             </div>
 
             ${!isMultiTurn ? `
-              <textarea data-state="custom" style="min-height:74px" placeholder="Optional: type a user message to append to the chat before generating…">${esc(state.custom)}</textarea>
+              <textarea data-state="custom" style="min-height:74px" placeholder="${isStandalone ? 'Type a user prompt to test your preset or custom prompt standalone…' : 'Optional: type a user message to append to the chat before generating…'}">${esc(state.custom)}</textarea>
             ` : `
               <div class="ps-card" style="padding:8px">
                 <div class="ps-between" style="margin-bottom:6px">
@@ -934,11 +1042,11 @@ export function renderTestTab(state: any): string {
 
           <!-- Primary Action Buttons -->
           <div class="ps-between" style="margin-top:12px;gap:8px">
-            <button type="button" class="ps-btn-sm" data-action="preview" ${state.busy ? 'disabled' : ''}>🔬 Inspect Prompt X-Ray</button>
+            <button type="button" class="ps-btn-sm" data-action="preview" ${state.busy ? 'disabled' : ''}>🔬 Inspect X-Ray</button>
             <div class="ps-actions">
-              ${runs.length > 0 ? `<button type="button" class="ps-btn-sm" data-action="run" ${state.busy ? 'disabled' : ''} title="Re-run with your latest preset/prompt edits and add a new swipe to history">↻ Regenerate</button>` : ''}
+              ${runs.length > 0 ? `<button type="button" class="ps-btn-sm" data-action="run" ${state.busy ? 'disabled' : ''} title="Regenerate with your latest preset/prompt edits (works with or without a context chat)">↻ Regenerate</button>` : ''}
               <button type="button" class="ps-primary" style="min-height:38px;padding:6px 16px" data-action="run" ${state.busy ? 'disabled' : ''}>▶ ${runs.length > 0 ? 'New Run' : 'Generate Reply'}</button>
-              <button type="button" class="ps-danger-btn ps-btn-sm" data-action="stop" ${!state.busy ? 'disabled' : ''}>■ Stop</button>
+              <button type="button" class="ps-danger-btn ps-btn-sm ${state.busy ? 'ps-danger-active' : ''}" data-action="stop" ${!state.busy ? 'disabled' : ''}>■ Stop</button>
             </div>
           </div>
 
@@ -974,8 +1082,8 @@ export function renderTestTab(state: any): string {
               </label>
             </div>
             <div class="ps-actions" style="margin-top:8px">
-              <button type="button" class="ps-btn-sm" data-action="profile">Sync Active States from Chat</button>
-              <button type="button" class="ps-btn-sm" data-action="dry" ${state.busy || !state.draft.id ? 'disabled' : ''}>Saved-Preset Dry Run</button>
+              <button type="button" class="ps-btn-sm" data-action="profile" ${isStandalone ? 'disabled title="Requires a Context Chat or open native Preset Editor"' : ''}>Sync Active States from Chat</button>
+              <button type="button" class="ps-btn-sm" data-action="dry" ${state.busy || !state.draft.id || isStandalone ? 'disabled' : ''} title="${isStandalone ? 'Saved-Preset Dry Run requires a Context Chat; use Inspect X-Ray for standalone mode' : 'Run Lumiverse saved-preset dry run'}">Saved-Preset Dry Run</button>
             </div>
           </details>
         </div>
@@ -986,14 +1094,15 @@ export function renderTestTab(state: any): string {
         <div class="ps-panel" style="margin-top:0">
           <div class="ps-between" style="margin-bottom:10px">
             <div class="ps-seg-bar">
-              <button type="button" data-action="set-test-output-tab" data-outtab="reply" aria-pressed="${outTab === 'reply'}">💬 Reply Preview ${state.busy ? '· …' : ''}</button>
+              <button type="button" data-action="set-test-output-tab" data-outtab="reply" aria-pressed="${outTab === 'reply'}">💬 Reply Preview ${state.busy ? '· ●' : ''}</button>
               <button type="button" data-action="set-test-output-tab" data-outtab="xray" aria-pressed="${outTab === 'xray'}">🔬 Prompt X-Ray ${breakdownCount ? `(${breakdownCount})` : ''}</button>
               <button type="button" data-action="set-test-output-tab" data-outtab="compare" aria-pressed="${outTab === 'compare'}">⚖️ A/B Runs (${state.runs.length})</button>
             </div>
 
             ${outTab === 'reply' ? `
               <div class="ps-actions">
-                ${activeUsage ? `<span class="ps-pill ps-pill-ok">P: ${activeUsage.prompt_tokens || 0}t · C: ${activeUsage.completion_tokens || 0}t</span>` : ''}
+                ${state.busy ? `<span class="ps-pill ps-pill-accent"><span class="ps-live-dot"></span> Streaming · <span data-stream-counter>${state.result.length.toLocaleString()} chars</span></span>` : ''}
+                ${!state.busy && activeUsage ? `<span class="ps-pill ps-pill-ok">P: ${activeUsage.prompt_tokens || 0}t · C: ${activeUsage.completion_tokens || 0}t</span>` : ''}
                 <button type="button" class="ps-btn-sm ${isChatView ? 'ps-primary' : ''}" data-action="set-reply-view-mode" data-mode="chat">Chat</button>
                 <button type="button" class="ps-btn-sm ${!isChatView ? 'ps-primary' : ''}" data-action="set-reply-view-mode" data-mode="raw">Raw</button>
                 <button type="button" class="ps-btn-sm" data-action="copy-test-reply" ${!hasReplyContent ? 'disabled' : ''} title="Copy this reply">📋</button>
@@ -1002,6 +1111,15 @@ export function renderTestTab(state: any): string {
           </div>
 
           ${outTab === 'reply' ? `
+            <!-- Live Context / Active Configuration Strip -->
+            ${state.busy ? `
+              <div class="ps-run-meta-strip" style="margin-bottom:10px">
+                <span class="ps-pill ps-pill-accent">${isCustomPromptMode ? '✍️ Custom Prompt' : `📋 ${esc(state.draft?.name || 'Draft')}`}</span>
+                <span class="ps-pill">${isStandalone ? '⚡ Standalone (No Chat)' : `💬 ${esc(selectedChatObj?.name || state.chatId)}`}</span>
+                <span class="ps-pill">${esc(selectedConnObj ? `${selectedConnObj.name} · ${selectedConnObj.model}` : 'Active default connection')}</span>
+              </div>
+            ` : ''}
+
             <!-- Swipe / Run History Deck Bar -->
             ${runs.length > 0 ? `
               <div class="ps-card ps-between" style="margin-bottom:10px;padding:7px 10px;background:var(--ps-bg)">
@@ -1013,7 +1131,9 @@ export function renderTestTab(state: any): string {
                   <button type="button" class="ps-btn-sm ps-btn-icon" data-action="swipe-run-next" ${state.busy || activeRunIdx >= runs.length - 1 ? 'disabled' : ''} title="Next test run">▶</button>
                   ${viewedRun ? `
                     <span class="ps-pill">${esc(viewedRun.time)}</span>
-                    <span class="ps-pill ps-pill-accent" title="Preset & active blocks used for this run">${esc(viewedRun.presetName || viewedRun.snapshot?.name || 'Draft')} · ${viewedRun.activeBlocksCount ?? '?'} blk</span>
+                    <span class="ps-pill ps-pill-accent" title="Preset / prompt used">${viewedRun.promptSummary?.promptSource === 'custom' ? '✍️ Custom Prompt' : `${esc(viewedRun.promptSummary?.presetName || viewedRun.presetName || 'Draft')} · ${viewedRun.activeBlocksCount ?? '?'} blk`}</span>
+                    <span class="ps-pill">${viewedRun.promptSummary?.standalone ? '⚡ Standalone' : viewedRun.promptSummary?.chatName ? `💬 ${esc(viewedRun.promptSummary.chatName)}` : esc(viewedRun.connection || '')}</span>
+                    ${viewedRun.promptSummary?.durationMs ? `<span class="ps-pill">${(viewedRun.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ''}
                   ` : ''}
                 </div>
                 <div class="ps-actions">
@@ -1061,21 +1181,44 @@ export function renderTestTab(state: any): string {
                 <div class="ps-row" style="flex:1">
                   <label>Left Run (A)
                     <select data-state="compareA">
-                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareA) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
+                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${idxA === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
                     </select>
                   </label>
+                  <button type="button" class="ps-btn-sm" style="margin-top:18px" data-action="swap-compare-runs" title="Swap Run A and Run B">⇄</button>
                   <label>Right Run (B)
                     <select data-state="compareB">
-                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${Number(state.compareB) === idx ? 'selected' : ''}>Run #${idx + 1} (${esc(r.time)})</option>`).join('')}
+                      ${state.runs.map((r: any, idx: number) => `<option value="${idx}" ${idxB === idx ? 'selected' : ''}>Run #${idx + 1} · ${esc(r.promptSummary?.presetName || r.presetName || 'Draft')} (${esc(r.time)})</option>`).join('')}
                     </select>
                   </label>
                 </div>
-                <div class="ps-seg-bar">
-                  <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== 'diff'}">Side-by-Side</button>
-                  <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === 'diff'}">Line Diff</button>
+                <div class="ps-actions">
+                  ${runA.usage?.completion_tokens && runB.usage?.completion_tokens ? (() => {
+                    const delta = Number(runB.usage.completion_tokens) - Number(runA.usage.completion_tokens);
+                    return `<span class="ps-pill">Δ ${delta > 0 ? `+${delta}` : delta}t</span>`;
+                  })() : ''}
+                  <div class="ps-seg-bar">
+                    <button type="button" data-action="set-compare-mode" data-mode="side" aria-pressed="${state.compareMode !== 'diff'}">Side-by-Side</button>
+                    <button type="button" data-action="set-compare-mode" data-mode="diff" aria-pressed="${state.compareMode === 'diff'}">Line Diff</button>
+                  </div>
                 </div>
               </div>
               ${state.compareMode === 'diff' ? `
+                <div class="ps-grid" style="margin-bottom:10px">
+                  <div class="ps-card">
+                    <div class="ps-between" style="margin-bottom:6px">
+                      <strong>Run #${idxA + 1} (A)</strong>
+                      <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
+                    </div>
+                    ${renderRunPromptsSection(runA, idxA, 'ab-diff-prompts-a')}
+                  </div>
+                  <div class="ps-card">
+                    <div class="ps-between" style="margin-bottom:6px">
+                      <strong>Run #${idxB + 1} (B)</strong>
+                      <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
+                    </div>
+                    ${renderRunPromptsSection(runB, idxB, 'ab-diff-prompts-b')}
+                  </div>
+                </div>
                 <div class="ps-diff-box">
                   ${computeLineDiff(runA.content || '', runB.content || '')
                     .map((line) => `<div class="ps-diff-line ps-diff-${line.kind}">${line.kind === 'add' ? '+ ' : line.kind === 'rem' ? '- ' : '  '}${esc(line.text || ' ')}</div>`)
@@ -1084,23 +1227,25 @@ export function renderTestTab(state: any): string {
               ` : `
                 <div class="ps-grid">
                   <div class="ps-card">
-                    <div class="ps-between">
-                      <strong>Run #${Number(state.compareA) + 1}</strong>
+                    <div class="ps-between" style="margin-bottom:6px">
+                      <strong>Run #${idxA + 1}</strong>
                       <div class="ps-actions">
-                        <span class="ps-pill">${esc(runA.connection)}</span>
-                        ${runA.usage?.completion_tokens ? `<span class="ps-pill">${runA.usage.completion_tokens}t</span>` : ''}
+                        <span class="ps-muted" style="font-size:0.75rem">${esc(runA.time)}</span>
+                        ${runA.promptSummary?.durationMs ? `<span class="ps-pill">${(runA.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ''}
                       </div>
                     </div>
+                    ${renderRunPromptsSection(runA, idxA, 'ab-prompts-a')}
                     <pre class="ps-result" style="margin-top:8px">${esc(runA.content)}</pre>
                   </div>
                   <div class="ps-card">
-                    <div class="ps-between">
-                      <strong>Run #${Number(state.compareB) + 1}</strong>
+                    <div class="ps-between" style="margin-bottom:6px">
+                      <strong>Run #${idxB + 1}</strong>
                       <div class="ps-actions">
-                        <span class="ps-pill">${esc(runB.connection)}</span>
-                        ${runB.usage?.completion_tokens ? `<span class="ps-pill">${runB.usage.completion_tokens}t</span>` : ''}
+                        <span class="ps-muted" style="font-size:0.75rem">${esc(runB.time)}</span>
+                        ${runB.promptSummary?.durationMs ? `<span class="ps-pill">${(runB.promptSummary.durationMs / 1000).toFixed(1)}s</span>` : ''}
                       </div>
                     </div>
+                    ${renderRunPromptsSection(runB, idxB, 'ab-prompts-b')}
                     <pre class="ps-result" style="margin-top:8px">${esc(runB.content)}</pre>
                   </div>
                 </div>
@@ -1109,7 +1254,7 @@ export function renderTestTab(state: any): string {
               <div class="ps-empty-state">
                 <div style="font-size:1.5rem;margin-bottom:6px">⚖️</div>
                 <strong>A/B Run Comparator (${state.runs.length}/2 runs)</strong>
-                <p class="ps-muted" style="margin-top:4px">Generate at least 2 test replies in this session to compare different prompts, temperatures, or models side-by-side.</p>
+                <p class="ps-muted" style="margin-top:4px">Generate at least 2 test replies in this session to compare different presets, prompts, temperatures, or models side-by-side.</p>
               </div>
             `}
           `}
