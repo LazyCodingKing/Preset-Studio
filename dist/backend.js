@@ -101,15 +101,12 @@ var SEALED_BLOCK_KEYS = [
   "sealedOriginVersion",
   "sealedSha256"
 ];
-function prepareBlocksForHostAssemble(rawBlocks, generationType, rawPromptVars) {
-  const active = (Array.isArray(rawBlocks) ? rawBlocks : []).filter((blk) => {
-    if (!blk || !blk.enabled || blk.marker === "category")
-      return false;
-    if (Array.isArray(blk.injectionTrigger) && blk.injectionTrigger.length > 0 && !blk.injectionTrigger.includes(generationType)) {
-      return false;
-    }
-    return true;
-  });
+function prepareBlocksForHostAssemble(rawBlocks, _generationType, rawPromptVars) {
+  const list = Array.isArray(rawBlocks) ? rawBlocks : [];
+  if (list.length <= 256) {
+    return { blocks: list, promptVariables: rawPromptVars || {} };
+  }
+  const active = list.filter((blk) => blk && blk.enabled !== false && blk.marker !== "category");
   const activeIds = new Set(active.map((b) => String(b.id || "")));
   const promptVariables = {};
   if (rawPromptVars && typeof rawPromptVars === "object") {
@@ -1283,16 +1280,16 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
             }
             const useRawOverride = Boolean(modelOverride && targetConn?.provider && sanitizeModelId(targetConn.model) !== modelOverride);
             spindle.log?.info?.(`Test Lab run: mode=${useRawOverride ? "rawStream" : "quietStream"} connection=${msg.connectionId || "(active/default)"} model=${modelOverride || "(connection)"} msgs=${cleanMessages.length} params=[${Object.keys(cleanParams).join(",")}]`);
-            const streamIter = useRawOverride ? spindle.generate.rawStream({
+            const openStream = (msgsToSend) => useRawOverride ? spindle.generate.rawStream({
               provider: targetConn.provider,
               model: modelOverride,
               connection_id: targetConn.id,
-              messages: cleanMessages,
+              messages: msgsToSend,
               ...Object.keys(cleanParams).length ? { parameters: cleanParams } : {},
               ...uOpt,
               signal: controller.signal
             }) : spindle.generate.quietStream({
-              messages: cleanMessages,
+              messages: msgsToSend,
               ...Object.keys(cleanParams).length ? { parameters: cleanParams } : {},
               ...msg.connectionId ? { connection_id: msg.connectionId } : {},
               ...uOpt,
@@ -1301,24 +1298,38 @@ spindle.onFrontendMessage(async (msg, userId, frontendSessionId) => {
             let streamedText = "";
             let streamedReasoning = "";
             let sawDone = false;
-            for await (const chunk of streamIter) {
-              if (chunk.type === "token") {
-                streamedText += chunk.token || "";
-                reply(userId, id, "token", { token: chunk.token }, frontendSessionId);
-              } else if (chunk.type === "reasoning") {
-                streamedReasoning += chunk.token || "";
-                reply(userId, id, "reasoning", { token: chunk.token }, frontendSessionId);
-              } else if (chunk.type === "done") {
-                sawDone = true;
-                const rawReply = chunk.content || streamedText;
-                const displayContent = await applyDisplayRegexIfPermitted(rawReply, msg.chatId, userId);
-                data = {
-                  content: rawReply,
-                  displayContent,
-                  reasoning: chunk.reasoning || streamedReasoning,
-                  usage: chunk.usage,
-                  finish_reason: chunk.finish_reason
-                };
+            const consumeStream = async (iter) => {
+              for await (const chunk of iter) {
+                if (chunk.type === "token") {
+                  streamedText += chunk.token || "";
+                  reply(userId, id, "token", { token: chunk.token }, frontendSessionId);
+                } else if (chunk.type === "reasoning") {
+                  streamedReasoning += chunk.token || "";
+                  reply(userId, id, "reasoning", { token: chunk.token }, frontendSessionId);
+                } else if (chunk.type === "done") {
+                  sawDone = true;
+                  const rawReply = chunk.content || streamedText;
+                  const displayContent = await applyDisplayRegexIfPermitted(rawReply, msg.chatId, userId);
+                  data = {
+                    content: rawReply,
+                    displayContent,
+                    reasoning: chunk.reasoning || streamedReasoning,
+                    usage: chunk.usage,
+                    finish_reason: chunk.finish_reason
+                  };
+                }
+              }
+            };
+            try {
+              await consumeStream(openStream(cleanMessages));
+            } catch (streamErr) {
+              const errMsg = String(streamErr?.message || streamErr || "");
+              const hasTokens = Boolean(streamedText || streamedReasoning);
+              if (!hasTokens && /ending with a model turn|last message.*assistant|must end with a user/i.test(errMsg)) {
+                spindle.log?.info?.("Provider rejected trailing model turn; retrying with trailing user turn.");
+                await consumeStream(openStream([...cleanMessages, { role: "user", content: "Continue." }]));
+              } else {
+                throw streamErr;
               }
             }
             if (!sawDone) {
