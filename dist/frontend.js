@@ -1803,10 +1803,13 @@ function renderPermissionBanner(state) {
     </div>
   `;
 }
-function translationButtons(state, action, block, index) {
+function translationButtons(state, action, block, index, extraDisabled = false) {
   const id = index === undefined ? "" : ` data-index="${index}"`;
-  const disabled = state.translating ? "disabled" : "";
-  return `<div class="ps-actions"><button type="button" class="ps-btn-sm" data-action="${action}" data-scope="name"${id} ${disabled}>\uD83C\uDF10 Title</button>${block.content?.trim() ? `<button type="button" class="ps-btn-sm" data-action="${action}" data-scope="content"${id} ${disabled}>\uD83C\uDF10 Prompt</button><button type="button" class="ps-btn-sm" data-action="${action}" data-scope="both"${id} ${disabled}>\uD83C\uDF10 Both</button>` : ""}</div>`;
+  const noGen = state.permissions?.generation === false;
+  const disabled = state.translating || extraDisabled || noGen ? "disabled" : "";
+  const hasTitle = Boolean(String(block?.name || "").trim());
+  const hasPrompt = Boolean(String(block?.content || "").trim());
+  return `<div class="ps-actions">${hasTitle ? `<button type="button" class="ps-btn-sm" data-action="${action}" data-scope="name"${id} ${disabled}>\uD83C\uDF10 Title</button>` : ""}${hasPrompt ? `<button type="button" class="ps-btn-sm" data-action="${action}" data-scope="content"${id} ${disabled}>\uD83C\uDF10 Prompt</button>` : ""}${hasTitle && hasPrompt ? `<button type="button" class="ps-btn-sm" data-action="${action}" data-scope="both"${id} ${disabled}>\uD83C\uDF10 Both</button>` : ""}</div>`;
 }
 function translationPreview(t, prefix) {
   return `<div class="ps-grid" style="margin-top:8px">${t.name !== undefined ? `<label>Translated title<input data-state="${prefix}Name" value="${esc(t.name)}"></label>` : ""}${t.content !== undefined ? `<label>Translated prompt<textarea data-state="${prefix}Text">${esc(t.content)}</textarea></label>` : ""}</div>`;
@@ -1815,11 +1818,50 @@ function batchPreview(state, target) {
   const batch = state.batchTranslation;
   if (!batch || batch.target !== target)
     return "";
-  return `<div class="ps-panel"><h4>Review ${batch.entries.length} translated blocks</h4><p class="ps-muted">Compare original vs. translated text before applying.</p>${batch.entries.map((e) => `<details style="margin:6px 0"><summary>${esc(e.original.name || "Untitled")} ${e.name !== undefined ? `→ <strong>${esc(e.name)}</strong>` : ""}</summary>${e.content !== undefined ? `<div class="ps-grid" style="margin-top:6px"><div><span class="ps-muted">Original</span><pre class="ps-result">${esc(e.original.content)}</pre></div><div><span class="ps-muted">Translated</span><pre class="ps-result">${esc(e.content)}</pre></div></div>` : ""}</details>`).join("")}<div class="ps-actions" style="margin-top:8px"><button type="button" class="ps-primary ps-btn-sm" data-action="apply-batch" data-target="${target}">Apply Batch</button><button type="button" class="ps-btn-sm" data-action="discard-batch">Discard</button></div></div>`;
+  const failures = Array.isArray(batch.failures) ? batch.failures : [];
+  return `
+    <div class="ps-panel" style="margin-top:10px;border-left:3px solid var(--ps-accent)">
+      <h4>Review ${batch.entries.length} translated block(s)</h4>
+      <p class="ps-muted">${target === "source" ? "Compare original vs. translated text before updating the loaded source blocks (ready to add to draft)." : "Compare original vs. translated text before applying to your draft."}</p>
+      ${failures.length ? `
+        <div class="ps-notice" style="border-left-color:var(--ps-warning)">
+          <span>⚠ ${failures.length} field(s) could not be translated cleanly (${esc(failures.slice(0, 3).map((f) => `${f.name}: ${f.error}`).join("; "))}).</span>
+        </div>
+      ` : ""}
+      ${batch.entries.map((e) => `<details style="margin:6px 0"><summary>${esc(e.original.name || "Untitled")} ${e.name !== undefined ? `→ <strong>${esc(e.name)}</strong>` : ""}</summary>${e.content !== undefined ? `<div class="ps-grid" style="margin-top:6px"><div><span class="ps-muted">Original</span><pre class="ps-result">${esc(e.original.content)}</pre></div><div><span class="ps-muted">Translated</span><pre class="ps-result">${esc(e.content)}</pre></div></div>` : ""}</details>`).join("")}
+      <div class="ps-actions" style="margin-top:8px">
+        <button type="button" class="ps-primary ps-btn-sm" data-action="apply-batch" data-target="${target}">${target === "source" ? "Apply to Source Blocks" : "Apply to Draft"}</button>
+        <button type="button" class="ps-btn-sm" data-action="discard-batch">Discard</button>
+      </div>
+    </div>
+  `;
 }
 function bulkControls(state, target) {
-  const disabled = state.translating ? "disabled" : "";
-  return `<div class="ps-card" style="margin:10px 0"><div class="ps-between"><strong>Batch Translate (${target === "source" ? "Source Preset" : "Current Draft"}) → ${esc(state.translationLanguage)}</strong><span class="ps-muted" data-batch-progress aria-live="polite"></span></div><div class="ps-row" style="margin-top:8px">${["selected", "all"].map((group) => `<div class="ps-actions"><span class="ps-muted">${group === "selected" ? "Checked Blocks:" : "All Blocks:"}</span>${[["name", "Titles"], ["content", "Prompts"], ["both", "Both"]].map(([scope, label]) => `<button type="button" class="ps-btn-sm" data-action="translate-batch" data-target="${target}" data-group="${group}" data-scope="${scope}" ${disabled}>${label}</button>`).join("")}</div>`).join(" · ")}</div>${batchPreview(state, target)}</div>`;
+  const noGen = state.permissions?.generation === false;
+  const baseDisabled = state.translating || noGen;
+  const checkedCount = target === "source" ? (state.selectedImports || []).length : (state.selectedDraft || []).length;
+  const selectedDisabled = baseDisabled || checkedCount === 0 ? "disabled" : "";
+  const allDisabled = baseDisabled ? "disabled" : "";
+  return `
+    <div class="ps-card" style="margin:10px 0">
+      <div class="ps-between">
+        <strong>Batch Translate (${target === "source" ? "Source Preset" : "Current Draft"}) → ${esc(state.translationLanguage || "English")}</strong>
+        <span class="ps-muted" data-batch-progress aria-live="polite">${state.translating ? esc(state.translateProgressText || "Translating…") : ""}</span>
+      </div>
+      <div class="ps-row" style="margin-top:8px">
+        <div class="ps-actions">
+          <span class="ps-muted">Checked (${checkedCount}):</span>
+          ${[["name", "Titles"], ["content", "Prompts"], ["both", "Both"]].map(([scope, label]) => `<button type="button" class="ps-btn-sm" data-action="translate-batch" data-target="${target}" data-group="selected" data-scope="${scope}" ${selectedDisabled}>${label}</button>`).join("")}
+        </div>
+        ·
+        <div class="ps-actions">
+          <span class="ps-muted">${target === "draft" ? "All Unlocked:" : "All Blocks:"}</span>
+          ${[["name", "Titles"], ["content", "Prompts"], ["both", "Both"]].map(([scope, label]) => `<button type="button" class="ps-btn-sm" data-action="translate-batch" data-target="${target}" data-group="all" data-scope="${scope}" ${allDisabled}>${label}</button>`).join("")}
+        </div>
+      </div>
+      ${batchPreview(state, target)}
+    </div>
+  `;
 }
 function renderInlineSamplersDrawer(state) {
   const d = state.draft;
@@ -2115,7 +2157,7 @@ function renderArchitectTab(ctx, state) {
                   ${SWATCHES.map((c) => `<button type="button" class="ps-swatch-btn" style="background:${c}" data-action="set-color" data-color="${c}" aria-label="Color ${c}" aria-pressed="${b.color === c}"></button>`).join("")}
                 </div>
                 <div class="ps-actions">
-                  ${translationButtons(state, "translate", b)}
+                  ${translationButtons(state, "translate", b, undefined, Boolean(b.isLocked))}
                   ${ctx.components?.mountLoomBlockEditor ? '<button type="button" class="ps-btn-sm" data-action="editor-mode" data-mode="native">⇄ Native Loom Editor</button>' : ""}
                 </div>
               </div>
@@ -2420,6 +2462,25 @@ function renderRemixAndTranslateTab(state) {
             </div>
           </div>
 
+          <details class="ps-collapsible" data-details-id="remix-source-translate" style="margin-bottom:10px" ${state.batchTranslation?.target === "source" ? "open" : ""}>
+            <summary>
+              <span>\uD83C\uDF10 Translate Source Blocks Before Copying → ${esc(state.translationLanguage || "English")}</span>
+              <span class="ps-muted" style="font-size:0.76rem">Translates loaded copy only</span>
+            </summary>
+            <div class="ps-grid" style="margin-bottom:8px">
+              <label>Target Language
+                <input data-state="translationLanguage" value="${esc(state.translationLanguage)}" placeholder="e.g. English, Japanese, Spanish…">
+              </label>
+              <label>Translation Model
+                <select data-state="translationConnection">
+                  <option value="">Active default connection</option>
+                  ${selectOptions(state.connections, state.translationConnection, (x) => `${x.name} · ${x.model}`)}
+                </select>
+              </label>
+            </div>
+            ${bulkControls(state, "source")}
+          </details>
+
           <div class="ps-list" id="ps-remix-source-slot">
             ${renderRemixSourceListHtml(state)}
           </div>
@@ -2451,8 +2512,17 @@ function renderRemixAndTranslateTab(state) {
       </div>
     ` : `
       <div class="ps-panel">
-        <h3>\uD83C\uDF10 AI Preset Translator</h3>
-        <p class="ps-muted">Translate block titles and prompts while automatically shielding all <code>{{macros}}</code> from corruption.</p>
+        <div class="ps-between" style="margin-bottom:8px">
+          <div>
+            <h3>\uD83C\uDF10 AI Preset Translator</h3>
+            <p class="ps-muted">Translate block titles and prompts while shielding all <code>{{macros}}</code> from corruption.</p>
+          </div>
+          <div class="ps-seg-bar">
+            <button type="button" data-action="set-translate-target" data-target="draft" aria-pressed="${(state.translateTarget || "draft") === "draft"}">\uD83D\uDCCB Current Draft</button>
+            <button type="button" data-action="set-translate-target" data-target="source" aria-pressed="${state.translateTarget === "source"}">\uD83D\uDD00 Source Preset</button>
+          </div>
+        </div>
+
         <div class="ps-grid" style="margin-top:10px">
           <label>Target Language
             <input data-state="translationLanguage" value="${esc(state.translationLanguage)}" placeholder="e.g. English, Japanese, Spanish, Korean…">
@@ -2464,12 +2534,39 @@ function renderRemixAndTranslateTab(state) {
             </select>
           </label>
         </div>
+
+        ${state.translateTarget === "source" ? `
+          <label style="margin-top:10px">Source Preset to Translate
+            <select data-action="import-source">
+              <option value="">Choose a preset from your library (${state.presets.length} available)…</option>
+              ${selectOptions(state.presets, state.importPreset, (x) => x.name)}
+            </select>
+          </label>
+        ` : ""}
+
         <div class="ps-actions" style="margin-top:10px">
           <button type="button" class="ps-primary ps-btn-sm" data-action="save-preferences">Save Language Preference</button>
+          ${perms.generation === false ? '<span class="ps-pill ps-pill-warn">⚠ Enable Generation permission to translate</span>' : ""}
         </div>
 
-        ${state.draft ? bulkControls(state, "draft") : ""}
+        ${(state.translateTarget || "draft") === "draft" && state.draft || state.translateTarget === "source" && state.importBlocks.length ? bulkControls(state, state.translateTarget || "draft") : state.translateTarget === "source" ? '<p class="ps-muted" style="margin-top:10px">Select a Source Preset above to inspect and translate its blocks.</p>' : ""}
       </div>
+
+      ${(state.translateTarget || "draft") === "draft" && state.draft || state.translateTarget === "source" && state.importBlocks.length ? `
+        <div class="ps-panel">
+          <div class="ps-between" style="margin-bottom:8px">
+            <strong>${state.translateTarget === "source" ? `Source Blocks (${state.importBlocks.length})` : `Draft Blocks (${state.draft.prompt_order.length})`}</strong>
+            <div class="ps-actions">
+              <input style="width:180px;min-height:28px;padding:3px 9px;font-size:0.79rem" placeholder="Filter blocks…" data-state="translateSearch" value="${esc(state.translateSearch || "")}">
+              <button type="button" class="ps-btn-sm" data-action="translate-select-all">Select All</button>
+              <button type="button" class="ps-btn-sm" data-action="translate-select-none">Clear</button>
+            </div>
+          </div>
+          <div class="ps-list" id="ps-translate-list-slot" style="max-height:460px;overflow-y:auto" data-scroll-id="translate-list">
+            ${renderTranslateBlockListHtml(state)}
+          </div>
+        </div>
+      ` : ""}
 
       <div class="ps-panel">
         <h4>Extension Permissions Health</h4>
@@ -2479,6 +2576,55 @@ function renderRemixAndTranslateTab(state) {
       </div>
     `}
   `;
+}
+function renderTranslateBlockListHtml(state) {
+  const target = state.translateTarget === "source" ? "source" : "draft";
+  const blocks = target === "source" ? state.importBlocks || [] : state.draft?.prompt_order || [];
+  const q = (state.translateSearch || "").trim().toLowerCase();
+  const rows = blocks.map((block, idx) => ({ block, idx })).filter(({ block }) => {
+    if (!q)
+      return true;
+    return (block.name || "").toLowerCase().includes(q) || (block.content || "").toLowerCase().includes(q);
+  });
+  if (!rows.length)
+    return '<p class="ps-muted">No blocks match your filter.</p>';
+  return rows.map(({ block, idx }) => {
+    const isSource = target === "source";
+    const isLocked = !isSource && Boolean(block.isLocked);
+    const isChecked = isSource ? (state.selectedImports || []).includes(idx) : (state.selectedDraft || []).includes(block.id);
+    const pendingSingle = isSource ? state.sourceTranslation?.index === idx ? state.sourceTranslation : null : state.translation?.blockId === block.id ? state.translation : null;
+    const previewPrefix = isSource ? "sourceTranslation" : "translation";
+    const applyAction = isSource ? "apply-source-translation" : "apply-translation";
+    const discardAction = isSource ? "discard-source-translation" : "discard-translation";
+    return `
+        <article class="ps-card ${block.marker === "category" ? "ps-is-cat" : ""}" style="padding:8px 10px">
+          <div class="ps-between">
+            <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+              ${isSource ? `<input style="width:auto;min-height:18px" type="checkbox" data-import-index="${idx}" ${isChecked ? "checked" : ""}>` : `<input style="width:auto;min-height:18px" type="checkbox" data-draft-id="${esc(block.id)}" ${isChecked ? "checked" : ""} ${isLocked ? "disabled" : ""}>`}
+              <div style="min-width:0;flex:1">
+                <div class="ps-row" style="gap:5px">
+                  <strong style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(block.name || "Untitled")}</strong>
+                  <span class="ps-pill">${block.marker === "category" ? "Folder" : esc(block.marker || block.role)}</span>
+                  ${isLocked ? '<span class="ps-pill ps-pill-warn">\uD83D\uDD12 Locked</span>' : ""}
+                </div>
+                ${block.content?.trim() ? `<div class="ps-muted" style="font-size:0.75rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px">${esc(block.content.slice(0, 120))}</div>` : ""}
+              </div>
+            </div>
+            ${translationButtons(state, isSource ? "translate-source" : "translate-row", block, idx, isLocked)}
+          </div>
+          ${pendingSingle ? `
+            <div class="ps-card" style="margin-top:8px;border-left:3px solid var(--ps-accent)">
+              <strong>Translation Preview (${esc(state.translationLanguage)})</strong>
+              ${translationPreview(pendingSingle, previewPrefix)}
+              <div class="ps-actions" style="margin-top:8px">
+                <button type="button" class="ps-primary ps-btn-sm" data-action="${applyAction}" ${!isSource ? `data-block-id="${esc(block.id)}"` : ""}>${isSource ? "Apply to Source Block" : "Apply to Draft"}</button>
+                <button type="button" class="ps-btn-sm" data-action="${discardAction}">Discard</button>
+              </div>
+            </div>
+          ` : ""}
+        </article>
+      `;
+  }).join("");
 }
 function renderRemixSourceListHtml(state) {
   const q = (state.remixSearch || "").trim().toLowerCase();
@@ -2491,8 +2637,9 @@ function renderRemixSourceListHtml(state) {
     return '<p class="ps-muted">No source blocks match your search.</p>';
   return rows.map(({ block, i }) => {
     const isExpanded = state.expandedImports.includes(i);
+    const hasSingleTranslation = state.sourceTranslation?.index === i;
     return `
-        <article class="ps-card ${block.marker === "category" ? "ps-is-cat" : ""}" style="padding:${isExpanded ? "10px 12px" : "6px 12px"}">
+        <article class="ps-card ${block.marker === "category" ? "ps-is-cat" : ""}" style="padding:${isExpanded || hasSingleTranslation ? "10px 12px" : "6px 12px"}">
           <div class="ps-between">
             <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
               <input style="width:auto;min-height:18px" type="checkbox" data-import-index="${i}" ${state.selectedImports.includes(i) ? "checked" : ""}>
@@ -2503,11 +2650,22 @@ function renderRemixSourceListHtml(state) {
               </button>
             </div>
             <div class="ps-actions">
+              <button type="button" class="ps-btn-sm" data-action="translate-source" data-scope="${block.content?.trim() ? "both" : "name"}" data-index="${i}" ${state.translating || state.permissions?.generation === false ? "disabled" : ""} title="Translate this source block">\uD83C\uDF10</button>
               <button type="button" class="ps-btn-sm" data-action="copy-source-content" data-index="${i}">\uD83D\uDCCB</button>
               <button type="button" class="ps-primary ps-btn-sm" data-action="import-block" data-index="${i}">＋ Add to Draft</button>
             </div>
           </div>
           ${isExpanded ? block.content ? `<pre class="ps-result" style="margin-top:8px;max-height:170px">${esc(block.content)}</pre>` : '<p class="ps-muted" style="margin-top:6px">Built-in data slot — injects dynamic context.</p>' : ""}
+          ${hasSingleTranslation ? `
+            <div class="ps-card" style="margin-top:8px;border-left:3px solid var(--ps-accent)">
+              <strong>Translated Source Preview (${esc(state.translationLanguage)})</strong>
+              ${translationPreview(state.sourceTranslation, "sourceTranslation")}
+              <div class="ps-actions" style="margin-top:8px">
+                <button type="button" class="ps-primary ps-btn-sm" data-action="apply-source-translation">Apply to Source Block</button>
+                <button type="button" class="ps-btn-sm" data-action="discard-source-translation">Discard</button>
+              </div>
+            </div>
+          ` : ""}
         </article>
       `;
   }).join("");
@@ -3372,6 +3530,9 @@ function setup(ctx) {
     quickMacroSnippet: "{{char}}",
     translationLanguage: "English",
     translationConnection: "",
+    translateTarget: "draft",
+    translateSearch: "",
+    translateProgressText: "",
     translation: null,
     sourceTranslation: null,
     translating: false,
@@ -3784,6 +3945,9 @@ function setup(ctx) {
       });
       state.savedFingerprint = "";
       state.selected = 0;
+      state.selectedDraft = [];
+      state.translation = null;
+      state.batchTranslation = null;
       persist();
       await request("toast", { kind: "success", message: `Imported preset "${state.draft.name}"` });
     } else {
@@ -3861,7 +4025,7 @@ function setup(ctx) {
     return result;
   }
   function applyTranslatedFields(block, t) {
-    if (t.name !== undefined && block.name !== t.original.name || t.content !== undefined && block.content !== t.original.content) {
+    if (t.name !== undefined && (block.name || "") !== t.original.name || t.content !== undefined && (block.content || "") !== t.original.content) {
       throw new Error("The original block changed. Translate it again.");
     }
     if (t.name !== undefined)
@@ -4410,6 +4574,10 @@ function setup(ctx) {
         const slot = shellBodyEl.querySelector("#ps-remix-source-slot");
         if (slot)
           slot.innerHTML = renderRemixSourceListHtml(state);
+      } else if (key === "translateSearch") {
+        const slot = shellBodyEl.querySelector("#ps-translate-list-slot");
+        if (slot)
+          slot.innerHTML = renderTranslateBlockListHtml(state);
       } else if (["compareA", "compareB"].includes(key)) {
         renderBody();
       }
@@ -4536,6 +4704,8 @@ function setup(ctx) {
         state.collapsedCategories = [];
         state.historyPast = [structuredClone(state.draft)];
         state.historyFuture = [];
+        state.translation = null;
+        state.sourceTranslation = null;
         state.batchTranslation = null;
         state.dirty = false;
         state.notice = "";
@@ -4590,6 +4760,8 @@ function setup(ctx) {
         state.collapsedCategories = [];
         state.historyPast = [structuredClone(state.draft)];
         state.historyFuture = [];
+        state.translation = null;
+        state.sourceTranslation = null;
         state.batchTranslation = null;
         persist(true);
       } else if (a === "restore") {
@@ -4599,6 +4771,10 @@ function setup(ctx) {
           return;
         }
         state.draft = ensureUniqueBlockIds(structuredClone(state.recovery));
+        state.selectedDraft = [];
+        state.translation = null;
+        state.sourceTranslation = null;
+        state.batchTranslation = null;
         clampSelected();
         state.dirty = true;
         scheduleTokenCount();
@@ -5112,22 +5288,46 @@ ${ent.block.content || ""}`).join(`
           translationConnection: state.translationConnection
         });
         state.notice = "Studio settings saved.";
+      } else if (a === "set-translate-target") {
+        const nextTarget = el.dataset.target === "source" ? "source" : "draft";
+        state.translateTarget = nextTarget;
+        if (state.batchTranslation && state.batchTranslation.target !== nextTarget) {
+          state.batchTranslation = null;
+        }
+        renderBody();
+        return;
+      } else if (a === "translate-select-all" || a === "translate-select-none") {
+        const target = state.translateTarget === "source" ? "source" : "draft";
+        const q = (state.translateSearch || "").trim().toLowerCase();
+        if (a === "translate-select-none") {
+          if (target === "source")
+            state.selectedImports = [];
+          else
+            state.selectedDraft = [];
+        } else if (target === "source") {
+          state.selectedImports = (state.importBlocks || []).map((blk, i) => ({ blk, i })).filter(({ blk }) => !q || (blk.name || "").toLowerCase().includes(q) || (blk.content || "").toLowerCase().includes(q)).map(({ i }) => i);
+        } else {
+          state.selectedDraft = (d?.prompt_order || []).filter((blk) => !blk.isLocked && (!q || (blk.name || "").toLowerCase().includes(q) || (blk.content || "").toLowerCase().includes(q))).map((blk) => blk.id);
+        }
+        renderBody();
+        return;
       } else if (a === "translate-batch") {
         const target = el.dataset.target;
         const group = el.dataset.group;
         const scope = el.dataset.scope;
-        const list = target === "source" ? state.importBlocks : d.prompt_order;
+        const list = target === "source" ? state.importBlocks : d?.prompt_order || [];
         const owner = target === "source" ? state.importPreset : d;
-        const chosen = list.filter((block, i) => group === "all" || (target === "source" ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)));
-        if (!chosen.length)
-          throw new Error("Select at least one block to translate.");
+        const selectedMatches = list.filter((block, i) => group === "all" || (target === "source" ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)));
+        const lockedSkipped = target === "draft" ? selectedMatches.filter((blk) => blk.isLocked).length : 0;
+        const chosen = target === "draft" ? selectedMatches.filter((blk) => !blk.isLocked) : selectedMatches;
+        if (!chosen.length) {
+          throw new Error(lockedSkipped > 0 ? "All selected blocks are locked (\uD83D\uDD12). Unlock them first to translate." : "Select at least one block to translate.");
+        }
         const snapshots = chosen.map((block) => ({ id: block.id, name: block.name || "", content: block.content || "" }));
         state.batchTranslation = null;
         state.translating = true;
+        state.translateProgressText = `Translating ${snapshots.length} block(s)…`;
         render();
-        const progressEl = root.querySelector("[data-batch-progress]");
-        if (progressEl)
-          progressEl.textContent = `Translating ${snapshots.length} block(s) in parallel batches…`;
         try {
           const res = await request("translate-batch", {
             blocks: snapshots,
@@ -5136,20 +5336,23 @@ ${ent.block.content || ""}`).join(`
             connectionId: state.translationConnection
           }, {
             onProgress: (p) => {
+              state.translateProgressText = `Translated ${p.completed} / ${p.total} fields…`;
               const elProg = root.querySelector("[data-batch-progress]");
               if (elProg)
-                elProg.textContent = `Translated ${p.completed} / ${p.total} fields…`;
+                elProg.textContent = state.translateProgressText;
             }
           });
           const entries = res?.entries || [];
+          const failures = Array.isArray(res?.failures) ? res.failures : [];
           if (!entries.length)
             throw new Error("The selected blocks have no text in the chosen fields.");
           if ((target === "source" ? state.importPreset : state.draft) !== owner)
             throw new Error("The preset changed while translating. Start again.");
-          state.batchTranslation = { target, owner, entries };
-          state.notice = `${entries.length} translated blocks ready to review.`;
+          state.batchTranslation = { target, owner, entries, failures };
+          state.notice = `${entries.length} translated block(s) ready to review.` + (lockedSkipped ? ` (Skipped ${lockedSkipped} locked block(s).)` : "") + (failures.length ? ` (${failures.length} field(s) failed.)` : "");
         } finally {
           state.translating = false;
+          state.translateProgressText = "";
         }
       } else if (a === "apply-batch") {
         const batch = state.batchTranslation;
@@ -5161,32 +5364,73 @@ ${ent.block.content || ""}`).join(`
         if (pairs.some(({ entry, block }) => !block || entry.name !== undefined && (block.name || "") !== entry.original.name || entry.content !== undefined && (block.content || "") !== entry.original.content)) {
           throw new Error("A block changed since translation. Translate again.");
         }
-        for (const { entry, block } of pairs)
+        for (const { entry, block } of pairs) {
+          if (target === "draft" && block.isLocked)
+            continue;
           applyTranslatedFields(block, entry);
+        }
         state.batchTranslation = null;
-        if (target === "draft")
+        if (target === "draft") {
+          state.translation = null;
           persist();
-        state.notice = target === "draft" ? "Translations applied to the draft." : "Translations ready to add; source preset unchanged.";
+        } else {
+          state.sourceTranslation = null;
+        }
+        state.notice = target === "draft" ? "Translations applied to the draft." : "Source blocks translated (ready to add to draft; saved source preset unchanged).";
       } else if (a === "discard-batch")
         state.batchTranslation = null;
-      else if (a === "translate") {
-        if (!b)
-          throw new Error("Select a block first.");
-        const blockId = b.id;
+      else if (a === "translate-source") {
+        const idx = Number(el.dataset.index);
+        const srcBlock = state.importBlocks?.[idx];
+        if (!srcBlock)
+          throw new Error("Source block not found.");
+        const scope = el.dataset.scope || (srcBlock.content?.trim() ? "both" : "name");
+        if (!state.expandedImports.includes(idx))
+          state.expandedImports.push(idx);
         state.translating = true;
         render();
         try {
-          const result = await translateFields(b, el.dataset.scope);
+          const result = await translateFields(srcBlock, scope);
+          state.sourceTranslation = { index: idx, ...result };
+        } finally {
+          state.translating = false;
+        }
+        state.notice = `Translated source block “${srcBlock.name || "Untitled"}” — review below.`;
+      } else if (a === "apply-source-translation") {
+        const t = state.sourceTranslation;
+        const srcBlock = t ? state.importBlocks?.[t.index] : null;
+        if (!t || !srcBlock)
+          throw new Error("Source block translation is no longer available.");
+        applyTranslatedFields(srcBlock, t);
+        state.sourceTranslation = null;
+        state.notice = `Updated source block “${srcBlock.name || "Untitled"}” — click “＋ Add to Draft” to copy it.`;
+      } else if (a === "discard-source-translation")
+        state.sourceTranslation = null;
+      else if (a === "translate" || a === "translate-row") {
+        const targetBlk = a === "translate-row" ? d?.prompt_order?.[Number(el.dataset.index)] : b;
+        if (!targetBlk)
+          throw new Error("Select a block first.");
+        if (targetBlk.isLocked)
+          throw new Error("Unlock this block before translating.");
+        const blockId = targetBlk.id;
+        state.translating = true;
+        render();
+        try {
+          const result = await translateFields(targetBlk, el.dataset.scope);
           state.translation = { blockId, ...result };
         } finally {
           state.translating = false;
         }
-        state.notice = "Translation ready to review.";
+        state.notice = `Translation ready for “${targetBlk.name || "Untitled"}”.`;
       } else if (a === "apply-translation") {
         const t = state.translation;
-        if (!t || !b || t.blockId !== b.id)
+        const targetId = el.dataset.blockId || t?.blockId;
+        const targetBlk = d?.prompt_order?.find((blk) => blk.id === targetId);
+        if (!t || !targetBlk || t.blockId !== targetBlk.id)
           throw new Error("Select the translated block first.");
-        applyTranslatedFields(b, t);
+        if (targetBlk.isLocked)
+          throw new Error("Unlock this block before applying a translation.");
+        applyTranslatedFields(targetBlk, t);
         state.translation = null;
         persist();
         state.notice = "Translation applied to the draft.";

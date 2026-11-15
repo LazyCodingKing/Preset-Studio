@@ -30,6 +30,7 @@ import {
   renderPermissionBanner,
   renderBlockListOnlyHtml,
   renderRemixSourceListHtml,
+  renderTranslateBlockListHtml,
   renderXRayListOnlyHtml,
   renderArchitectTab,
   renderVariablesTab,
@@ -151,6 +152,9 @@ export function setup(ctx: SpindleFrontendContext) {
     quickMacroSnippet: '{{char}}',
     translationLanguage: 'English',
     translationConnection: '',
+    translateTarget: 'draft',
+    translateSearch: '',
+    translateProgressText: '',
     translation: null,
     sourceTranslation: null,
     translating: false,
@@ -580,6 +584,9 @@ export function setup(ctx: SpindleFrontendContext) {
       });
       state.savedFingerprint = '';
       state.selected = 0;
+      state.selectedDraft = [];
+      state.translation = null;
+      state.batchTranslation = null;
       persist();
       await request('toast', { kind: 'success', message: `Imported preset "${state.draft.name}"` });
     } else {
@@ -667,8 +674,8 @@ export function setup(ctx: SpindleFrontendContext) {
 
   function applyTranslatedFields(block: any, t: any) {
     if (
-      (t.name !== undefined && block.name !== t.original.name) ||
-      (t.content !== undefined && block.content !== t.original.content)
+      (t.name !== undefined && (block.name || '') !== t.original.name) ||
+      (t.content !== undefined && (block.content || '') !== t.original.content)
     ) {
       throw new Error('The original block changed. Translate it again.');
     }
@@ -1269,6 +1276,9 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (key === 'remixSearch') {
         const slot = shellBodyEl.querySelector<HTMLElement>('#ps-remix-source-slot');
         if (slot) slot.innerHTML = renderRemixSourceListHtml(state);
+      } else if (key === 'translateSearch') {
+        const slot = shellBodyEl.querySelector<HTMLElement>('#ps-translate-list-slot');
+        if (slot) slot.innerHTML = renderTranslateBlockListHtml(state);
       } else if (['compareA', 'compareB'].includes(key)) {
         renderBody();
       }
@@ -1402,6 +1412,8 @@ export function setup(ctx: SpindleFrontendContext) {
         state.collapsedCategories = [];
         state.historyPast = [structuredClone(state.draft)];
         state.historyFuture = [];
+        state.translation = null;
+        state.sourceTranslation = null;
         state.batchTranslation = null;
         state.dirty = false;
         state.notice = '';
@@ -1459,6 +1471,8 @@ export function setup(ctx: SpindleFrontendContext) {
         state.collapsedCategories = [];
         state.historyPast = [structuredClone(state.draft)];
         state.historyFuture = [];
+        state.translation = null;
+        state.sourceTranslation = null;
         state.batchTranslation = null;
         persist(true);
       } else if (a === 'restore') {
@@ -1470,6 +1484,10 @@ export function setup(ctx: SpindleFrontendContext) {
           return;
         }
         state.draft = ensureUniqueBlockIds(structuredClone(state.recovery));
+        state.selectedDraft = [];
+        state.translation = null;
+        state.sourceTranslation = null;
+        state.batchTranslation = null;
         clampSelected();
         state.dirty = true;
         scheduleTokenCount();
@@ -1975,22 +1993,55 @@ export function setup(ctx: SpindleFrontendContext) {
           translationConnection: state.translationConnection,
         });
         state.notice = 'Studio settings saved.';
+      } else if (a === 'set-translate-target') {
+        const nextTarget = el.dataset.target === 'source' ? 'source' : 'draft';
+        state.translateTarget = nextTarget;
+        if (state.batchTranslation && state.batchTranslation.target !== nextTarget) {
+          state.batchTranslation = null;
+        }
+        renderBody();
+        return;
+      } else if (a === 'translate-select-all' || a === 'translate-select-none') {
+        const target = state.translateTarget === 'source' ? 'source' : 'draft';
+        const q = (state.translateSearch || '').trim().toLowerCase();
+        if (a === 'translate-select-none') {
+          if (target === 'source') state.selectedImports = [];
+          else state.selectedDraft = [];
+        } else if (target === 'source') {
+          state.selectedImports = (state.importBlocks || [])
+            .map((blk: any, i: number) => ({ blk, i }))
+            .filter(({ blk }: any) => !q || (blk.name || '').toLowerCase().includes(q) || (blk.content || '').toLowerCase().includes(q))
+            .map(({ i }: any) => i);
+        } else {
+          state.selectedDraft = (d?.prompt_order || [])
+            .filter((blk: any) => !blk.isLocked && (!q || (blk.name || '').toLowerCase().includes(q) || (blk.content || '').toLowerCase().includes(q)))
+            .map((blk: any) => blk.id);
+        }
+        renderBody();
+        return;
       } else if (a === 'translate-batch') {
         const target = el.dataset.target!;
         const group = el.dataset.group!;
         const scope = el.dataset.scope!;
-        const list = target === 'source' ? state.importBlocks : d.prompt_order;
+        const list = target === 'source' ? state.importBlocks : d?.prompt_order || [];
         const owner = target === 'source' ? state.importPreset : d;
-        const chosen = list.filter(
+        const selectedMatches = list.filter(
           (block: any, i: number) => group === 'all' || (target === 'source' ? state.selectedImports.includes(i) : state.selectedDraft.includes(block.id)),
         );
-        if (!chosen.length) throw new Error('Select at least one block to translate.');
+        const lockedSkipped = target === 'draft' ? selectedMatches.filter((blk: any) => blk.isLocked).length : 0;
+        const chosen = target === 'draft' ? selectedMatches.filter((blk: any) => !blk.isLocked) : selectedMatches;
+        if (!chosen.length) {
+          throw new Error(
+            lockedSkipped > 0
+              ? 'All selected blocks are locked (🔒). Unlock them first to translate.'
+              : 'Select at least one block to translate.',
+          );
+        }
         const snapshots = chosen.map((block: any) => ({ id: block.id, name: block.name || '', content: block.content || '' }));
         state.batchTranslation = null;
         state.translating = true;
+        state.translateProgressText = `Translating ${snapshots.length} block(s)…`;
         render();
-        const progressEl = root.querySelector('[data-batch-progress]');
-        if (progressEl) progressEl.textContent = `Translating ${snapshots.length} block(s) in parallel batches…`;
         try {
           const res = await request(
             'translate-batch',
@@ -2002,18 +2053,24 @@ export function setup(ctx: SpindleFrontendContext) {
             },
             {
               onProgress: (p: any) => {
+                state.translateProgressText = `Translated ${p.completed} / ${p.total} fields…`;
                 const elProg = root.querySelector('[data-batch-progress]');
-                if (elProg) elProg.textContent = `Translated ${p.completed} / ${p.total} fields…`;
+                if (elProg) elProg.textContent = state.translateProgressText;
               },
             },
           );
           const entries = res?.entries || [];
+          const failures = Array.isArray(res?.failures) ? res.failures : [];
           if (!entries.length) throw new Error('The selected blocks have no text in the chosen fields.');
           if ((target === 'source' ? state.importPreset : state.draft) !== owner) throw new Error('The preset changed while translating. Start again.');
-          state.batchTranslation = { target, owner, entries };
-          state.notice = `${entries.length} translated blocks ready to review.`;
+          state.batchTranslation = { target, owner, entries, failures };
+          state.notice =
+            `${entries.length} translated block(s) ready to review.` +
+            (lockedSkipped ? ` (Skipped ${lockedSkipped} locked block(s).)` : '') +
+            (failures.length ? ` (${failures.length} field(s) failed.)` : '');
         } finally {
           state.translating = false;
+          state.translateProgressText = '';
         }
       } else if (a === 'apply-batch') {
         const batch = state.batchTranslation;
@@ -2032,27 +2089,63 @@ export function setup(ctx: SpindleFrontendContext) {
         ) {
           throw new Error('A block changed since translation. Translate again.');
         }
-        for (const { entry, block } of pairs) applyTranslatedFields(block, entry);
+        for (const { entry, block } of pairs) {
+          if (target === 'draft' && block.isLocked) continue;
+          applyTranslatedFields(block, entry);
+        }
         state.batchTranslation = null;
-        if (target === 'draft') persist();
-        state.notice = target === 'draft' ? 'Translations applied to the draft.' : 'Translations ready to add; source preset unchanged.';
+        if (target === 'draft') {
+          state.translation = null;
+          persist();
+        } else {
+          state.sourceTranslation = null;
+        }
+        state.notice = target === 'draft' ? 'Translations applied to the draft.' : 'Source blocks translated (ready to add to draft; saved source preset unchanged).';
       } else if (a === 'discard-batch') state.batchTranslation = null;
-      else if (a === 'translate') {
-        if (!b) throw new Error('Select a block first.');
-        const blockId = b.id;
+      else if (a === 'translate-source') {
+        const idx = Number(el.dataset.index);
+        const srcBlock = state.importBlocks?.[idx];
+        if (!srcBlock) throw new Error('Source block not found.');
+        const scope = el.dataset.scope || (srcBlock.content?.trim() ? 'both' : 'name');
+        if (!state.expandedImports.includes(idx)) state.expandedImports.push(idx);
         state.translating = true;
         render();
         try {
-          const result = await translateFields(b, el.dataset.scope!);
+          const result = await translateFields(srcBlock, scope);
+          state.sourceTranslation = { index: idx, ...result };
+        } finally {
+          state.translating = false;
+        }
+        state.notice = `Translated source block “${srcBlock.name || 'Untitled'}” — review below.`;
+      } else if (a === 'apply-source-translation') {
+        const t = state.sourceTranslation;
+        const srcBlock = t ? state.importBlocks?.[t.index] : null;
+        if (!t || !srcBlock) throw new Error('Source block translation is no longer available.');
+        applyTranslatedFields(srcBlock, t);
+        state.sourceTranslation = null;
+        state.notice = `Updated source block “${srcBlock.name || 'Untitled'}” — click “＋ Add to Draft” to copy it.`;
+      } else if (a === 'discard-source-translation') state.sourceTranslation = null;
+      else if (a === 'translate' || a === 'translate-row') {
+        const targetBlk = a === 'translate-row' ? d?.prompt_order?.[Number(el.dataset.index)] : b;
+        if (!targetBlk) throw new Error('Select a block first.');
+        if (targetBlk.isLocked) throw new Error('Unlock this block before translating.');
+        const blockId = targetBlk.id;
+        state.translating = true;
+        render();
+        try {
+          const result = await translateFields(targetBlk, el.dataset.scope!);
           state.translation = { blockId, ...result };
         } finally {
           state.translating = false;
         }
-        state.notice = 'Translation ready to review.';
+        state.notice = `Translation ready for “${targetBlk.name || 'Untitled'}”.`;
       } else if (a === 'apply-translation') {
         const t = state.translation;
-        if (!t || !b || t.blockId !== b.id) throw new Error('Select the translated block first.');
-        applyTranslatedFields(b, t);
+        const targetId = el.dataset.blockId || t?.blockId;
+        const targetBlk = d?.prompt_order?.find((blk: any) => blk.id === targetId);
+        if (!t || !targetBlk || t.blockId !== targetBlk.id) throw new Error('Select the translated block first.');
+        if (targetBlk.isLocked) throw new Error('Unlock this block before applying a translation.');
+        applyTranslatedFields(targetBlk, t);
         state.translation = null;
         persist();
         state.notice = 'Translation applied to the draft.';
