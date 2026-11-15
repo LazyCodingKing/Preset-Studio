@@ -1222,11 +1222,13 @@ export function renderTestTab(state: any): string {
           </div>
 
           <div style="margin-bottom:8px">
-            <div class="ps-between" style="margin-bottom:4px">
-              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
-              ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ''}
-            </div>
-            <div id="ps-test-model-slot"></div>
+            <label>
+              <span class="ps-between" style="width:100%">
+                <span>Model Override <span class="ps-muted" style="font-weight:400">(optional)</span></span>
+                ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ''}
+              </span>
+              <input data-state="testModelOverride" value="${esc(state.testModelOverride || '')}" placeholder="Leave blank to use connection's saved model…">
+            </label>
           </div>
 
           ${(() => {

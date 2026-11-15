@@ -54,6 +54,71 @@ function sanitizeModelId(value: unknown): string {
   return MODEL_PLACEHOLDERS.has(raw.toLowerCase()) ? '' : raw;
 }
 
+function buildCleanGenerationParameters(preset: any): Record<string, unknown> {
+  const raw = preset?.parameters && typeof preset.parameters === 'object' ? preset.parameters : {};
+  const overrides = (raw.samplerOverrides ||
+    raw.sampler_overrides ||
+    preset?.metadata?.samplerOverrides ||
+    preset?.metadata?.sampler_overrides) as Record<string, boolean> | undefined;
+  const isAllowed = (key: string) => !overrides || typeof overrides !== 'object' || overrides[key] !== false;
+
+  const out: Record<string, unknown> = {};
+  const num = (v: unknown) => (v !== '' && v !== null && v !== undefined && Number.isFinite(Number(v)) ? Number(v) : undefined);
+
+  const temp = num(raw.temperature);
+  if (temp !== undefined && temp >= 0 && isAllowed('temperature')) out.temperature = temp;
+
+  const topP = num(raw.top_p);
+  if (topP !== undefined && topP > 0 && topP <= 1 && isAllowed('top_p')) out.top_p = topP;
+
+  const maxTok = num(raw.max_tokens);
+  if (maxTok !== undefined && maxTok >= 1 && isAllowed('max_tokens')) out.max_tokens = Math.floor(maxTok);
+
+  const minP = num(raw.min_p);
+  if (minP !== undefined && minP > 0 && minP <= 1 && isAllowed('min_p')) out.min_p = minP;
+
+  const topK = num(raw.top_k);
+  if (topK !== undefined && topK >= 1 && isAllowed('top_k')) out.top_k = Math.floor(topK);
+
+  const freqPen = num(raw.frequency_penalty);
+  if (freqPen !== undefined && freqPen !== 0 && isAllowed('frequency_penalty')) out.frequency_penalty = freqPen;
+
+  const presPen = num(raw.presence_penalty);
+  if (presPen !== undefined && presPen !== 0 && isAllowed('presence_penalty')) out.presence_penalty = presPen;
+
+  const repPen = num(raw.repetition_penalty);
+  if (repPen !== undefined && repPen > 0 && repPen !== 1 && isAllowed('repetition_penalty')) out.repetition_penalty = repPen;
+
+  const seed = num(raw.seed);
+  if (seed !== undefined && seed >= 0 && isAllowed('seed')) out.seed = Math.floor(seed);
+
+  if (Array.isArray(raw.stop) && raw.stop.length > 0 && isAllowed('stop')) {
+    out.stop = raw.stop.filter((s: unknown) => typeof s === 'string' && s.length > 0);
+  }
+
+  return out;
+}
+
+function sanitizeProviderMessages(messages: any[]): Array<{ role: 'system' | 'user' | 'assistant'; content: string; name?: string }> {
+  const cleaned: Array<{ role: 'system' | 'user' | 'assistant'; content: string; name?: string }> = [];
+  for (const m of messages || []) {
+    if (!m) continue;
+    const content = typeof m.content === 'string' ? m.content : String(m.content ?? '');
+    if (!content.trim()) continue;
+    const role: 'system' | 'user' | 'assistant' =
+      m.role === 'user' || m.role === 'assistant' || m.role === 'system' ? m.role : 'system';
+    cleaned.push({
+      role,
+      content,
+      ...(typeof m.name === 'string' && m.name.trim() ? { name: m.name.trim() } : {}),
+    });
+  }
+  if (cleaned.length > 0 && !cleaned.some((m) => m.role === 'user')) {
+    cleaned.push({ role: 'user', content: 'Continue.' });
+  }
+  return cleaned;
+}
+
 const SEALED_BLOCK_KEYS = [
   'sealed',
   'sealedKey',
@@ -1346,7 +1411,9 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           );
 
           if (msg.action === 'run') {
-            if (!messages.length) throw new Error('No prompt content or messages to generate a reply from.');
+            const cleanMessages = sanitizeProviderMessages(messages);
+            if (!cleanMessages.length) throw new Error('No prompt content or messages to generate a reply from.');
+            const cleanParams = buildCleanGenerationParameters(msg.preset);
             const modelOverride = sanitizeModelId(msg.modelOverride);
             let targetConn: any = null;
             if (modelOverride) {
@@ -1365,14 +1432,14 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
                   provider: targetConn.provider,
                   model: modelOverride,
                   connection_id: targetConn.id,
-                  messages,
-                  parameters: msg.preset?.parameters || {},
+                  messages: cleanMessages,
+                  ...(Object.keys(cleanParams).length ? { parameters: cleanParams } : {}),
                   ...uOpt,
                   signal: controller.signal,
                 } as any)
               : spindle.generate.quietStream({
-                  messages,
-                  parameters: msg.preset?.parameters || {},
+                  messages: cleanMessages,
+                  ...(Object.keys(cleanParams).length ? { parameters: cleanParams } : {}),
                   ...(msg.connectionId ? { connection_id: msg.connectionId } : {}),
                   ...uOpt,
                   signal: controller.signal,

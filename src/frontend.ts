@@ -906,8 +906,8 @@ export function setup(ctx: SpindleFrontendContext) {
         { key: 'temperature', label: 'Temperature (Randomness)', min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: 'top_p', label: 'Top-P (Nucleus Sampling)', min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
         { key: 'min_p', label: 'Min-P', min: 0, max: 1, step: 0.01, def: 0, decimals: 2 },
-        { key: 'frequency_penalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
-        { key: 'presence_penalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
+        { key: 'frequency_penalty', label: 'Frequency Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
+        { key: 'presence_penalty', label: 'Presence Penalty', min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
         { key: 'repetition_penalty', label: 'Repetition Penalty', min: 1, max: 2, step: 0.01, def: 1, decimals: 2 },
       ];
       for (const s of specs) {
@@ -936,25 +936,6 @@ export function setup(ctx: SpindleFrontendContext) {
 
     if (state.view === 'variables') {
       mountVariablePreviewControls();
-    }
-
-    if (state.view === 'test' && !state.abFullWindow && ctx.components.mountModelCombobox) {
-      const modelSlot = shellBodyEl.querySelector<HTMLElement>('#ps-test-model-slot');
-      if (modelSlot) {
-        modelSlot.innerHTML = '';
-        trackMount(() =>
-          ctx.components.mountModelCombobox(modelSlot, {
-            value: state.testModelOverride || '',
-            connection: state.connectionId ? { kind: 'llm', id: state.connectionId } : { kind: 'llm' },
-            appearance: 'compact',
-            placeholder: 'Use connection default model…',
-            onChange: (modelVal: string) => {
-              state.testModelOverride = cleanModelName(modelVal);
-              scheduleTokenCount();
-            },
-          }),
-        );
-      }
     }
   }
 
@@ -1386,6 +1367,9 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (key === 'translateSearch') {
         const slot = shellBodyEl.querySelector<HTMLElement>('#ps-translate-list-slot');
         if (slot) slot.innerHTML = renderTranslateBlockListHtml(state);
+      } else if (key === 'testModelOverride') {
+        state.testModelOverride = cleanModelName(el.value);
+        scheduleTokenCount();
       } else if (['compareA', 'compareB', 'abSearch'].includes(key)) {
         renderBody();
       }

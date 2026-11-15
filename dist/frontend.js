@@ -3464,11 +3464,13 @@ function renderTestTab(state) {
           </div>
 
           <div style="margin-bottom:8px">
-            <div class="ps-between" style="margin-bottom:4px">
-              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
-              ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ""}
-            </div>
-            <div id="ps-test-model-slot"></div>
+            <label>
+              <span class="ps-between" style="width:100%">
+                <span>Model Override <span class="ps-muted" style="font-weight:400">(optional)</span></span>
+                ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ""}
+              </span>
+              <input data-state="testModelOverride" value="${esc(state.testModelOverride || "")}" placeholder="Leave blank to use connection's saved model…">
+            </label>
           </div>
 
           ${(() => {
@@ -5003,8 +5005,8 @@ function setup(ctx) {
         { key: "temperature", label: "Temperature (Randomness)", min: 0, max: 2, step: 0.05, def: 0.8, decimals: 2 },
         { key: "top_p", label: "Top-P (Nucleus Sampling)", min: 0, max: 1, step: 0.01, def: 0.95, decimals: 2 },
         { key: "min_p", label: "Min-P", min: 0, max: 1, step: 0.01, def: 0, decimals: 2 },
-        { key: "frequency_penalty", label: "Frequency Penalty", min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
-        { key: "presence_penalty", label: "Presence Penalty", min: -2, max: 2, step: 0.05, def: 0.8, decimals: 2 },
+        { key: "frequency_penalty", label: "Frequency Penalty", min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
+        { key: "presence_penalty", label: "Presence Penalty", min: -2, max: 2, step: 0.05, def: 0, decimals: 2 },
         { key: "repetition_penalty", label: "Repetition Penalty", min: 1, max: 2, step: 0.01, def: 1, decimals: 2 }
       ];
       for (const s of specs) {
@@ -5031,22 +5033,6 @@ function setup(ctx) {
     }
     if (state.view === "variables") {
       mountVariablePreviewControls();
-    }
-    if (state.view === "test" && !state.abFullWindow && ctx.components.mountModelCombobox) {
-      const modelSlot = shellBodyEl.querySelector("#ps-test-model-slot");
-      if (modelSlot) {
-        modelSlot.innerHTML = "";
-        trackMount(() => ctx.components.mountModelCombobox(modelSlot, {
-          value: state.testModelOverride || "",
-          connection: state.connectionId ? { kind: "llm", id: state.connectionId } : { kind: "llm" },
-          appearance: "compact",
-          placeholder: "Use connection default model…",
-          onChange: (modelVal) => {
-            state.testModelOverride = cleanModelName(modelVal);
-            scheduleTokenCount();
-          }
-        }));
-      }
     }
   }
   function renderHeader() {
@@ -5454,6 +5440,9 @@ function setup(ctx) {
         const slot = shellBodyEl.querySelector("#ps-translate-list-slot");
         if (slot)
           slot.innerHTML = renderTranslateBlockListHtml(state);
+      } else if (key === "testModelOverride") {
+        state.testModelOverride = cleanModelName(el.value);
+        scheduleTokenCount();
       } else if (["compareA", "compareB", "abSearch"].includes(key)) {
         renderBody();
       }
