@@ -34,6 +34,7 @@ import {
   type ModalRef,
 } from './studio-dialogs.js';
 import {
+  cleanModelName,
   renderAbComparisonView,
   renderPermissionBanner,
   renderBlockListOnlyHtml,
@@ -93,6 +94,8 @@ export function setup(ctx: SpindleFrontendContext) {
     presets: [],
     chats: [],
     connections: [],
+    connectionsError: '',
+    testModelOverride: '',
     permissions: { presets: true, chats: true, generation: true, app_manipulation: true, regex_scripts: false },
     loading: false,
     loadError: '',
@@ -400,7 +403,11 @@ export function setup(ctx: SpindleFrontendContext) {
 
       try {
         if (missingTexts.length > 0) {
-          const res = await request('count-tokens', { texts: missingTexts, connectionId: state.connectionId });
+          const res = await request('count-tokens', {
+            texts: missingTexts,
+            connectionId: state.connectionId,
+            modelOverride: state.testModelOverride,
+          });
           if (destroyed || !res?.counts) return;
           if (tokenCache.size > 512) tokenCache.clear();
           missingIndices.forEach((blockIdx, i) => {
@@ -930,6 +937,25 @@ export function setup(ctx: SpindleFrontendContext) {
     if (state.view === 'variables') {
       mountVariablePreviewControls();
     }
+
+    if (state.view === 'test' && !state.abFullWindow && ctx.components.mountModelCombobox) {
+      const modelSlot = shellBodyEl.querySelector<HTMLElement>('#ps-test-model-slot');
+      if (modelSlot) {
+        modelSlot.innerHTML = '';
+        trackMount(() =>
+          ctx.components.mountModelCombobox(modelSlot, {
+            value: state.testModelOverride || '',
+            connection: state.connectionId ? { kind: 'llm', id: state.connectionId } : { kind: 'llm' },
+            appearance: 'compact',
+            placeholder: 'Use connection default model…',
+            onChange: (modelVal: string) => {
+              state.testModelOverride = cleanModelName(modelVal);
+              scheduleTokenCount();
+            },
+          }),
+        );
+      }
+    }
   }
 
   function renderHeader() {
@@ -1114,6 +1140,18 @@ export function setup(ctx: SpindleFrontendContext) {
         state.presets = Array.isArray(data.presets) ? data.presets : [];
         state.chats = Array.isArray(data.chats) ? data.chats : [];
         state.connections = Array.isArray(data.connections) ? data.connections : [];
+        state.connectionsError = typeof data.connectionsError === 'string' ? data.connectionsError : '';
+        const validConnIds = new Set(state.connections.map((c: any) => c.id));
+        if (state.connectionId && !validConnIds.has(state.connectionId)) {
+          state.connectionId = '';
+          state.testModelOverride = '';
+        }
+        if (state.translationConnection && !validConnIds.has(state.translationConnection)) {
+          state.translationConnection = '';
+        }
+        if (Array.isArray(state.matrixConnections)) {
+          state.matrixConnections = state.matrixConnections.filter((cid: string) => validConnIds.has(cid));
+        }
         state.recovery = data.draft;
         if (data.permissions) state.permissions = { ...state.permissions, ...data.permissions };
         if (!state.preferencesLoaded) {
@@ -1365,6 +1403,9 @@ export function setup(ctx: SpindleFrontendContext) {
       }
       if (key === 'chatId') {
         state.noContextChat = !el.value;
+      }
+      if (key === 'connectionId') {
+        state.testModelOverride = '';
       }
       if (['compareA', 'compareB', 'connectionId', 'chatId', 'generationType'].includes(key)) {
         if (key === 'connectionId') scheduleTokenCount();
@@ -2000,6 +2041,11 @@ export function setup(ctx: SpindleFrontendContext) {
           await request('toast', { kind: 'success', title: 'Preset Studio', message: `Exported ${filename}` });
         }
         return;
+      } else if (a === 'clear-test-model-override') {
+        state.testModelOverride = '';
+        scheduleTokenCount();
+        renderBody();
+        return;
       } else if (a === 'load-run-inputs') {
         const idx = Number(el.dataset.runIdx);
         const r = state.runs?.[idx];
@@ -2092,58 +2138,67 @@ export function setup(ctx: SpindleFrontendContext) {
             state.activeRun = requestId;
             render();
 
-            const result: any = await new Promise((resolve, reject) => {
-              let inactivityTimer: any = null;
-              const resetInactivity = () => {
-                if (inactivityTimer) clearTimeout(inactivityTimer);
-                inactivityTimer = setTimeout(() => {
-                  if (pending.delete(requestId)) {
-                    reject(new Error('Generation timed out while waiting for provider stream.'));
-                  }
-                }, 120_000);
-              };
-              resetInactivity();
-              pending.set(requestId, {
-                touch: resetInactivity,
-                resolve: (val: any) => {
+            let result: any = null;
+            let iterError: string | null = null;
+            try {
+              result = await new Promise((resolve, reject) => {
+                let inactivityTimer: any = null;
+                const resetInactivity = () => {
                   if (inactivityTimer) clearTimeout(inactivityTimer);
-                  resolve(val);
-                },
-                reject: (err: any) => {
-                  if (inactivityTimer) clearTimeout(inactivityTimer);
-                  reject(err);
-                },
-                onAssembled: (assembledPayload: any) => {
-                  runAssembled = assembledPayload;
-                  state.assembled = assembledPayload;
-                },
-                onReasoning: (token: string) => {
-                  state.reasoning += token;
-                },
-                onToken: (token: string) => {
-                  state.result += token;
-                },
+                  inactivityTimer = setTimeout(() => {
+                    if (pending.delete(requestId)) {
+                      reject(new Error('Generation timed out while waiting for provider stream.'));
+                    }
+                  }, 120_000);
+                };
+                resetInactivity();
+                pending.set(requestId, {
+                  touch: resetInactivity,
+                  resolve: (val: any) => {
+                    if (inactivityTimer) clearTimeout(inactivityTimer);
+                    resolve(val);
+                  },
+                  reject: (err: any) => {
+                    if (inactivityTimer) clearTimeout(inactivityTimer);
+                    reject(err);
+                  },
+                  onAssembled: (assembledPayload: any) => {
+                    runAssembled = assembledPayload;
+                    state.assembled = assembledPayload;
+                  },
+                  onReasoning: (token: string) => {
+                    state.reasoning += token;
+                  },
+                  onToken: (token: string) => {
+                    state.result += token;
+                    const counterEl = shellBodyEl.querySelector('[data-stream-counter]');
+                    if (counterEl) counterEl.textContent = `${state.result.length.toLocaleString()} chars`;
+                  },
+                });
+                ctx.sendToBackend({
+                  action: 'run',
+                  requestId,
+                  preset: snapshot,
+                  promptSource: state.testPromptSource,
+                  customPrompt: state.testCustomPrompt,
+                  includeChatHistory: state.testCustomPromptIncludeHistory,
+                  chatId: state.chatId,
+                  connectionId: tgt.connectionId,
+                  ...(!isMatrix && state.testModelOverride ? { modelOverride: state.testModelOverride } : {}),
+                  generationType: state.generationType,
+                  testTurns: stagedTurns,
+                  customMessage: state.custom,
+                  authorsNote: state.authorsNote,
+                });
               });
-              ctx.sendToBackend({
-                action: 'run',
-                requestId,
-                preset: snapshot,
-                promptSource: state.testPromptSource,
-                customPrompt: state.testCustomPrompt,
-                includeChatHistory: state.testCustomPromptIncludeHistory,
-                chatId: state.chatId,
-                connectionId: tgt.connectionId,
-                generationType: state.generationType,
-                testTurns: stagedTurns,
-                customMessage: state.custom,
-                authorsNote: state.authorsNote,
-              });
-            });
+            } catch (err: any) {
+              iterError = err?.message || String(err);
+            }
 
             if (result?.aborted || state.matrixAborted) break;
 
-            const finalContent = result?.content || state.result;
-            const finalDisplay = result?.displayContent || finalContent;
+            const finalContent = iterError ? `[ERROR] ${iterError}` : result?.content || state.result;
+            const finalDisplay = iterError ? finalContent : result?.displayContent || finalContent;
             const finalReasoning = result?.reasoning || state.reasoning;
             const finalUsage = result?.usage || null;
             const activeBlocks = (snapshot?.prompt_order || []).filter((blk: any) => blk.enabled && blk.marker !== 'category');
@@ -2151,7 +2206,9 @@ export function setup(ctx: SpindleFrontendContext) {
               state.testTurnMode === 'multi' && state.testTurns.length
                 ? state.testTurns[state.testTurns.length - 1]?.content || ''
                 : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : '');
-            const connObj = state.connections.find((c: any) => c.id === tgt.connectionId);
+            const connObj = tgt.connectionId
+              ? state.connections.find((c: any) => c.id === tgt.connectionId)
+              : state.connections.find((c: any) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages)
               ? runAssembled.messages.slice(-40).map((m: any) => ({
@@ -2166,7 +2223,7 @@ export function setup(ctx: SpindleFrontendContext) {
 
             state.runs.push({
               time: new Date().toLocaleTimeString(),
-              note: isMatrix ? connObj?.name || tgt.label : tgt.label,
+              note: (isMatrix ? connObj?.name || tgt.label : tgt.label) + (iterError ? ' (Failed)' : ''),
               connection: connObj?.name || 'Active connection',
               presetName: isCustomSource ? 'Custom Prompt' : snapshot?.name || 'Draft',
               activeBlocksCount: activeBlocks.length,
@@ -2181,7 +2238,9 @@ export function setup(ctx: SpindleFrontendContext) {
                 chatName: state.chatId ? chatObj?.name || state.chatId : 'Standalone (No Chat)',
                 standalone: !state.chatId,
                 connection: connObj?.name || 'Active connection',
-                model: connObj?.model || '',
+                model: isMatrix
+                  ? cleanModelName(connObj?.model)
+                  : cleanModelName(state.testModelOverride) || cleanModelName(connObj?.model),
                 temperature: snapshot?.parameters?.temperature,
                 generationType: state.generationType || 'normal',
                 activeBlocksCount: activeBlocks.length,
@@ -2911,6 +2970,7 @@ export function setup(ctx: SpindleFrontendContext) {
             includeChatHistory: state.testCustomPromptIncludeHistory,
             chatId: state.chatId,
             connectionId: state.connectionId,
+            modelOverride: state.testModelOverride,
             generationType: state.generationType,
             testTurns: stagedTurns,
             customMessage: state.custom,
@@ -2929,7 +2989,9 @@ export function setup(ctx: SpindleFrontendContext) {
               state.testTurnMode === 'multi' && state.testTurns.length
                 ? state.testTurns[state.testTurns.length - 1]?.content || ''
                 : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : '');
-            const connObj = state.connections.find((c: any) => c.id === state.connectionId);
+            const connObj = state.connectionId
+              ? state.connections.find((c: any) => c.id === state.connectionId)
+              : state.connections.find((c: any) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages)
               ? runAssembled.messages.slice(-40).map((m: any) => ({
@@ -2948,7 +3010,7 @@ export function setup(ctx: SpindleFrontendContext) {
               chatName: state.chatId ? chatObj?.name || state.chatId : 'Standalone (No Chat)',
               standalone: !state.chatId,
               connection: connObj?.name || 'Active connection',
-              model: connObj?.model || '',
+              model: cleanModelName(state.testModelOverride) || cleanModelName(connObj?.model),
               temperature: snapshot?.parameters?.temperature,
               generationType: state.generationType || 'normal',
               activeBlocksCount,
@@ -3014,6 +3076,11 @@ export function setup(ctx: SpindleFrontendContext) {
   return () => {
     destroyed = true;
     closeModalRef(modalRef);
+    if (abDialogEl) {
+      try { abDialogEl.close(); } catch (_) {}
+      abDialogEl.remove();
+      abDialogEl = null;
+    }
     destroyMounted();
     clearTimeout(timer);
     clearTimeout(tokenTimer);

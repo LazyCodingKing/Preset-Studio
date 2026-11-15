@@ -47,6 +47,13 @@ const uid = () =>
     ? crypto.randomUUID()
     : 'b_' + Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
 
+const MODEL_PLACEHOLDERS = new Set(['', 'string', 'model', 'your-model-here', 'null', 'undefined']);
+
+function sanitizeModelId(value: unknown): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  return MODEL_PLACEHOLDERS.has(raw.toLowerCase()) ? '' : raw;
+}
+
 const SEALED_BLOCK_KEYS = [
   'sealed',
   'sealedKey',
@@ -773,6 +780,12 @@ spindle.on?.('CONNECTION_PROFILE_LOADED', (_payload, userId?: string) => {
   spindle.sendToFrontend({ type: 'host-sync', reason: 'connection_changed' }, userId);
 });
 
+spindle.on?.('SETTINGS_UPDATED', (payload: any, userId?: string) => {
+  if (payload?.key === 'activeProfileId') {
+    spindle.sendToFrontend({ type: 'host-sync', reason: 'connection_changed' }, userId);
+  }
+});
+
 spindle.commands?.register?.([
   {
     id: 'open-studio-full',
@@ -816,6 +829,7 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
     let data: any;
     switch (msg.action) {
       case 'load': {
+        let connectionsError = '';
         const [presetsList, chatsList, activeChat, connections, draft, templates, preferences, testHistory] = await Promise.all([
           !spindle.permissions || spindle.permissions.has('presets')
             ? listAllPaginated((opts) => spindle.presets.list({ ...opts, ...uOpt } as any)).catch((err) => {
@@ -833,7 +847,11 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
             ? (spindle.chats.getActive as any)(...uArg).catch(() => null)
             : Promise.resolve(null),
           !spindle.permissions || spindle.permissions.has('generation')
-            ? (spindle.connections.list as any)(...uArg).catch(() => [])
+            ? (spindle.connections.list as any)(...uArg).catch((err: any) => {
+                connectionsError = err?.message || String(err);
+                spindle.log?.warn?.(`connections.list failed: ${connectionsError}`);
+                return [];
+              })
             : Promise.resolve([]),
           spindle.userStorage.getJson('draft.json', { fallback: null, ...uOpt }).catch(() => null),
           spindle.userStorage.getJson('templates.json', { fallback: [], ...uOpt }).catch(() => []),
@@ -850,7 +868,10 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
           presets: Array.isArray(presetsList) ? presetsList : [],
           chats: chatList,
           active: activeChat || null,
-          connections: Array.isArray(connections) ? connections : [],
+          connections: Array.isArray(connections)
+            ? connections.map((c: any) => ({ ...c, model: sanitizeModelId(c?.model) }))
+            : [],
+          connectionsError,
           draft,
           templates: Array.isArray(templates) ? templates : [],
           preferences: preferences || {},
@@ -1010,9 +1031,13 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
       case 'count-tokens': {
         const rawTexts = Array.isArray(msg.texts) ? msg.texts.slice(0, 256) : [];
         let explicitModel: string | undefined;
-        if (msg.connectionId && (!spindle.permissions || spindle.permissions.has('generation'))) {
+        const overrideModel = sanitizeModelId(msg.modelOverride);
+        if (overrideModel) {
+          explicitModel = overrideModel;
+        } else if (msg.connectionId && (!spindle.permissions || spindle.permissions.has('generation'))) {
           const conn = await (spindle.connections.get as any)(String(msg.connectionId), ...uArg).catch(() => null);
-          if (conn?.model) explicitModel = conn.model;
+          const cleanConnModel = sanitizeModelId(conn?.model);
+          if (cleanConnModel) explicitModel = cleanConnModel;
         }
         let tokenizerName = 'Approximate (chars/4)';
         let approximate = true;
@@ -1322,17 +1347,40 @@ spindle.onFrontendMessage(async (msg: any, userId?: string, frontendSessionId?: 
 
           if (msg.action === 'run') {
             if (!messages.length) throw new Error('No prompt content or messages to generate a reply from.');
-            const args: any = {
-              messages,
-              parameters: msg.preset?.parameters || {},
-              ...(msg.connectionId ? { connection_id: msg.connectionId } : {}),
-              ...uOpt,
-              signal: controller.signal,
-            };
+            const modelOverride = sanitizeModelId(msg.modelOverride);
+            let targetConn: any = null;
+            if (modelOverride) {
+              if (msg.connectionId) {
+                targetConn = await (spindle.connections.get as any)(String(msg.connectionId), ...uArg).catch(() => null);
+              } else {
+                const list = await (spindle.connections.list as any)(...uArg).catch(() => []);
+                targetConn = Array.isArray(list) ? list.find((c: any) => c.is_default) || list[0] || null : null;
+              }
+            }
+            const useRawOverride = Boolean(
+              modelOverride && targetConn?.provider && sanitizeModelId(targetConn.model) !== modelOverride,
+            );
+            const streamIter = useRawOverride
+              ? spindle.generate.rawStream({
+                  provider: targetConn.provider,
+                  model: modelOverride,
+                  connection_id: targetConn.id,
+                  messages,
+                  parameters: msg.preset?.parameters || {},
+                  ...uOpt,
+                  signal: controller.signal,
+                } as any)
+              : spindle.generate.quietStream({
+                  messages,
+                  parameters: msg.preset?.parameters || {},
+                  ...(msg.connectionId ? { connection_id: msg.connectionId } : {}),
+                  ...uOpt,
+                  signal: controller.signal,
+                } as any);
             let streamedText = '';
             let streamedReasoning = '';
             let sawDone = false;
-            for await (const chunk of spindle.generate.quietStream(args)) {
+            for await (const chunk of streamIter) {
               if (chunk.type === 'token') {
                 streamedText += chunk.token || '';
                 reply(userId, id, 'token', { token: chunk.token }, frontendSessionId);

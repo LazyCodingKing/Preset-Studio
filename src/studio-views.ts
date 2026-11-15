@@ -14,6 +14,25 @@ import {
   lintBlockMacros,
 } from './studio-core.js';
 
+const MODEL_PLACEHOLDERS = new Set(['', 'string', 'model', 'your-model-here', 'null', 'undefined']);
+
+export function cleanModelName(model: unknown): string {
+  const raw = typeof model === 'string' ? model.trim() : '';
+  return MODEL_PLACEHOLDERS.has(raw.toLowerCase()) ? '' : raw;
+}
+
+export function formatConnectionLabel(c: any): string {
+  if (!c) return 'Active default connection';
+  const m = cleanModelName(c.model);
+  const tags: string[] = [];
+  if (c.provider) tags.push(String(c.provider));
+  if (m) tags.push(m);
+  const meta = tags.length ? ` (${tags.join(' / ')})` : '';
+  const def = c.is_default ? ' [default]' : '';
+  const noKey = c.has_api_key === false ? ' [No Key]' : '';
+  return `${c.name}${meta}${def}${noKey}`;
+}
+
 export function renderPermissionBanner(state: any): string {
   const perms = state.permissions || {};
   const missing: string[] = [];
@@ -791,7 +810,7 @@ export function renderRemixAndTranslateTab(state: any): string {
           <label>Translation Model Connection
             <select data-state="translationConnection">
               <option value="">Active default connection</option>
-              ${selectOptions(state.connections, state.translationConnection, (x: any) => `${x.name} · ${x.model}`)}
+              ${selectOptions(state.connections, state.translationConnection, (x: any) => formatConnectionLabel(x))}
             </select>
           </label>
         </div>
@@ -1197,10 +1216,38 @@ export function renderTestTab(state: any): string {
             <label>Model Connection
               <select data-state="connectionId">
                 <option value="">Active default connection</option>
-                ${selectOptions(state.connections, state.connectionId, (x: any) => `${x.name} · ${x.model}`)}
+                ${selectOptions(state.connections, state.connectionId, (x: any) => formatConnectionLabel(x))}
               </select>
             </label>
           </div>
+
+          <div style="margin-bottom:8px">
+            <div class="ps-between" style="margin-bottom:4px">
+              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
+              ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ''}
+            </div>
+            <div id="ps-test-model-slot"></div>
+          </div>
+
+          ${(() => {
+            const permsOk = state.permissions?.generation !== false;
+            const resolvedConn = state.connectionId
+              ? state.connections.find((c: any) => c.id === state.connectionId)
+              : state.connections.find((c: any) => c.is_default) || state.connections[0];
+            const warnings: string[] = [];
+            if (!permsOk) warnings.push('Enable the "generation" permission in Extensions to load connections and run tests.');
+            else if (state.connectionsError) warnings.push(`Could not load connections: ${state.connectionsError}`);
+            else if (!state.connections.length) warnings.push('No LLM connections found. Add a connection in Lumiverse Connections first.');
+            else if (resolvedConn) {
+              if (resolvedConn.has_api_key === false) warnings.push(`Connection "${resolvedConn.name}" has no API key configured.`);
+              if (!cleanModelName(resolvedConn.model) && !cleanModelName(state.testModelOverride)) {
+                warnings.push(`Connection "${resolvedConn.name}" has no model set — pick one in Model Override above.`);
+              }
+            }
+            return warnings.length
+              ? `<div class="ps-notice" style="border-left-color:var(--ps-warning);margin-bottom:8px"><span>⚠ ${esc(warnings.join(' '))}</span></div>`
+              : '';
+          })()}
 
           ${isStandalone ? `
             <div class="ps-standalone-hint">

@@ -2316,6 +2316,25 @@ function openNewPresetModal(root, modalRef, onSelectBlueprint) {
 }
 
 // src/studio-views.ts
+var MODEL_PLACEHOLDERS = new Set(["", "string", "model", "your-model-here", "null", "undefined"]);
+function cleanModelName(model) {
+  const raw = typeof model === "string" ? model.trim() : "";
+  return MODEL_PLACEHOLDERS.has(raw.toLowerCase()) ? "" : raw;
+}
+function formatConnectionLabel(c) {
+  if (!c)
+    return "Active default connection";
+  const m = cleanModelName(c.model);
+  const tags = [];
+  if (c.provider)
+    tags.push(String(c.provider));
+  if (m)
+    tags.push(m);
+  const meta = tags.length ? ` (${tags.join(" / ")})` : "";
+  const def = c.is_default ? " [default]" : "";
+  const noKey = c.has_api_key === false ? " [No Key]" : "";
+  return `${c.name}${meta}${def}${noKey}`;
+}
 function renderPermissionBanner(state) {
   const perms = state.permissions || {};
   const missing = [];
@@ -3085,7 +3104,7 @@ function renderRemixAndTranslateTab(state) {
           <label>Translation Model Connection
             <select data-state="translationConnection">
               <option value="">Active default connection</option>
-              ${selectOptions(state.connections, state.translationConnection, (x) => `${x.name} · ${x.model}`)}
+              ${selectOptions(state.connections, state.translationConnection, (x) => formatConnectionLabel(x))}
             </select>
           </label>
         </div>
@@ -3439,10 +3458,38 @@ function renderTestTab(state) {
             <label>Model Connection
               <select data-state="connectionId">
                 <option value="">Active default connection</option>
-                ${selectOptions(state.connections, state.connectionId, (x) => `${x.name} · ${x.model}`)}
+                ${selectOptions(state.connections, state.connectionId, (x) => formatConnectionLabel(x))}
               </select>
             </label>
           </div>
+
+          <div style="margin-bottom:8px">
+            <div class="ps-between" style="margin-bottom:4px">
+              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
+              ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ""}
+            </div>
+            <div id="ps-test-model-slot"></div>
+          </div>
+
+          ${(() => {
+    const permsOk = state.permissions?.generation !== false;
+    const resolvedConn = state.connectionId ? state.connections.find((c) => c.id === state.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
+    const warnings = [];
+    if (!permsOk)
+      warnings.push('Enable the "generation" permission in Extensions to load connections and run tests.');
+    else if (state.connectionsError)
+      warnings.push(`Could not load connections: ${state.connectionsError}`);
+    else if (!state.connections.length)
+      warnings.push("No LLM connections found. Add a connection in Lumiverse Connections first.");
+    else if (resolvedConn) {
+      if (resolvedConn.has_api_key === false)
+        warnings.push(`Connection "${resolvedConn.name}" has no API key configured.`);
+      if (!cleanModelName(resolvedConn.model) && !cleanModelName(state.testModelOverride)) {
+        warnings.push(`Connection "${resolvedConn.name}" has no model set — pick one in Model Override above.`);
+      }
+    }
+    return warnings.length ? `<div class="ps-notice" style="border-left-color:var(--ps-warning);margin-bottom:8px"><span>⚠ ${esc(warnings.join(" "))}</span></div>` : "";
+  })()}
 
           ${isStandalone ? `
             <div class="ps-standalone-hint">
@@ -4205,6 +4252,8 @@ function setup(ctx) {
     presets: [],
     chats: [],
     connections: [],
+    connectionsError: "",
+    testModelOverride: "",
     permissions: { presets: true, chats: true, generation: true, app_manipulation: true, regex_scripts: false },
     loading: false,
     loadError: "",
@@ -4502,7 +4551,11 @@ function setup(ctx) {
       }
       try {
         if (missingTexts.length > 0) {
-          const res = await request("count-tokens", { texts: missingTexts, connectionId: state.connectionId });
+          const res = await request("count-tokens", {
+            texts: missingTexts,
+            connectionId: state.connectionId,
+            modelOverride: state.testModelOverride
+          });
           if (destroyed || !res?.counts)
             return;
           if (tokenCache.size > 512)
@@ -4979,6 +5032,22 @@ function setup(ctx) {
     if (state.view === "variables") {
       mountVariablePreviewControls();
     }
+    if (state.view === "test" && !state.abFullWindow && ctx.components.mountModelCombobox) {
+      const modelSlot = shellBodyEl.querySelector("#ps-test-model-slot");
+      if (modelSlot) {
+        modelSlot.innerHTML = "";
+        trackMount(() => ctx.components.mountModelCombobox(modelSlot, {
+          value: state.testModelOverride || "",
+          connection: state.connectionId ? { kind: "llm", id: state.connectionId } : { kind: "llm" },
+          appearance: "compact",
+          placeholder: "Use connection default model…",
+          onChange: (modelVal) => {
+            state.testModelOverride = cleanModelName(modelVal);
+            scheduleTokenCount();
+          }
+        }));
+      }
+    }
   }
   function renderHeader() {
     if (destroyed)
@@ -5136,6 +5205,18 @@ function setup(ctx) {
       state.presets = Array.isArray(data.presets) ? data.presets : [];
       state.chats = Array.isArray(data.chats) ? data.chats : [];
       state.connections = Array.isArray(data.connections) ? data.connections : [];
+      state.connectionsError = typeof data.connectionsError === "string" ? data.connectionsError : "";
+      const validConnIds = new Set(state.connections.map((c) => c.id));
+      if (state.connectionId && !validConnIds.has(state.connectionId)) {
+        state.connectionId = "";
+        state.testModelOverride = "";
+      }
+      if (state.translationConnection && !validConnIds.has(state.translationConnection)) {
+        state.translationConnection = "";
+      }
+      if (Array.isArray(state.matrixConnections)) {
+        state.matrixConnections = state.matrixConnections.filter((cid) => validConnIds.has(cid));
+      }
       state.recovery = data.draft;
       if (data.permissions)
         state.permissions = { ...state.permissions, ...data.permissions };
@@ -5389,6 +5470,9 @@ function setup(ctx) {
       }
       if (key === "chatId") {
         state.noContextChat = !el.value;
+      }
+      if (key === "connectionId") {
+        state.testModelOverride = "";
       }
       if (["compareA", "compareB", "connectionId", "chatId", "generationType"].includes(key)) {
         if (key === "connectionId")
@@ -6025,6 +6109,11 @@ ${m.content || ""}`).join(`
           await request("toast", { kind: "success", title: "Preset Studio", message: `Exported ${filename}` });
         }
         return;
+      } else if (a === "clear-test-model-override") {
+        state.testModelOverride = "";
+        scheduleTokenCount();
+        renderBody();
+        return;
       } else if (a === "load-run-inputs") {
         const idx = Number(el.dataset.runIdx);
         const r = state.runs?.[idx];
@@ -6109,65 +6198,75 @@ ${m.content || ""}`).join(`
             let runAssembled = null;
             state.activeRun = requestId;
             render();
-            const result = await new Promise((resolve, reject) => {
-              let inactivityTimer = null;
-              const resetInactivity = () => {
-                if (inactivityTimer)
-                  clearTimeout(inactivityTimer);
-                inactivityTimer = setTimeout(() => {
-                  if (pending.delete(requestId)) {
-                    reject(new Error("Generation timed out while waiting for provider stream."));
+            let result = null;
+            let iterError = null;
+            try {
+              result = await new Promise((resolve, reject) => {
+                let inactivityTimer = null;
+                const resetInactivity = () => {
+                  if (inactivityTimer)
+                    clearTimeout(inactivityTimer);
+                  inactivityTimer = setTimeout(() => {
+                    if (pending.delete(requestId)) {
+                      reject(new Error("Generation timed out while waiting for provider stream."));
+                    }
+                  }, 120000);
+                };
+                resetInactivity();
+                pending.set(requestId, {
+                  touch: resetInactivity,
+                  resolve: (val) => {
+                    if (inactivityTimer)
+                      clearTimeout(inactivityTimer);
+                    resolve(val);
+                  },
+                  reject: (err) => {
+                    if (inactivityTimer)
+                      clearTimeout(inactivityTimer);
+                    reject(err);
+                  },
+                  onAssembled: (assembledPayload) => {
+                    runAssembled = assembledPayload;
+                    state.assembled = assembledPayload;
+                  },
+                  onReasoning: (token) => {
+                    state.reasoning += token;
+                  },
+                  onToken: (token) => {
+                    state.result += token;
+                    const counterEl = shellBodyEl.querySelector("[data-stream-counter]");
+                    if (counterEl)
+                      counterEl.textContent = `${state.result.length.toLocaleString()} chars`;
                   }
-                }, 120000);
-              };
-              resetInactivity();
-              pending.set(requestId, {
-                touch: resetInactivity,
-                resolve: (val) => {
-                  if (inactivityTimer)
-                    clearTimeout(inactivityTimer);
-                  resolve(val);
-                },
-                reject: (err) => {
-                  if (inactivityTimer)
-                    clearTimeout(inactivityTimer);
-                  reject(err);
-                },
-                onAssembled: (assembledPayload) => {
-                  runAssembled = assembledPayload;
-                  state.assembled = assembledPayload;
-                },
-                onReasoning: (token) => {
-                  state.reasoning += token;
-                },
-                onToken: (token) => {
-                  state.result += token;
-                }
+                });
+                ctx.sendToBackend({
+                  action: "run",
+                  requestId,
+                  preset: snapshot,
+                  promptSource: state.testPromptSource,
+                  customPrompt: state.testCustomPrompt,
+                  includeChatHistory: state.testCustomPromptIncludeHistory,
+                  chatId: state.chatId,
+                  connectionId: tgt.connectionId,
+                  ...!isMatrix && state.testModelOverride ? { modelOverride: state.testModelOverride } : {},
+                  generationType: state.generationType,
+                  testTurns: stagedTurns,
+                  customMessage: state.custom,
+                  authorsNote: state.authorsNote
+                });
               });
-              ctx.sendToBackend({
-                action: "run",
-                requestId,
-                preset: snapshot,
-                promptSource: state.testPromptSource,
-                customPrompt: state.testCustomPrompt,
-                includeChatHistory: state.testCustomPromptIncludeHistory,
-                chatId: state.chatId,
-                connectionId: tgt.connectionId,
-                generationType: state.generationType,
-                testTurns: stagedTurns,
-                customMessage: state.custom,
-                authorsNote: state.authorsNote
-              });
-            });
+            } catch (err) {
+              iterError = err?.message || String(err);
+            }
             if (result?.aborted || state.matrixAborted)
               break;
-            const finalContent = result?.content || state.result;
-            const finalDisplay = result?.displayContent || finalContent;
+            const finalContent = iterError ? `[ERROR] ${iterError}` : result?.content || state.result;
+            const finalDisplay = iterError ? finalContent : result?.displayContent || finalContent;
             const finalReasoning = result?.reasoning || state.reasoning;
             const finalUsage = result?.usage || null;
             const activeBlocks = (snapshot?.prompt_order || []).filter((blk) => blk.enabled && blk.marker !== "category");
             const userPromptPreview = state.testTurnMode === "multi" && state.testTurns.length ? state.testTurns[state.testTurns.length - 1]?.content || "" : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : "");
-            const connObj = state.connections.find((c) => c.id === tgt.connectionId);
+            const connObj = tgt.connectionId ? state.connections.find((c) => c.id === tgt.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.slice(-40).map((m) => ({
               role: String(m.role || "system"),
@@ -6176,7 +6275,7 @@ ${m.content || ""}`).join(`
             })) : [];
             state.runs.push({
               time: new Date().toLocaleTimeString(),
-              note: isMatrix ? connObj?.name || tgt.label : tgt.label,
+              note: (isMatrix ? connObj?.name || tgt.label : tgt.label) + (iterError ? " (Failed)" : ""),
               connection: connObj?.name || "Active connection",
               presetName: isCustomSource ? "Custom Prompt" : snapshot?.name || "Draft",
               activeBlocksCount: activeBlocks.length,
@@ -6191,7 +6290,7 @@ ${m.content || ""}`).join(`
                 chatName: state.chatId ? chatObj?.name || state.chatId : "Standalone (No Chat)",
                 standalone: !state.chatId,
                 connection: connObj?.name || "Active connection",
-                model: connObj?.model || "",
+                model: isMatrix ? cleanModelName(connObj?.model) : cleanModelName(state.testModelOverride) || cleanModelName(connObj?.model),
                 temperature: snapshot?.parameters?.temperature,
                 generationType: state.generationType || "normal",
                 activeBlocksCount: activeBlocks.length,
@@ -6908,6 +7007,7 @@ ${ent.block.content || ""}`).join(`
             includeChatHistory: state.testCustomPromptIncludeHistory,
             chatId: state.chatId,
             connectionId: state.connectionId,
+            modelOverride: state.testModelOverride,
             generationType: state.generationType,
             testTurns: stagedTurns,
             customMessage: state.custom,
@@ -6923,7 +7023,7 @@ ${ent.block.content || ""}`).join(`
             const activeBlocks = (snapshot?.prompt_order || []).filter((blk) => blk.enabled && blk.marker !== "category");
             const activeBlocksCount = activeBlocks.length;
             const userPromptPreview = state.testTurnMode === "multi" && state.testTurns.length ? state.testTurns[state.testTurns.length - 1]?.content || "" : state.custom.trim() || (isCustomSource ? state.testCustomPrompt.trim() : "");
-            const connObj = state.connections.find((c) => c.id === state.connectionId);
+            const connObj = state.connectionId ? state.connections.find((c) => c.id === state.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
             const chatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
             const promptMessages = Array.isArray(runAssembled?.messages) ? runAssembled.messages.slice(-40).map((m) => ({
               role: String(m.role || "system"),
@@ -6936,7 +7036,7 @@ ${ent.block.content || ""}`).join(`
               chatName: state.chatId ? chatObj?.name || state.chatId : "Standalone (No Chat)",
               standalone: !state.chatId,
               connection: connObj?.name || "Active connection",
-              model: connObj?.model || "",
+              model: cleanModelName(state.testModelOverride) || cleanModelName(connObj?.model),
               temperature: snapshot?.parameters?.temperature,
               generationType: state.generationType || "normal",
               activeBlocksCount,
@@ -6999,6 +7099,13 @@ ${ent.block.content || ""}`).join(`
   return () => {
     destroyed = true;
     closeModalRef(modalRef);
+    if (abDialogEl) {
+      try {
+        abDialogEl.close();
+      } catch (_) {}
+      abDialogEl.remove();
+      abDialogEl = null;
+    }
     destroyMounted();
     clearTimeout(timer);
     clearTimeout(tokenTimer);
