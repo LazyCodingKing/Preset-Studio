@@ -3467,13 +3467,11 @@ function renderTestTab(state) {
           </div>
 
           <div style="margin-bottom:8px">
-            <label>
-              <span class="ps-between" style="width:100%">
-                <span>Model Override <span class="ps-muted" style="font-weight:400">(optional)</span></span>
-                ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ""}
-              </span>
-              <input data-state="testModelOverride" value="${esc(state.testModelOverride || "")}" placeholder="Leave blank to use connection's saved model…">
-            </label>
+            <div class="ps-between" style="margin-bottom:4px">
+              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
+              <button type="button" class="ps-btn-sm" data-action="clear-test-model-override" data-test-model-reset style="display:${state.testModelOverride ? "inline-flex" : "none"};min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>
+            </div>
+            <div id="ps-test-model-slot"></div>
           </div>
 
           ${(() => {
@@ -3634,13 +3632,34 @@ function renderTestTab(state) {
       </div>
 
       <!-- Right Column: Tabbed Output Inspector (Reply | Prompt X-Ray | A/B Compare) -->
-      <div class="ps-test-col-output">
+      <div class="ps-test-col-output" id="ps-test-output-slot">
+        ${renderTestOutputHtml(state)}
+      </div>
+    </div>
+  `;
+}
+function renderTestOutputHtml(state) {
+  const runs = Array.isArray(state.runs) ? state.runs : [];
+  const activeRunIdx = typeof state.viewingRunIndex === "number" && state.viewingRunIndex >= 0 && state.viewingRunIndex < runs.length ? state.viewingRunIndex : runs.length - 1;
+  const viewedRun = !state.busy && activeRunIdx >= 0 ? runs[activeRunIdx] : null;
+  const activeReasoning = state.busy ? state.reasoning : viewedRun?.reasoning ?? state.reasoning;
+  const activeUsage = state.busy ? state.lastUsage : viewedRun?.usage ?? state.lastUsage;
+  const hasReplyContent = Boolean(state.busy ? state.result : viewedRun?.content || state.result);
+  const isCustomPromptMode = state.testPromptSource === "custom";
+  const isChatView = (state.testReplyViewMode || "chat") === "chat";
+  const outTab = state.testOutputTab || "reply";
+  const breakdownCount = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown.length : 0;
+  const isStandalone = !state.chatId;
+  const selectedChatObj = state.chatId ? state.chats.find((c) => c.id === state.chatId) : null;
+  const selectedConnObj = state.connectionId ? state.connections.find((c) => c.id === state.connectionId) : state.connections.find((c) => c.is_default) || state.connections[0];
+  const activeModelName = cleanModelName(state.testModelOverride) || cleanModelName(selectedConnObj?.model);
+  return `
         <div class="ps-panel" style="margin-top:0">
           <div class="ps-between" style="margin-bottom:10px">
             <div class="ps-seg-bar">
               <button type="button" data-action="set-test-output-tab" data-outtab="reply" aria-pressed="${outTab === "reply"}">\uD83D\uDCAC Reply Preview ${state.busy ? "· ●" : ""}</button>
               <button type="button" data-action="set-test-output-tab" data-outtab="xray" aria-pressed="${outTab === "xray"}">\uD83D\uDD2C Prompt X-Ray ${breakdownCount ? `(${breakdownCount})` : ""}</button>
-              <button type="button" data-action="set-test-output-tab" data-outtab="compare" aria-pressed="${outTab === "compare"}">⚖️ A/B Runs (${state.runs.length})</button>
+              <button type="button" data-action="set-test-output-tab" data-outtab="compare" aria-pressed="${outTab === "compare"}">⚖️ A/B Runs (${runs.length})</button>
             </div>
 
             ${outTab === "reply" ? `
@@ -3660,7 +3679,7 @@ function renderTestTab(state) {
               <div class="ps-run-meta-strip" style="margin-bottom:10px">
                 <span class="ps-pill ps-pill-accent">${isCustomPromptMode ? "✍️ Custom Prompt" : `\uD83D\uDCCB ${esc(state.draft?.name || "Draft")}`}</span>
                 <span class="ps-pill">${isStandalone ? "⚡ Standalone (No Chat)" : `\uD83D\uDCAC ${esc(selectedChatObj?.name || state.chatId)}`}</span>
-                <span class="ps-pill">${esc(selectedConnObj ? `${selectedConnObj.name} · ${selectedConnObj.model}` : "Active default connection")}</span>
+                <span class="ps-pill">${esc(selectedConnObj ? `${selectedConnObj.name}${activeModelName ? ` · ${activeModelName}` : ""}` : "Active default connection")}</span>
               </div>
             ` : ""}
 
@@ -3726,8 +3745,6 @@ function renderTestTab(state) {
             ${renderAbComparisonView(state, false)}
           `}
         </div>
-      </div>
-    </div>
   `;
 }
 function getNormalizedSelectedRunIndices(state) {
@@ -4353,6 +4370,7 @@ function setup(ctx) {
   const variablePreviewHandles = new Set;
   const modalRef = { current: null };
   let abDialogEl = null;
+  let testModelHandle = null;
   let timer = null;
   let tokenTimer = null;
   let varPreviewTimer = null;
@@ -4371,6 +4389,7 @@ function setup(ctx) {
     set.clear();
   }
   function destroyMounted() {
+    testModelHandle = null;
     destroyHandleSet(variablePreviewHandles);
     destroyHandleSet(mountedHandles);
   }
@@ -5037,6 +5056,28 @@ function setup(ctx) {
     if (state.view === "variables") {
       mountVariablePreviewControls();
     }
+    if (state.view === "test" && !state.abFullWindow && ctx.components.mountModelCombobox) {
+      const modelSlot = shellBodyEl.querySelector("#ps-test-model-slot");
+      if (modelSlot) {
+        modelSlot.innerHTML = "";
+        const noModels = state.permissions?.generation === false || !state.connections.length;
+        testModelHandle = trackMount(() => ctx.components.mountModelCombobox(modelSlot, {
+          value: state.testModelOverride || "",
+          connection: state.connectionId ? { kind: "llm", id: state.connectionId } : { kind: "llm" },
+          appearance: "standard",
+          placeholder: "Use connection default model…",
+          browseHint: "Search or pick a model from this connection",
+          disabled: noModels,
+          onChange: (modelVal) => {
+            state.testModelOverride = cleanModelName(modelVal);
+            const resetBtn = shellBodyEl.querySelector("[data-test-model-reset]");
+            if (resetBtn)
+              resetBtn.style.display = state.testModelOverride ? "inline-flex" : "none";
+            scheduleTokenCount();
+          }
+        }));
+      }
+    }
   }
   function renderHeader() {
     if (destroyed)
@@ -5137,6 +5178,22 @@ function setup(ctx) {
         abDialogEl = null;
       }
     }
+    renderTestBubbles();
+    openDetailsIds.forEach((id) => {
+      const det = shellBodyEl.querySelector(`details[data-details-id="${CSS.escape(id)}"]`);
+      if (det)
+        det.open = true;
+    });
+    savedScrollMap.forEach((pos, id) => {
+      const el = shellBodyEl.querySelector(`[data-scroll-id="${CSS.escape(id)}"]`);
+      if (el) {
+        el.scrollTop = pos.top;
+        el.scrollLeft = pos.left;
+      }
+    });
+    root.scrollTop = savedRootScroll;
+  }
+  function renderTestBubbles() {
     if (state.abViewMode === "chat") {
       root.querySelectorAll(".ps-ab-chat-slot[data-ab-chat-idx]").forEach((slotEl) => {
         const rIdx = Number(slotEl.dataset.abChatIdx);
@@ -5160,19 +5217,71 @@ function setup(ctx) {
         }
       }
     }
+  }
+  function renderTestOutputOnly() {
+    if (destroyed)
+      return;
+    if (abDialogEl && abDialogEl.isConnected) {
+      if (state.abFullWindow && !full) {
+        const scrollTop = abDialogEl.scrollTop;
+        abDialogEl.innerHTML = renderAbComparisonView(state, true);
+        abDialogEl.scrollTop = scrollTop;
+        renderTestBubbles();
+        return;
+      }
+    }
+    if (state.abFullWindow && full && state.view === "test") {
+      renderBody();
+      return;
+    }
+    const outSlot = shellBodyEl.querySelector("#ps-test-output-slot");
+    if (!outSlot) {
+      renderBody();
+      return;
+    }
+    const savedScrollMap = new Map;
+    outSlot.querySelectorAll("[data-scroll-id]").forEach((el) => {
+      if (el.dataset.scrollId)
+        savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
+    });
+    const openDetailsIds = new Set;
+    outSlot.querySelectorAll("details[data-details-id]").forEach((el) => {
+      if (el.open && el.dataset.detailsId)
+        openDetailsIds.add(el.dataset.detailsId);
+    });
+    outSlot.innerHTML = renderTestOutputHtml(state);
     openDetailsIds.forEach((id) => {
-      const det = shellBodyEl.querySelector(`details[data-details-id="${CSS.escape(id)}"]`);
+      const det = outSlot.querySelector(`details[data-details-id="${CSS.escape(id)}"]`);
       if (det)
         det.open = true;
     });
     savedScrollMap.forEach((pos, id) => {
-      const el = shellBodyEl.querySelector(`[data-scroll-id="${CSS.escape(id)}"]`);
+      const el = outSlot.querySelector(`[data-scroll-id="${CSS.escape(id)}"]`);
       if (el) {
         el.scrollTop = pos.top;
         el.scrollLeft = pos.left;
       }
     });
-    root.scrollTop = savedRootScroll;
+    const ctrl = shellBodyEl.querySelector(".ps-test-col-ctrl");
+    if (ctrl) {
+      ctrl.querySelectorAll('button[data-action="preview"], button[data-action="run"], button[data-action="run-multi-swipe"]').forEach((btn) => {
+        btn.disabled = Boolean(state.busy);
+      });
+      const stopBtn = ctrl.querySelector('button[data-action="stop"]');
+      if (stopBtn) {
+        stopBtn.disabled = !state.busy;
+        stopBtn.classList.toggle("ps-danger-active", Boolean(state.busy));
+      }
+      const dryBtn = ctrl.querySelector('button[data-action="dry"]');
+      if (dryBtn) {
+        dryBtn.disabled = Boolean(state.busy || !state.draft?.id || !state.chatId);
+      }
+      const matrixBtn = ctrl.querySelector('button[data-action="run-matrix"]');
+      if (matrixBtn) {
+        matrixBtn.disabled = Boolean(state.busy || !(state.matrixConnections || []).length);
+      }
+    }
+    renderTestBubbles();
   }
   function render() {
     if (destroyed)
@@ -5443,11 +5552,8 @@ function setup(ctx) {
         const slot = shellBodyEl.querySelector("#ps-translate-list-slot");
         if (slot)
           slot.innerHTML = renderTranslateBlockListHtml(state);
-      } else if (key === "testModelOverride") {
-        state.testModelOverride = cleanModelName(el.value);
-        scheduleTokenCount();
       } else if (["compareA", "compareB", "abSearch"].includes(key)) {
-        renderBody();
+        renderTestOutputOnly();
       }
     }
   });
@@ -5466,7 +5572,9 @@ function setup(ctx) {
       if (key === "connectionId") {
         state.testModelOverride = "";
       }
-      if (["compareA", "compareB", "connectionId", "chatId", "generationType"].includes(key)) {
+      if (key === "compareA" || key === "compareB") {
+        renderTestOutputOnly();
+      } else if (["connectionId", "chatId", "generationType"].includes(key)) {
         if (key === "connectionId")
           scheduleTokenCount();
         renderBody();
@@ -5738,11 +5846,11 @@ function setup(ctx) {
         return;
       } else if (a === "set-test-output-tab") {
         state.testOutputTab = el.dataset.outtab || "reply";
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "set-compare-mode") {
         state.compareMode = el.dataset.mode === "diff" ? "diff" : "side";
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "editor-mode") {
         state.editorMode = el.dataset.mode;
@@ -5879,7 +5987,7 @@ ${snippetToInsert}` : snippetToInsert;
             state.reasoning = r.reasoning || "";
             state.lastUsage = r.usage || null;
           }
-          render();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === "swipe-run-next") {
@@ -5893,7 +6001,7 @@ ${snippetToInsert}` : snippetToInsert;
             state.reasoning = r.reasoning || "";
             state.lastUsage = r.usage || null;
           }
-          render();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === "compare-current-swipe") {
@@ -5901,7 +6009,7 @@ ${snippetToInsert}` : snippetToInsert;
         state.compareB = cur;
         state.compareA = Math.max(0, cur - 1);
         state.testOutputTab = "compare";
-        render();
+        renderTestOutputOnly();
         return;
       } else if (a === "restore-run-snapshot") {
         const idx = Number(el.dataset.runIdx);
@@ -5926,7 +6034,7 @@ ${snippetToInsert}` : snippetToInsert;
         const prevA = Number(state.compareA) || 0;
         state.compareA = Number(state.compareB) || 0;
         state.compareB = prevA;
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "toggle-xray-expand-all") {
         const items = Array.from(shellBodyEl.querySelectorAll("#ps-xray-list-slot details"));
@@ -6021,47 +6129,47 @@ ${m.content || ""}`).join(`
         return;
       } else if (a === "set-ab-view-mode") {
         state.abViewMode = el.dataset.mode === "chat" ? "chat" : "raw";
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "set-ab-layout-mode") {
         state.abLayoutMode = el.dataset.mode === "scroll" ? "scroll" : "grid";
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "toggle-ab-starred-only") {
         state.abStarredOnly = !state.abStarredOnly;
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "toggle-run-star") {
         const idx = Number(el.dataset.runIdx);
         if (state.runs[idx]) {
           state.runs[idx].starred = !state.runs[idx].starred;
           request("test-history-save", { runs: state.runs }).catch(() => {});
-          renderBody();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === "toggle-run-select") {
         const idx = Number(el.dataset.runIdx);
         const cur = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
         state.selectedRuns = cur.includes(idx) ? cur.filter((n) => n !== idx) : [...cur, idx].sort((x, y) => x - y);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "ab-select-preset") {
         const count = Math.max(1, Number(el.dataset.count) || 2);
         const start = Math.max(0, state.runs.length - count);
         state.selectedRuns = Array.from({ length: state.runs.length - start }, (_, k) => start + k);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "ab-select-all") {
         state.selectedRuns = state.runs.map((_, i) => i);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "ab-select-starred") {
         state.selectedRuns = state.runs.map((r, i) => r.starred ? i : -1).filter((i) => i >= 0);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "ab-select-none") {
         state.selectedRuns = [];
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === "copy-single-run-reply") {
         const idx = Number(el.dataset.runIdx);
@@ -6103,8 +6211,11 @@ ${m.content || ""}`).join(`
         return;
       } else if (a === "clear-test-model-override") {
         state.testModelOverride = "";
+        testModelHandle?.update?.({ value: "" });
+        const resetBtn = shellBodyEl.querySelector("[data-test-model-reset]");
+        if (resetBtn)
+          resetBtn.style.display = "none";
         scheduleTokenCount();
-        renderBody();
         return;
       } else if (a === "load-run-inputs") {
         const idx = Number(el.dataset.runIdx);
@@ -6352,7 +6463,7 @@ ${m.content || ""}`).join(`
         return;
       } else if (a === "set-reply-view-mode") {
         state.testReplyViewMode = el.dataset.mode || "chat";
-        render();
+        renderTestOutputOnly();
         return;
       } else if (a === "set-test-prompt-source") {
         state.testPromptSource = el.dataset.source || "preset";
@@ -6943,7 +7054,7 @@ ${ent.block.content || ""}`).join(`
         const runStartedAt = Date.now();
         let runAssembled = null;
         state.activeRun = requestId;
-        render();
+        renderTestOutputOnly();
         await new Promise((resolve, reject) => {
           let inactivityTimer = null;
           const resetInactivity = () => {
@@ -6971,7 +7082,7 @@ ${ent.block.content || ""}`).join(`
             onAssembled: (assembledPayload) => {
               runAssembled = assembledPayload;
               state.assembled = assembledPayload;
-              renderBody();
+              renderTestOutputOnly();
             },
             onReasoning: (token) => {
               state.reasoning += token;
@@ -7068,6 +7179,11 @@ ${ent.block.content || ""}`).join(`
         });
         state.busy = false;
         state.activeRun = null;
+        if (state.view === "test" && shellBodyEl.querySelector("#ps-test-output-slot")) {
+          renderHeader();
+          renderTestOutputOnly();
+          return;
+        }
       }
       render();
     } catch (err) {
@@ -7076,6 +7192,11 @@ ${ent.block.content || ""}`).join(`
       state.saving = false;
       state.translating = false;
       state.notice = (err.message || String(err)) + (a === "save" ? " Your draft is preserved." : "");
+      if (state.view === "test" && shellBodyEl.querySelector("#ps-test-output-slot")) {
+        renderHeader();
+        renderTestOutputOnly();
+        return;
+      }
       render();
     }
   });

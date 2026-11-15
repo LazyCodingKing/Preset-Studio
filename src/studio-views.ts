@@ -1225,13 +1225,11 @@ export function renderTestTab(state: any): string {
           </div>
 
           <div style="margin-bottom:8px">
-            <label>
-              <span class="ps-between" style="width:100%">
-                <span>Model Override <span class="ps-muted" style="font-weight:400">(optional)</span></span>
-                ${state.testModelOverride ? '<button type="button" class="ps-btn-sm" data-action="clear-test-model-override" style="min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>' : ''}
-              </span>
-              <input data-state="testModelOverride" value="${esc(state.testModelOverride || '')}" placeholder="Leave blank to use connection's saved model…">
-            </label>
+            <div class="ps-between" style="margin-bottom:4px">
+              <span class="ps-muted" style="font-size:0.78rem;font-weight:560">Model Override <span style="font-weight:400">(optional)</span></span>
+              <button type="button" class="ps-btn-sm" data-action="clear-test-model-override" data-test-model-reset style="display:${state.testModelOverride ? 'inline-flex' : 'none'};min-height:20px !important;padding:1px 6px !important;font-size:0.7rem !important">✕ Reset</button>
+            </div>
+            <div id="ps-test-model-slot"></div>
           </div>
 
           ${(() => {
@@ -1396,13 +1394,41 @@ export function renderTestTab(state: any): string {
       </div>
 
       <!-- Right Column: Tabbed Output Inspector (Reply | Prompt X-Ray | A/B Compare) -->
-      <div class="ps-test-col-output">
+      <div class="ps-test-col-output" id="ps-test-output-slot">
+        ${renderTestOutputHtml(state)}
+      </div>
+    </div>
+  `;
+}
+
+export function renderTestOutputHtml(state: any): string {
+  const runs: any[] = Array.isArray(state.runs) ? state.runs : [];
+  const activeRunIdx =
+    typeof state.viewingRunIndex === 'number' && state.viewingRunIndex >= 0 && state.viewingRunIndex < runs.length
+      ? state.viewingRunIndex
+      : runs.length - 1;
+  const viewedRun = !state.busy && activeRunIdx >= 0 ? runs[activeRunIdx] : null;
+  const activeReasoning = state.busy ? state.reasoning : (viewedRun?.reasoning ?? state.reasoning);
+  const activeUsage = state.busy ? state.lastUsage : (viewedRun?.usage ?? state.lastUsage);
+  const hasReplyContent = Boolean(state.busy ? state.result : (viewedRun?.content || state.result));
+  const isCustomPromptMode = state.testPromptSource === 'custom';
+  const isChatView = (state.testReplyViewMode || 'chat') === 'chat';
+  const outTab = state.testOutputTab || 'reply';
+  const breakdownCount = Array.isArray(state.assembled?.breakdown) ? state.assembled.breakdown.length : 0;
+  const isStandalone = !state.chatId;
+  const selectedChatObj = state.chatId ? state.chats.find((c: any) => c.id === state.chatId) : null;
+  const selectedConnObj = state.connectionId
+    ? state.connections.find((c: any) => c.id === state.connectionId)
+    : state.connections.find((c: any) => c.is_default) || state.connections[0];
+  const activeModelName = cleanModelName(state.testModelOverride) || cleanModelName(selectedConnObj?.model);
+
+  return `
         <div class="ps-panel" style="margin-top:0">
           <div class="ps-between" style="margin-bottom:10px">
             <div class="ps-seg-bar">
               <button type="button" data-action="set-test-output-tab" data-outtab="reply" aria-pressed="${outTab === 'reply'}">💬 Reply Preview ${state.busy ? '· ●' : ''}</button>
               <button type="button" data-action="set-test-output-tab" data-outtab="xray" aria-pressed="${outTab === 'xray'}">🔬 Prompt X-Ray ${breakdownCount ? `(${breakdownCount})` : ''}</button>
-              <button type="button" data-action="set-test-output-tab" data-outtab="compare" aria-pressed="${outTab === 'compare'}">⚖️ A/B Runs (${state.runs.length})</button>
+              <button type="button" data-action="set-test-output-tab" data-outtab="compare" aria-pressed="${outTab === 'compare'}">⚖️ A/B Runs (${runs.length})</button>
             </div>
 
             ${outTab === 'reply' ? `
@@ -1422,7 +1448,7 @@ export function renderTestTab(state: any): string {
               <div class="ps-run-meta-strip" style="margin-bottom:10px">
                 <span class="ps-pill ps-pill-accent">${isCustomPromptMode ? '✍️ Custom Prompt' : `📋 ${esc(state.draft?.name || 'Draft')}`}</span>
                 <span class="ps-pill">${isStandalone ? '⚡ Standalone (No Chat)' : `💬 ${esc(selectedChatObj?.name || state.chatId)}`}</span>
-                <span class="ps-pill">${esc(selectedConnObj ? `${selectedConnObj.name} · ${selectedConnObj.model}` : 'Active default connection')}</span>
+                <span class="ps-pill">${esc(selectedConnObj ? `${selectedConnObj.name}${activeModelName ? ` · ${activeModelName}` : ''}` : 'Active default connection')}</span>
               </div>
             ` : ''}
 
@@ -1488,8 +1514,6 @@ export function renderTestTab(state: any): string {
             ${renderAbComparisonView(state, false)}
           `}
         </div>
-      </div>
-    </div>
   `;
 }
 

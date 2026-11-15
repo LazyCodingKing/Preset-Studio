@@ -36,6 +36,7 @@ import {
 import {
   cleanModelName,
   renderAbComparisonView,
+  renderTestOutputHtml,
   renderPermissionBanner,
   renderBlockListOnlyHtml,
   renderRemixSourceListHtml,
@@ -191,6 +192,7 @@ export function setup(ctx: SpindleFrontendContext) {
   const variablePreviewHandles = new Set<{ destroy?: () => void }>();
   const modalRef: ModalRef = { current: null };
   let abDialogEl: HTMLDialogElement | null = null;
+  let testModelHandle: any = null;
   let timer: any = null;
   let tokenTimer: any = null;
   let varPreviewTimer: any = null;
@@ -211,6 +213,7 @@ export function setup(ctx: SpindleFrontendContext) {
   }
 
   function destroyMounted() {
+    testModelHandle = null;
     destroyHandleSet(variablePreviewHandles);
     destroyHandleSet(mountedHandles);
   }
@@ -937,6 +940,30 @@ export function setup(ctx: SpindleFrontendContext) {
     if (state.view === 'variables') {
       mountVariablePreviewControls();
     }
+
+    if (state.view === 'test' && !state.abFullWindow && ctx.components.mountModelCombobox) {
+      const modelSlot = shellBodyEl.querySelector<HTMLElement>('#ps-test-model-slot');
+      if (modelSlot) {
+        modelSlot.innerHTML = '';
+        const noModels = state.permissions?.generation === false || !state.connections.length;
+        testModelHandle = trackMount(() =>
+          ctx.components.mountModelCombobox(modelSlot, {
+            value: state.testModelOverride || '',
+            connection: state.connectionId ? { kind: 'llm', id: state.connectionId } : { kind: 'llm' },
+            appearance: 'standard',
+            placeholder: 'Use connection default model…',
+            browseHint: 'Search or pick a model from this connection',
+            disabled: noModels,
+            onChange: (modelVal: string) => {
+              state.testModelOverride = cleanModelName(modelVal);
+              const resetBtn = shellBodyEl.querySelector<HTMLElement>('[data-test-model-reset]');
+              if (resetBtn) resetBtn.style.display = state.testModelOverride ? 'inline-flex' : 'none';
+              scheduleTokenCount();
+            },
+          }),
+        );
+      }
+    }
   }
 
   function renderHeader() {
@@ -1055,6 +1082,23 @@ export function setup(ctx: SpindleFrontendContext) {
       }
     }
 
+    renderTestBubbles();
+
+    openDetailsIds.forEach((id) => {
+      const det = shellBodyEl.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
+      if (det) det.open = true;
+    });
+    savedScrollMap.forEach((pos, id) => {
+      const el = shellBodyEl.querySelector<HTMLElement>(`[data-scroll-id="${CSS.escape(id)}"]`);
+      if (el) {
+        el.scrollTop = pos.top;
+        el.scrollLeft = pos.left;
+      }
+    });
+    root.scrollTop = savedRootScroll;
+  }
+
+  function renderTestBubbles() {
     if (state.abViewMode === 'chat') {
       root.querySelectorAll<HTMLElement>('.ps-ab-chat-slot[data-ab-chat-idx]').forEach((slotEl) => {
         const rIdx = Number(slotEl.dataset.abChatIdx);
@@ -1064,7 +1108,6 @@ export function setup(ctx: SpindleFrontendContext) {
         }
       });
     }
-
     if (state.view === 'test' && (state.testOutputTab || 'reply') === 'reply' && !state.abFullWindow) {
       const bubbleEl = shellBodyEl.querySelector<HTMLElement>('#ps-chat-reply-bubble');
       if (bubbleEl) {
@@ -1087,19 +1130,75 @@ export function setup(ctx: SpindleFrontendContext) {
         }
       }
     }
+  }
+
+  function renderTestOutputOnly() {
+    if (destroyed) return;
+    if (abDialogEl && abDialogEl.isConnected) {
+      if (state.abFullWindow && !full) {
+        const scrollTop = abDialogEl.scrollTop;
+        abDialogEl.innerHTML = renderAbComparisonView(state, true);
+        abDialogEl.scrollTop = scrollTop;
+        renderTestBubbles();
+        return;
+      }
+    }
+    if (state.abFullWindow && full && state.view === 'test') {
+      renderBody();
+      return;
+    }
+    const outSlot = shellBodyEl.querySelector<HTMLElement>('#ps-test-output-slot');
+    if (!outSlot) {
+      renderBody();
+      return;
+    }
+
+    const savedScrollMap = new Map<string, { top: number; left: number }>();
+    outSlot.querySelectorAll<HTMLElement>('[data-scroll-id]').forEach((el) => {
+      if (el.dataset.scrollId) savedScrollMap.set(el.dataset.scrollId, { top: el.scrollTop, left: el.scrollLeft });
+    });
+    const openDetailsIds = new Set<string>();
+    outSlot.querySelectorAll<HTMLDetailsElement>('details[data-details-id]').forEach((el) => {
+      if (el.open && el.dataset.detailsId) openDetailsIds.add(el.dataset.detailsId);
+    });
+
+    outSlot.innerHTML = renderTestOutputHtml(state);
 
     openDetailsIds.forEach((id) => {
-      const det = shellBodyEl.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
+      const det = outSlot.querySelector<HTMLDetailsElement>(`details[data-details-id="${CSS.escape(id)}"]`);
       if (det) det.open = true;
     });
     savedScrollMap.forEach((pos, id) => {
-      const el = shellBodyEl.querySelector<HTMLElement>(`[data-scroll-id="${CSS.escape(id)}"]`);
+      const el = outSlot.querySelector<HTMLElement>(`[data-scroll-id="${CSS.escape(id)}"]`);
       if (el) {
         el.scrollTop = pos.top;
         el.scrollLeft = pos.left;
       }
     });
-    root.scrollTop = savedRootScroll;
+
+    const ctrl = shellBodyEl.querySelector<HTMLElement>('.ps-test-col-ctrl');
+    if (ctrl) {
+      ctrl
+        .querySelectorAll<HTMLButtonElement>('button[data-action="preview"], button[data-action="run"], button[data-action="run-multi-swipe"]')
+        .forEach((btn) => {
+          btn.disabled = Boolean(state.busy);
+        });
+      const stopBtn = ctrl.querySelector<HTMLButtonElement>('button[data-action="stop"]');
+      if (stopBtn) {
+        stopBtn.disabled = !state.busy;
+        stopBtn.classList.toggle('ps-danger-active', Boolean(state.busy));
+      }
+      const dryBtn = ctrl.querySelector<HTMLButtonElement>('button[data-action="dry"]');
+      if (dryBtn) {
+        dryBtn.disabled = Boolean(state.busy || !state.draft?.id || !state.chatId);
+      }
+      const matrixBtn = ctrl.querySelector<HTMLButtonElement>('button[data-action="run-matrix"]');
+      if (matrixBtn) {
+        matrixBtn.disabled = Boolean(state.busy || !(state.matrixConnections || []).length);
+      }
+    }
+
+    renderTestBubbles();
   }
 
   function render() {
@@ -1367,11 +1466,8 @@ export function setup(ctx: SpindleFrontendContext) {
       } else if (key === 'translateSearch') {
         const slot = shellBodyEl.querySelector<HTMLElement>('#ps-translate-list-slot');
         if (slot) slot.innerHTML = renderTranslateBlockListHtml(state);
-      } else if (key === 'testModelOverride') {
-        state.testModelOverride = cleanModelName(el.value);
-        scheduleTokenCount();
       } else if (['compareA', 'compareB', 'abSearch'].includes(key)) {
-        renderBody();
+        renderTestOutputOnly();
       }
     }
   });
@@ -1391,7 +1487,9 @@ export function setup(ctx: SpindleFrontendContext) {
       if (key === 'connectionId') {
         state.testModelOverride = '';
       }
-      if (['compareA', 'compareB', 'connectionId', 'chatId', 'generationType'].includes(key)) {
+      if (key === 'compareA' || key === 'compareB') {
+        renderTestOutputOnly();
+      } else if (['connectionId', 'chatId', 'generationType'].includes(key)) {
         if (key === 'connectionId') scheduleTokenCount();
         renderBody();
       }
@@ -1673,11 +1771,11 @@ export function setup(ctx: SpindleFrontendContext) {
         return;
       } else if (a === 'set-test-output-tab') {
         state.testOutputTab = el.dataset.outtab || 'reply';
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'set-compare-mode') {
         state.compareMode = el.dataset.mode === 'diff' ? 'diff' : 'side';
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'editor-mode') {
         state.editorMode = el.dataset.mode;
@@ -1808,7 +1906,7 @@ export function setup(ctx: SpindleFrontendContext) {
             state.reasoning = r.reasoning || '';
             state.lastUsage = r.usage || null;
           }
-          render();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === 'swipe-run-next') {
@@ -1822,7 +1920,7 @@ export function setup(ctx: SpindleFrontendContext) {
             state.reasoning = r.reasoning || '';
             state.lastUsage = r.usage || null;
           }
-          render();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === 'compare-current-swipe') {
@@ -1830,7 +1928,7 @@ export function setup(ctx: SpindleFrontendContext) {
         state.compareB = cur;
         state.compareA = Math.max(0, cur - 1);
         state.testOutputTab = 'compare';
-        render();
+        renderTestOutputOnly();
         return;
       } else if (a === 'restore-run-snapshot') {
         const idx = Number(el.dataset.runIdx);
@@ -1861,7 +1959,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const prevA = Number(state.compareA) || 0;
         state.compareA = Number(state.compareB) || 0;
         state.compareB = prevA;
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'toggle-xray-expand-all') {
         const items = Array.from(shellBodyEl.querySelectorAll<HTMLDetailsElement>('#ps-xray-list-slot details'));
@@ -1944,49 +2042,49 @@ export function setup(ctx: SpindleFrontendContext) {
         return;
       } else if (a === 'set-ab-view-mode') {
         state.abViewMode = el.dataset.mode === 'chat' ? 'chat' : 'raw';
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'set-ab-layout-mode') {
         state.abLayoutMode = el.dataset.mode === 'scroll' ? 'scroll' : 'grid';
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'toggle-ab-starred-only') {
         state.abStarredOnly = !state.abStarredOnly;
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'toggle-run-star') {
         const idx = Number(el.dataset.runIdx);
         if (state.runs[idx]) {
           state.runs[idx].starred = !state.runs[idx].starred;
           request('test-history-save', { runs: state.runs }).catch(() => {});
-          renderBody();
+          renderTestOutputOnly();
         }
         return;
       } else if (a === 'toggle-run-select') {
         const idx = Number(el.dataset.runIdx);
         const cur = Array.isArray(state.selectedRuns) ? state.selectedRuns : [];
         state.selectedRuns = cur.includes(idx) ? cur.filter((n: number) => n !== idx) : [...cur, idx].sort((x: number, y: number) => x - y);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'ab-select-preset') {
         const count = Math.max(1, Number(el.dataset.count) || 2);
         const start = Math.max(0, state.runs.length - count);
         state.selectedRuns = Array.from({ length: state.runs.length - start }, (_, k) => start + k);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'ab-select-all') {
         state.selectedRuns = state.runs.map((_: any, i: number) => i);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'ab-select-starred') {
         state.selectedRuns = state.runs
           .map((r: any, i: number) => (r.starred ? i : -1))
           .filter((i: number) => i >= 0);
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'ab-select-none') {
         state.selectedRuns = [];
-        renderBody();
+        renderTestOutputOnly();
         return;
       } else if (a === 'copy-single-run-reply') {
         const idx = Number(el.dataset.runIdx);
@@ -2027,8 +2125,10 @@ export function setup(ctx: SpindleFrontendContext) {
         return;
       } else if (a === 'clear-test-model-override') {
         state.testModelOverride = '';
+        testModelHandle?.update?.({ value: '' });
+        const resetBtn = shellBodyEl.querySelector<HTMLElement>('[data-test-model-reset]');
+        if (resetBtn) resetBtn.style.display = 'none';
         scheduleTokenCount();
-        renderBody();
         return;
       } else if (a === 'load-run-inputs') {
         const idx = Number(el.dataset.runIdx);
@@ -2302,7 +2402,7 @@ export function setup(ctx: SpindleFrontendContext) {
         return;
       } else if (a === 'set-reply-view-mode') {
         state.testReplyViewMode = el.dataset.mode || 'chat';
-        render();
+        renderTestOutputOnly();
         return;
       } else if (a === 'set-test-prompt-source') {
         state.testPromptSource = el.dataset.source || 'preset';
@@ -2903,7 +3003,7 @@ export function setup(ctx: SpindleFrontendContext) {
         const runStartedAt = Date.now();
         let runAssembled: any = null;
         state.activeRun = requestId;
-        render();
+        renderTestOutputOnly();
         await new Promise((resolve, reject) => {
           let inactivityTimer: any = null;
           const resetInactivity = () => {
@@ -2928,7 +3028,7 @@ export function setup(ctx: SpindleFrontendContext) {
             onAssembled: (assembledPayload: any) => {
               runAssembled = assembledPayload;
               state.assembled = assembledPayload;
-              renderBody();
+              renderTestOutputOnly();
             },
             onReasoning: (token: string) => {
               state.reasoning += token;
@@ -3034,6 +3134,11 @@ export function setup(ctx: SpindleFrontendContext) {
         });
         state.busy = false;
         state.activeRun = null;
+        if (state.view === 'test' && shellBodyEl.querySelector('#ps-test-output-slot')) {
+          renderHeader();
+          renderTestOutputOnly();
+          return;
+        }
       }
       render();
     } catch (err: any) {
@@ -3042,6 +3147,11 @@ export function setup(ctx: SpindleFrontendContext) {
       state.saving = false;
       state.translating = false;
       state.notice = (err.message || String(err)) + (a === 'save' ? ' Your draft is preserved.' : '');
+      if (state.view === 'test' && shellBodyEl.querySelector('#ps-test-output-slot')) {
+        renderHeader();
+        renderTestOutputOnly();
+        return;
+      }
       render();
     }
   });
